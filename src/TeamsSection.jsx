@@ -325,7 +325,8 @@ function AgentDetail({ team, member, members, messages, tasks, onClose }) {
   )
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 'min(680px, 92vw)', height: '100vh', overflowY: 'auto', background: '#14110f', borderLeft: '1px solid rgba(255,255,255,0.08)', padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 'min(680px, 92vw)', height: '100vh', overflowY: 'auto', background: '#14110f', borderLeft: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100%' }}>
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ width: 46, height: 46, borderRadius: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', font: `600 19px ${HEAD}`, color: '#fff', background: hueOf(member.isLead ? '' : member.name, members)[0] }}>{initialOf(member.name)}</div>
@@ -407,6 +408,7 @@ function AgentDetail({ team, member, members, messages, tasks, onClose }) {
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   )
