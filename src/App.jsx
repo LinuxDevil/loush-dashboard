@@ -14,6 +14,7 @@ import LibrarySection from './LibrarySection.jsx'
 import PromptStudio from './PromptStudio.jsx'
 import FlowSection from './FlowSection.jsx'
 import RunsSection from './RunsSection.jsx'
+import Hub from './Hub.jsx'
 import InsightsSection from './InsightsSection.jsx'
 import InboxSection from './InboxSection.jsx'
 import BugsSection from './BugsSection.jsx'
@@ -29,23 +30,36 @@ const SECTIONS = [
   { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'Your Claude Code, at a glance', el: <Overview /> },
   { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox', el: <InboxSection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
-  { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: <ChatSection /> },
-  { id: 'insights', label: 'Chat Insights', icon: '∿', kicker: 'Live', title: 'Chat stats & duplicated prompts', el: <InsightsSection /> },
-  { id: 'bugs', label: 'Bugs', icon: '⌖', kicker: 'Workflows', title: 'Bug triage', el: <BugsSection /> },
-  { id: 'quality', label: 'Quality', icon: '❖', kicker: 'Workflows', title: 'Analytics events, design drift & reviews', el: <QualitySection /> },
-  { id: 'board', label: 'Task Board', icon: '▦', kicker: 'Workflows', title: 'Agentic task board — dev → review → QA → release', el: <BoardSection /> },
-  { id: 'runs', label: 'Loush Runs', icon: '⟳', kicker: 'Workflows', title: 'Live loush runs — timeline, metrics & approvals', el: <RunsSection /> },
-  { id: 'skills', label: 'Skills', icon: '✦', kicker: 'Capabilities', title: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
-  { id: 'commands', label: 'Prompts / Commands', icon: '⌘', kicker: 'Capabilities', title: 'Prompts / Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
-  { id: 'mcp', label: 'MCP Servers', icon: '⇌', kicker: 'Connections', title: 'MCP Servers', el: <McpSection /> },
-  { id: 'agents', label: 'Agents', icon: '◆', kicker: 'Capabilities', title: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
+  { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: (
+    <Hub items={[{ label: 'Chat', el: <ChatSection /> }, { label: 'Insights', el: <InsightsSection /> }]} />
+  ) },
+  { id: 'workflows', label: 'Workflows', icon: '▦', kicker: 'Workflows', title: 'Agent work — board, runs, quality & bugs', el: (
+    <Hub items={[
+      { label: 'Task Board', el: <BoardSection /> },
+      { label: 'Loush Runs', el: <RunsSection /> },
+      { label: 'Quality', el: <QualitySection /> },
+      { label: 'Bugs', el: <BugsSection /> },
+    ]} />
+  ) },
+  { id: 'capabilities', label: 'Capabilities', icon: '✦', kicker: 'Capabilities', title: 'Skills, commands, agents & flow', el: (
+    <Hub items={[
+      { label: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
+      { label: 'Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
+      { label: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
+      { label: 'Flow', el: <FlowSection /> },
+    ]} />
+  ) },
+  { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Config, governance, reliability, library & MCP', el: (
+    <Hub items={[
+      { label: 'Config', el: <HarnessSection /> },
+      { label: 'Governance', el: <GovernanceSection /> },
+      { label: 'Reliability', el: <ReliabilitySection /> },
+      { label: 'Library', el: <LibrarySection /> },
+      { label: 'MCP', el: <McpSection /> },
+    ]} />
+  ) },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
-  { id: 'flow', label: 'Flow Graph', icon: '⇶', kicker: 'Capabilities', title: 'Skills & agents flow', el: <FlowSection /> },
-  { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness', el: <HarnessSection /> },
-  { id: 'governance', label: 'Governance', icon: '☑', kicker: 'Harness engineering', title: 'Versions, approvals & drift', el: <GovernanceSection /> },
-  { id: 'reliability', label: 'Reliability', icon: '𝜎', kicker: 'Harness engineering', title: 'Evals, failures, traces & costs', el: <ReliabilitySection /> },
-  { id: 'library', label: 'Library', icon: '❒', kicker: 'Harness engineering', title: 'Profiles, bundles & recommendations', el: <LibrarySection /> },
-  { id: 'prompts', label: 'Prompt Studio', icon: '✍', kicker: 'Authoring', title: 'Prompt Studio', el: <PromptStudio /> },
+  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Prompt Studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
 ]
