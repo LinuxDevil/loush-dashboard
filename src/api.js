@@ -13,3 +13,4 @@ export const api = {
 }
 export const fmtDate = ms => new Date(ms).toLocaleString()
 export const fmtSize = b => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b > 1024 ? (b / 1024).toFixed(1) + ' KB' : b + ' B')
+export const tildify = p => String(p || '').replace(/^([A-Za-z]:)?[\\/](Users|home)[\\/][^\\/]+/, '~')

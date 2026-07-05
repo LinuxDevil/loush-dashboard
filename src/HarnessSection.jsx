@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
-import { api } from './api.js'
+import { api, tildify } from './api.js'
+import ProjectHub from './ProjectHub.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -57,6 +58,7 @@ export default function HarnessSection() {
   const [scope, setScope] = useState('global')
   const [editor, setEditor] = useState(null) // {content}
   const [busyGate, setBusyGate] = useState(null)
+  const [view, setView] = useState('hub') // for project scopes: 'hub' (drill-down) | 'config'
   const load = s => api.get('/api/harness?scope=' + encodeURIComponent(s ?? scope)).then(setData).catch(() => {})
   useEffect(() => { load(scope) }, [scope])
   if (!data) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
@@ -118,7 +120,7 @@ export default function HarnessSection() {
           {scope === 'global' ? 'Global harness' : cur.label + ' · harness'}
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ padding: '8px 14px', borderRadius: 11, background: 'rgba(28,24,21,0.6)', border: '1px solid rgba(255,255,255,0.06)', font: `400 12px ${MONO}`, color: '#9a9089' }}>{meta.configPath.replace(/^\/Users\/[^/]+/, '~')}</div>
+          <div style={{ padding: '8px 14px', borderRadius: 11, background: 'rgba(28,24,21,0.6)', border: '1px solid rgba(255,255,255,0.06)', font: `400 12px ${MONO}`, color: '#9a9089' }}>{tildify(meta.configPath)}</div>
           <button onClick={() => api.get('/api/harness/raw?scope=' + encodeURIComponent(scope)).then(setEditor)}
             style={{ padding: '9px 16px', borderRadius: 11, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#c8bdb4', font: "500 13px 'IBM Plex Sans'", cursor: 'pointer' }}>Edit config</button>
         </div>
@@ -142,10 +144,22 @@ export default function HarnessSection() {
             </button>
           )
         })}
+        {scope !== 'global' && (
+          <span style={{ display: 'flex', gap: 4, marginLeft: 6, padding: 3, borderRadius: 10, background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            {['hub', 'config'].map(v => (
+              <button key={v} onClick={() => setView(v)} style={{
+                padding: '5px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', font: `600 11px ${MONO}`,
+                background: view === v ? 'rgba(217,119,87,0.18)' : 'transparent', color: view === v ? '#f0e7e0' : '#8a807a',
+              }}>{v === 'hub' ? 'Project hub' : 'Config'}</button>
+            ))}
+          </span>
+        )}
         <div style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: '#7a716a' }}>
           {scope === 'global' ? 'baseline inherited by every project' : `${ovCount} field${ovCount === 1 ? '' : 's'} override global · rest inherited`}
         </div>
       </div>
+
+      {scope !== 'global' && view === 'hub' ? <ProjectHub project={scope} /> : <>
 
       {/* overview strip */}
       <div className="hx-overview">
@@ -353,7 +367,7 @@ export default function HarnessSection() {
         <div style={{ ...PANEL, animation: 'fadeUp .5s ease both', animationDelay: '.4s' }}>
           <CardTitle>Environment</CardTitle>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <Row label="working dir"><span style={{ font: `500 12px ${MONO}`, color: '#eee3da' }}>{r.environment.workingDir.replace(/^\/Users\/[^/]+/, '~')}</span></Row>
+            <Row label="working dir"><span style={{ font: `500 12px ${MONO}`, color: '#eee3da' }}>{tildify(r.environment.workingDir)}</span></Row>
             <Row label="sandbox" ov={ov('harness.environment.sandbox')}>
               <Ed value={r.environment.sandbox} width={190} onSave={v => patch('harness.environment.sandbox', v)} />
             </Row>
@@ -372,17 +386,19 @@ export default function HarnessSection() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '15px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ font: `600 14px ${HEAD}` }}>Instructions</span>
-              <span style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>{meta.instrPath.replace(/^\/Users\/[^/]+/, '~')}</span>
+              <span style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>{tildify(meta.instrPath)}</span>
             </div>
             <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>
               {meta.claudeMd ? `${kTok(meta.claudeMdTokens)} tok${scope !== 'global' ? ' · appended to global' : ''}` : 'no CLAUDE.md'}
             </span>
           </div>
           <pre style={{ margin: 0, padding: '18px 20px', font: `400 12px/1.7 ${MONO}`, color: '#c8bdb4', overflowX: 'auto', whiteSpace: 'pre-wrap', maxHeight: 280, overflowY: 'auto' }}>
-            {meta.claudeMd || `# no instructions at this scope\n\nCreate ${meta.instrPath.replace(/^\/Users\/[^/]+/, '~')} to add scoped guidance.`}
+            {meta.claudeMd || `# no instructions at this scope\n\nCreate ${tildify(meta.instrPath)} to add scoped guidance.`}
           </pre>
         </div>
       </div>
+
+      </>}
 
       {/* raw config editor drawer */}
       {editor && (
@@ -390,7 +406,7 @@ export default function HarnessSection() {
           <div className="drawer-overlay" onClick={() => setEditor(null)} />
           <div className="drawer" role="dialog" aria-label="edit settings.json" style={{ width: 560 }}>
             <div className="drawer-head">
-              <h3>{editor.path.replace(/^\/Users\/[^/]+/, '~')}</h3>
+              <h3>{tildify(editor.path)}</h3>
               <button className="ghost" onClick={() => setEditor(null)} aria-label="close">✕</button>
             </div>
             <div className="drawer-body" style={{ padding: 0 }}>

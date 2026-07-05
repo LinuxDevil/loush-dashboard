@@ -8,6 +8,10 @@ import ProjectsSection from './ProjectsSection.jsx'
 import ChatSection from './ChatSection.jsx'
 import TeamsSection from './TeamsSection.jsx'
 import HarnessSection from './HarnessSection.jsx'
+import GovernanceSection from './GovernanceSection.jsx'
+import ReliabilitySection from './ReliabilitySection.jsx'
+import LibrarySection from './LibrarySection.jsx'
+import PromptStudio from './PromptStudio.jsx'
 import { api } from './api.js'
 
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
@@ -23,25 +27,34 @@ const SECTIONS = [
   { id: 'agents', label: 'Agents', icon: '◆', kicker: 'Capabilities', title: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
   { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness', el: <HarnessSection /> },
+  { id: 'governance', label: 'Governance', icon: '☑', kicker: 'Harness engineering', title: 'Versions, approvals & drift', el: <GovernanceSection /> },
+  { id: 'reliability', label: 'Reliability', icon: '𝜎', kicker: 'Harness engineering', title: 'Evals, failures, traces & costs', el: <ReliabilitySection /> },
+  { id: 'library', label: 'Library', icon: '❒', kicker: 'Harness engineering', title: 'Profiles, bundles & recommendations', el: <LibrarySection /> },
+  { id: 'prompts', label: 'Prompt Studio', icon: '✍', kicker: 'Authoring', title: 'Prompt Studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
 ]
 
 function SidebarFoot() {
   const [h, setH] = useState(null)
+  const [alerts, setAlerts] = useState([])
   useEffect(() => {
-    const load = () => api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
+    const load = () => {
+      api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
+      api.get('/api/gov/costs?days=1').then(d => setAlerts(d.alerts || [])).catch(() => {})
+    }
     load()
-    const t = setInterval(load, 15000)
+    const t = setInterval(load, 20000)
     return () => clearInterval(t)
   }, [])
-  const ok = !h || h.ok
+  const ok = (!h || h.ok) && !alerts.some(a => a.level === 'error')
+  const issue = h && !h.ok ? h.conflicts[0] : alerts[0]?.text
   return (
-    <div className="sidebar-foot" title={h && !h.ok ? h.conflicts.join('\n') : ''}>
-      <div className="live" style={ok ? {} : { color: '#e5484d' }}>
-        {ok ? 'harness valid' : `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}`}
+    <div className="sidebar-foot" title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
+      <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
+        {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
       </div>
-      {ok ? 'settings schema · backups synced' : h.conflicts[0]?.slice(0, 44)}
+      {issue ? issue.slice(0, 46) : 'settings schema · backups synced'}
     </div>
   )
 }

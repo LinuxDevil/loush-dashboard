@@ -2,13 +2,15 @@ import express from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { spawn, execFile, spawnSync } from 'node:child_process'
+import { spawn, exec, execFile, spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 const CLAUDE_JSON = path.join(HOME, '.claude.json')
-const PROJECT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
+const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const WIN = process.platform === 'win32'
 const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
 const PORT = 5178
 
@@ -187,7 +189,7 @@ app.post('/api/mcp/:name/test', async (req, res) => {
       return res.json({ ok: r.status < 500, status: r.status, ms: Date.now() - t0, detail: body })
     }
     const result = await new Promise(resolve => {
-      const child = spawn(cfg.command, cfg.args || [], { env: { ...process.env, ...(cfg.env || {}) } })
+      const child = spawn(cfg.command, cfg.args || [], { env: { ...process.env, ...(cfg.env || {}) }, shell: WIN })
       let out = '', err = '', settled = false
       const done = r => { if (settled) return; settled = true; try { child.kill() } catch {}; resolve(r) }
       const timer = setTimeout(() => done({ ok: false, error: 'timeout after 15s', stderr: err.slice(-300) }), 15000)
@@ -283,7 +285,10 @@ app.get('/api/artifacts/content', (req, res) => {
 })
 app.get('/api/artifacts/download', (req, res) => res.download(safe(req.query.path)))
 app.post('/api/artifacts/reveal', (req, res) => {
-  execFile('open', ['-R', safe(req.body.path)])
+  const p = safe(req.body.path)
+  if (WIN) execFile('explorer', ['/select,', p])
+  else if (process.platform === 'darwin') execFile('open', ['-R', p])
+  else execFile('xdg-open', [path.dirname(p)])
   res.json({ ok: true })
 })
 app.post('/api/artifacts/rename', (req, res) => {
@@ -495,7 +500,7 @@ app.get('/api/usage', (req, res) => {
   const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * PRICE_PER_M(e.model) * 0.9, 0)
   const sessions30 = files.filter(f => !f.isAgent && f.mtime >= d30).length
   const projNames = {}
-  try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[/._]/g, '-')] = path.basename(d) } catch {}
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
   const recentSessions = files.filter(f => !f.isAgent && f.msgs > 0).sort((a, b) => b.mtime - a.mtime).slice(0, 6)
     .map(f => ({ proj: projNames[f.proj] || f.proj.split('-').pop(), mtime: f.mtime, out: f.out, msgs: f.msgs, toolCalls: f.toolCalls }))
   const tools = Object.entries(toolTotals).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([name, count]) => ({ name, count }))
@@ -543,7 +548,7 @@ app.get('/api/projects', (req, res) => {
   }
   for (const l of lineEvents) { const p = byProj[l.proj]; if (p) { p.add += l.add; p.del += l.del } }
   const now = Date.now(), base = path.join(CLAUDE, 'projects')
-  const mangle = dir => dir.replace(/[/._]/g, '-') // Claude Code transcript-dir naming
+  const mangle = dir => dir.replace(/[\\/:._]/g, '-') // Claude Code transcript-dir naming
   const listDir = (p, nested) => { try { return fs.readdirSync(p, { withFileTypes: true }).filter(e => (nested ? e.isDirectory() : e.name.endsWith('.md'))).map(e => (nested ? e.name : e.name.replace(/\.md$/, ''))) } catch { return [] } }
   const out = []
   for (const dir of Object.keys(cj.projects || {})) {
@@ -609,7 +614,7 @@ app.post('/api/chat', (req, res) => {
   }
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
   if (resume) args.push('--resume', resume)
-  const child = spawn('claude', args, { cwd, env: process.env })
+  const child = spawn('claude', args, { cwd, env: process.env, shell: WIN }) // shell resolves claude.cmd on Windows
   const id = Math.random().toString(36).slice(2, 10)
   const chat = { child, cwd, resume: resume || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
   chats.set(id, chat)
@@ -659,7 +664,7 @@ app.delete('/api/chat/:id', (req, res) => {
 })
 // past sessions on disk for a project (for --resume)
 app.get('/api/chat/sessions', (req, res) => {
-  const dir = path.join(CLAUDE, 'projects', String(req.query.cwd || '').replace(/[/._]/g, '-'))
+  const dir = path.join(CLAUDE, 'projects', String(req.query.cwd || '').replace(/[\\/:._]/g, '-'))
   const out = []
   try {
     for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'))) {
@@ -690,7 +695,7 @@ app.get('/api/chat/sessions', (req, res) => {
 // ---------- agent teams (experimental) ----------
 const TEAMS = path.join(CLAUDE, 'teams')
 const TASKS = path.join(CLAUDE, 'tasks')
-const mangle = dir => dir.replace(/[/._]/g, '-')
+const mangle = dir => dir.replace(/[\\/:._]/g, '-')
 const readJson = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }
 
 function listTeams() {
@@ -987,7 +992,7 @@ function harnessResolve(scope) {
       turnPolicy: h.turnPolicy, context: h.context, modelRouting: h.modelRouting,
       guardrails: guardrails.map(({ rule, pattern, mode }) => ({ rule, pattern, mode })),
       permissions: { autoAllow: perms.allow || [], askFirst: perms.ask || [], denied: perms.deny || [], sandbox: h.environment.sandbox },
-      environment: { workingDir: scope === 'global' ? HOME : scope, sandbox: h.environment.sandbox, network: h.environment.network, shell: (process.env.SHELL || '/bin/sh') + ' · non-interactive', envVars: Object.keys(settings.env || {}).length },
+      environment: { workingDir: scope === 'global' ? HOME : scope, sandbox: h.environment.sandbox, network: h.environment.network, shell: (process.env.SHELL || process.env.ComSpec || '/bin/sh') + ' · non-interactive', envVars: Object.keys(settings.env || {}).length },
       model: settings.model || null,
     },
     verification: gates, overridden,
@@ -1013,15 +1018,15 @@ app.patch('/api/harness', (req, res) => {
   if (!dotPath || !/^(harness|permissions|model|env)(\.|$)/.test(dotPath)) return res.status(400).json({ error: 'path must be under harness/permissions/model/env' })
   const file = settingsFileFor(scope)
   const settings = readJson(file, {})
-  const bak = backup(file)
   const keys = dotPath.split('.')
   let o = settings
   for (const k of keys.slice(0, -1)) o = o[k] = (o[k] && typeof o[k] === 'object') ? o[k] : {}
   if (value === null) delete o[keys[keys.length - 1]]
   else o[keys[keys.length - 1]] = value
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2))
-  res.json({ ok: true, backup: bak, ...harnessResolve(scope) })
+  const content = JSON.stringify(settings, null, 2)
+  if (scope === 'global') return res.json({ ok: true, proposed: propose(file, content, `set ${dotPath}`), ...harnessResolve(scope) })
+  track(file, content, { scope, summary: `set ${dotPath}` })
+  res.json({ ok: true, ...harnessResolve(scope) })
 })
 app.get('/api/harness/raw', (req, res) => {
   const file = settingsFileFor(req.query.scope || 'global')
@@ -1031,19 +1036,746 @@ app.put('/api/harness/raw', (req, res) => {
   const { scope, content } = req.body
   try { JSON.parse(content) } catch (e) { return res.status(400).json({ error: 'invalid JSON: ' + e.message }) }
   const file = settingsFileFor(scope || 'global')
-  const bak = backup(file)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, content)
-  res.json({ ok: true, backup: bak })
+  if ((scope || 'global') === 'global') return res.json({ ok: true, proposed: propose(file, content, 'edit settings.json (raw)') })
+  track(file, content, { scope, summary: 'edit settings.json (raw)' })
+  res.json({ ok: true })
 })
 app.post('/api/harness/verify', (req, res) => {
   const { scope, name, command } = req.body
   const cwd = scope === 'global' ? HOME : scope
-  execFile('/bin/sh', ['-c', command], { cwd, timeout: 60000 }, (err, stdout, stderr) => {
+  exec(command, { cwd, timeout: 60000 }, (err, stdout, stderr) => { // exec uses cmd.exe on Windows, sh elsewhere
     const status = err ? 'failing' : 'passing'
     verifyResults.set(scope + '|' + name, { status, t: Date.now() })
     res.json({ status, out: String(stdout || '').slice(-400), err: String(stderr || '').slice(-400) })
   })
+})
+
+// ---------- project harness hub ----------
+const readIf = p => { try { return fs.readFileSync(p, 'utf8') } catch { return null } }
+const splitSections = src => {
+  // split markdown into heading-anchored blocks for per-block provenance
+  const out = []
+  let cur = { heading: '(preamble)', text: '' }
+  for (const line of (src || '').split('\n')) {
+    if (/^#{1,3} /.test(line)) { if (cur.text.trim()) out.push(cur); cur = { heading: line.replace(/^#+ /, '').trim(), text: '' } }
+    cur.text += line + '\n'
+  }
+  if (cur.text.trim()) out.push(cur)
+  return out
+}
+function hubListSkills(dir, scope) {
+  const out = []
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue
+      const src = readIf(path.join(dir, e.name, 'SKILL.md'))
+      if (src == null) continue
+      const { fm, body } = parseFM(src)
+      const st = fs.statSync(path.join(dir, e.name, 'SKILL.md'))
+      out.push({ name: e.name, scope, trigger: String(fm.description || '').slice(0, 160), descTokens: tokens(String(fm.description || '')), fullTokens: tokens(src), mtime: st.mtimeMs, path: path.join(dir, e.name, 'SKILL.md'), body })
+    }
+  } catch {}
+  return out
+}
+function hubListAgents(dir, scope) {
+  const out = []
+  try {
+    for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.md'))) {
+      const src = readIf(path.join(dir, f))
+      const { fm, body } = parseFM(src || '')
+      const toolsRaw = fm.tools
+      const tools = Array.isArray(toolsRaw) ? toolsRaw : String(toolsRaw || '').split(',').map(s => s.trim()).filter(Boolean)
+      out.push({ name: f.replace(/\.md$/, ''), scope, model: fm.model || 'inherit', tools, depth: tools.some(t => /^(Task|Agent|\*)$/.test(t)) || tools.length === 0 ? 2 : 1, path: path.join(dir, f), body, desc: String(fm.description || '').slice(0, 140) })
+    }
+  } catch {}
+  return out
+}
+function hubResolve(project) {
+  const H = harnessResolve(project)
+  const softCap = H.resolved.context.alwaysLoadedBudget.softCap
+  // ---- rules stack in load order ----
+  const ruleFiles = [
+    { layer: 'global', label: '~/.claude/CLAUDE.md', file: path.join(CLAUDE, 'CLAUDE.md') },
+    { layer: 'project', label: '.claude/CLAUDE.md', file: path.join(project, '.claude', 'CLAUDE.md') },
+    { layer: 'project', label: 'CLAUDE.md', file: path.join(project, 'CLAUDE.md') },
+    { layer: 'project', label: 'AGENTS.md', file: path.join(project, 'AGENTS.md') },
+    { layer: 'project', label: '.cursorrules', file: path.join(project, '.cursorrules') },
+  ].map(r => { const src = readIf(r.file); return { ...r, exists: src != null, tokens: src ? tokens(src) : 0, src } })
+  const rules = ruleFiles.filter(r => r.exists)
+  const globalSections = splitSections(rules.find(r => r.layer === 'global')?.src || '')
+  // ---- prompt preview blocks with provenance ----
+  const promptBlocks = []
+  for (const r of rules)
+    for (const sec of splitSections(r.src)) {
+      const overrides = r.layer === 'project' && globalSections.some(g => g.heading !== '(preamble)' && g.heading.toLowerCase() === sec.heading.toLowerCase())
+      promptBlocks.push({ source: r.label, layer: r.layer, path: r.file, heading: sec.heading, text: sec.text.slice(0, 4000), relation: overrides ? 'overrides' : 'appends' })
+    }
+  // ---- skills / agents (global + project) ----
+  const skills = [...hubListSkills(path.join(CLAUDE, 'skills'), 'global'), ...hubListSkills(path.join(project, '.claude', 'skills'), 'project')]
+  const agents = [...hubListAgents(path.join(CLAUDE, 'agents'), 'global'), ...hubListAgents(path.join(project, '.claude', 'agents'), 'project')]
+  // ---- ADRs ----
+  const adrs = []
+  for (const d of ['docs/adr', 'docs/adrs', 'adr', 'docs/decisions', 'docs/architecture/decisions'].map(d => path.join(project, d))) {
+    try {
+      for (const f of fs.readdirSync(d).filter(f => f.endsWith('.md'))) {
+        const src = readIf(path.join(d, f)) || ''
+        const title = (src.match(/^#\s+(.+)$/m) || [])[1] || f.replace(/\.md$/, '')
+        const status = ((src.match(/status[:\s]+\**\s*(proposed|accepted|superseded|rejected|deprecated)/i) || [])[1] || 'proposed').toLowerCase()
+        const constrains = (src.split(/^##\s/m)[1] || src).replace(/^.+\n/, '').trim().slice(0, 180)
+        adrs.push({ id: f.replace(/\.md$/, ''), title: title.slice(0, 90), status, constrains, path: path.join(d, f), body: src })
+      }
+    } catch {}
+  }
+  // ---- references: URLs cited by rules/skills/adrs ----
+  const refMap = new Map()
+  const cite = (src, byType, byName) => {
+    for (const url of (src || '').match(/https?:\/\/[^\s)>"'\]]+/g) || []) {
+      const key = url.replace(/[.,;]$/, '')
+      if (!refMap.has(key)) refMap.set(key, { url: key, citedBy: [] })
+      const r = refMap.get(key)
+      if (!r.citedBy.some(c => c.name === byName)) r.citedBy.push({ type: byType, name: byName })
+    }
+  }
+  for (const r of rules) cite(r.src, 'rule', r.label)
+  for (const s of skills) cite(s.body, 'skill', s.name)
+  for (const a of adrs) cite(a.body, 'adr', a.id)
+  const references = [...refMap.values()].slice(0, 40)
+  // ---- MCP servers ----
+  const cj = readJson(CLAUDE_JSON, {})
+  const mcpDefs = []
+  for (const [name, config] of Object.entries(cj.mcpServers || {})) mcpDefs.push({ name, scope: 'global', config })
+  for (const [name, config] of Object.entries(cj.projects?.[project]?.mcpServers || {})) mcpDefs.push({ name, scope: 'project', config })
+  for (const [name, config] of Object.entries(readJson(path.join(project, '.mcp.json'), {}).mcpServers || {})) mcpDefs.push({ name, scope: 'project', config })
+  const mcps = mcpDefs.map(m => {
+    const usedBy = []
+    for (const s of skills) if ((s.body || '').includes(m.name)) usedBy.push({ type: 'skill', name: s.name })
+    for (const a of agents) if (a.tools.some(t => t.includes('mcp__' + m.name)) || (a.body || '').includes('mcp__' + m.name)) usedBy.push({ type: 'agent', name: a.name })
+    return { name: m.name, scope: m.scope, transport: m.config.url ? 'http' : 'stdio', toolsHint: m.config.url || m.config.command || '', usedBy, estTokens: 600 }
+  })
+  // ---- context budget contributors ----
+  const contributors = [
+    { name: 'system prompt', kind: 'system', tokens: H.resolved.context.alwaysLoadedBudget.systemPrompt, mode: 'always', scope: 'global', est: true },
+    ...rules.map(r => ({ name: r.label, kind: 'rules', tokens: r.tokens, mode: 'always', scope: r.layer, path: r.file })),
+    ...skills.map(s => ({ name: s.name, kind: 'skill', tokens: s.descTokens, onInvoke: s.fullTokens, mode: 'on-invoke', scope: s.scope, path: s.path })),
+    ...mcps.map(m => ({ name: m.name, kind: 'mcp', tokens: m.estTokens, mode: 'always', scope: m.scope, est: true })),
+    ...references.slice(0, 10).map(r => ({ name: r.url.replace(/^https?:\/\//, '').slice(0, 40), kind: 'reference', tokens: 0, mode: 'on-demand', scope: 'project' })),
+  ]
+  const alwaysOn = contributors.filter(c => c.mode === 'always').reduce((s, c) => s + c.tokens, 0) + skills.reduce((s, x) => s + x.descTokens, 0)
+  // ---- memory / scratchpad ----
+  const memory = []
+  const memDir = path.join(CLAUDE, 'projects', mangle(project), 'memory')
+  try { for (const f of fs.readdirSync(memDir)) { const st = fs.statSync(path.join(memDir, f)); memory.push({ name: 'memory/' + f, path: path.join(memDir, f), mtime: st.mtimeMs, persists: true }) } } catch {}
+  for (const f of ['MEMORY.md', '.planning/STATE.md', '.planning/ROADMAP.md', 'docs/superpowers']) {
+    try { const st = fs.statSync(path.join(project, f)); memory.push({ name: f, path: path.join(project, f), mtime: st.mtimeMs, persists: true, dir: st.isDirectory() }) } catch {}
+  }
+  memory.push({ name: 'session scratchpad (/tmp)', path: null, mtime: null, persists: false })
+  // ---- graph ----
+  const nodes = [], edges = []
+  const addNode = (id, type, label, p) => { if (!nodes.some(n => n.id === id)) nodes.push({ id, type, label, path: p || null }) }
+  const projRules = rules.filter(r => r.layer === 'project')
+  addNode('rules:global', 'rule', 'global rules', path.join(CLAUDE, 'CLAUDE.md'))
+  for (const r of projRules) addNode('rules:' + r.label, 'rule', r.label, r.file)
+  const topSkills = [...skills].sort((a, b) => b.mtime - a.mtime).slice(0, 10)
+  for (const s of topSkills) addNode('skill:' + s.name, 'skill', s.name, s.path)
+  for (const a of agents.slice(0, 8)) addNode('agent:' + a.name, 'agent', a.name, a.path)
+  for (const m of mcps.slice(0, 8)) addNode('mcp:' + m.name, 'mcp', m.name, null)
+  for (const a of adrs.slice(0, 8)) addNode('adr:' + a.id, 'adr', a.id, a.path)
+  for (const r of references.slice(0, 6)) addNode('ref:' + r.url, 'ref', r.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 24), null)
+  const addEdge = (a, b, rel) => { if (nodes.some(n => n.id === a) && nodes.some(n => n.id === b) && !edges.some(e => e.a === a && e.b === b)) edges.push({ a, b, rel }) }
+  for (const s of topSkills) {
+    for (const m of mcps) if ((s.body || '').includes(m.name)) addEdge('skill:' + s.name, 'mcp:' + m.name, 'uses')
+    for (const r of references.slice(0, 6)) if ((s.body || '').includes(r.url)) addEdge('skill:' + s.name, 'ref:' + r.url, 'cites')
+  }
+  for (const a of agents.slice(0, 8)) {
+    addEdge('agent:' + a.name, projRules.length ? 'rules:' + projRules[0].label : 'rules:global', 'bound by')
+    for (const m of mcps) if (a.tools.some(t => t.includes('mcp__' + m.name))) addEdge('agent:' + a.name, 'mcp:' + m.name, 'uses')
+  }
+  for (const a of adrs.slice(0, 8)) {
+    const mentioned = rules.some(r => (r.src || '').includes(a.id)) || (a.body || '').match(/CLAUDE\.md|AGENTS\.md/i)
+    if (mentioned) addEdge('adr:' + a.id, projRules.length ? 'rules:' + projRules[0].label : 'rules:global', 'justifies')
+  }
+  // ---- trigger map ----
+  const settingsMerged = deepMerge(readJson(settingsFileFor('global'), {}), readJson(settingsFileFor(project), {}))
+  const triggers = []
+  for (const [event, ms] of Object.entries(settingsMerged.hooks || {}))
+    for (const m of Array.isArray(ms) ? ms : [])
+      for (const hk of m.hooks || []) triggers.push({ event: event + (m.matcher ? ` (${m.matcher})` : ''), target: String(hk.command || '').slice(0, 60), kind: 'hook' })
+  for (const s of topSkills) if (s.trigger) triggers.push({ event: 'prompt: ' + s.trigger.slice(0, 60), target: '/' + s.name, kind: 'skill' })
+  for (const a of agents.slice(0, 6)) if (a.desc) triggers.push({ event: 'delegation: ' + a.desc.slice(0, 60), target: a.name + ' agent', kind: 'agent' })
+  // ---- conflict / redundancy audit ----
+  const findings = []
+  const F = (severity, text, artifact) => findings.push({ severity, text, artifact })
+  const names = {}
+  for (const s of skills) { (names[s.name] ||= []).push(s) }
+  for (const [n, list] of Object.entries(names)) if (list.length > 1) F('warning', `duplicate skill "${n}" exists in global and project scope — project wins`, { type: 'skill', name: n, path: list.find(s => s.scope === 'project')?.path })
+  for (const m of mcps) if (!m.usedBy.length) F('info', `MCP server "${m.name}" is referenced by no skill or agent`, { type: 'mcp', name: m.name })
+  const mergedRules = rules.map(r => r.src).join('\n')
+  if (/\b(test|lint|typecheck)\b/i.test(mergedRules) && triggers.filter(t => t.kind === 'hook').length === 0 && !H.verification.some(g => g.kind === 'gate'))
+    F('warning', 'rules mention test/lint/typecheck but no hook or verification gate enforces them', { type: 'rule', name: 'rules stack' })
+  if (alwaysOn > softCap) F('error', `always-loaded context (${Math.round(alwaysOn / 100) / 10}k) exceeds the ${Math.round(softCap / 1000)}k soft cap`, { type: 'budget', name: 'context budget' })
+  for (const a of adrs) if (a.status === 'superseded') F('info', `ADR "${a.id}" is superseded — check nothing still cites it`, { type: 'adr', name: a.id, path: a.path })
+  for (const b of promptBlocks) if (b.relation === 'overrides') F('info', `project section "${b.heading}" overrides the global section of the same name`, { type: 'rule', name: b.source, path: b.path })
+  for (const c of H.valid.conflicts) F('error', c, { type: 'config', name: 'settings.json' })
+  const sev = { error: 15, warning: 8, info: 2 }
+  const health = Math.max(5, 100 - findings.reduce((s, f) => s + sev[f.severity], 0))
+  // ---- sessions (for replay) ----
+  const sessions = []
+  try {
+    const sdir = path.join(CLAUDE, 'projects', mangle(project))
+    for (const f of fs.readdirSync(sdir).filter(f => f.endsWith('.jsonl')).slice(0, 200)) {
+      const st = fs.statSync(path.join(sdir, f))
+      sessions.push({ id: f.replace(/\.jsonl$/, ''), mtime: st.mtimeMs, size: st.size })
+    }
+  } catch {}
+  sessions.sort((a, b) => b.mtime - a.mtime)
+  return {
+    project, harness: { overridden: H.overridden, health: H.health, valid: H.valid, context: H.resolved.context },
+    budget: { contributors, alwaysOn, softCap, onInvoke: skills.reduce((s, x) => s + x.fullTokens, 0) },
+    promptBlocks, graph: { nodes, edges },
+    inventory: {
+      skills: skills.map(({ body, ...s }) => s), agents: agents.map(({ body, ...a }) => a),
+      rules: ruleFiles.map(({ src, ...r }) => r), adrs: adrs.map(({ body, ...a }) => a), references, mcps, memory,
+    },
+    triggers: triggers.slice(0, 40), findings, health, sessions: sessions.slice(0, 8),
+  }
+}
+app.get('/api/hub', (req, res) => {
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  res.json(hubResolve(project))
+})
+// session replay: which skills/agents/tools actually fired
+app.get('/api/hub/session', (req, res) => {
+  const { project, id } = req.query
+  const f = path.join(CLAUDE, 'projects', mangle(String(project || '')), String(id || '') + '.jsonl')
+  if (!/^[\w-]+$/.test(String(id || '')) || !fs.existsSync(f)) return res.status(404).json({ error: 'no such session' })
+  const out = { skills: [], agents: [], tools: {}, msgs: 0, compactions: 0, first: null, last: null }
+  for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+    if (!line) continue
+    try {
+      const j = JSON.parse(line)
+      if (j.timestamp) { out.last = Date.parse(j.timestamp); out.first ??= out.last }
+      if (j.isCompactSummary || j.type === 'summary') out.compactions++
+      if (j.type !== 'assistant' || !Array.isArray(j.message?.content)) continue
+      out.msgs++
+      for (const c of j.message.content) {
+        if (c.type !== 'tool_use') continue
+        out.tools[c.name] = (out.tools[c.name] || 0) + 1
+        if (c.name === 'Skill' && c.input?.skill) out.skills.push(c.input.skill)
+        if ((c.name === 'Task' || c.name === 'Agent') && c.input) out.agents.push(c.input.subagent_type || c.input.description || 'agent')
+      }
+    } catch {}
+  }
+  out.skills = [...new Set(out.skills)]
+  res.json(out)
+})
+// artifact file read/edit (hub detail) — restricted to ~/.claude and known project dirs
+app.get('/api/hub/file', (req, res) => {
+  const p = path.resolve(String(req.query.path || ''))
+  const cj = readJson(CLAUDE_JSON, {})
+  const roots = [CLAUDE, ...Object.keys(cj.projects || {})]
+  if (!roots.some(r => p === r || p.startsWith(r + path.sep))) return res.status(403).json({ error: 'outside allowed roots' })
+  if (!fs.existsSync(p) || fs.statSync(p).isDirectory()) return res.status(404).json({ error: 'not a file' })
+  res.json({ path: p, content: fs.readFileSync(p, 'utf8') })
+})
+app.put('/api/hub/file', (req, res) => {
+  const p = path.resolve(String(req.body.path || ''))
+  const cj = readJson(CLAUDE_JSON, {})
+  const roots = [CLAUDE, ...Object.keys(cj.projects || {})]
+  if (!roots.some(r => p === r || p.startsWith(r + path.sep))) return res.status(403).json({ error: 'outside allowed roots' })
+  if (p.endsWith('.json')) { try { JSON.parse(req.body.content) } catch (e) { return res.status(400).json({ error: 'invalid JSON: ' + e.message }) } }
+  const scope = roots.find(r => r !== CLAUDE && p.startsWith(r + path.sep)) || 'global'
+  track(p, req.body.content, { scope, summary: 'edit ' + path.basename(p) })
+  res.json({ ok: true })
+})
+
+// ---------- governance: version history, approvals, audit ----------
+const VERSIONS_FILE = path.join(CLAUDE, 'dashboard-versions.jsonl')
+const APPROVALS_FILE = path.join(CLAUDE, 'dashboard-approvals.json')
+const AUTHOR = os.userInfo().username
+const appendVersion = entry => fs.appendFileSync(VERSIONS_FILE, JSON.stringify(entry) + '\n')
+// tracked write: every config mutation appends an immutable version/audit entry
+function track(file, content, { scope = 'global', summary = '', author = AUTHOR, approvedBy = null } = {}) {
+  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, content)
+  const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  appendVersion({ id, ts: Date.now(), author, machine: os.hostname(), scope, file, summary, approvedBy, prev, content })
+  return id
+}
+function readVersions() {
+  try { return fs.readFileSync(VERSIONS_FILE, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) } catch { return [] }
+}
+app.get('/api/gov/versions', (req, res) => {
+  const { scope, file, author, q } = req.query
+  let v = readVersions()
+  if (scope) v = v.filter(x => x.scope === scope)
+  if (file) v = v.filter(x => x.file.includes(file))
+  if (author) v = v.filter(x => x.author === author)
+  if (q) v = v.filter(x => (x.summary + x.file).toLowerCase().includes(String(q).toLowerCase()))
+  res.json(v.slice(-300).reverse().map(({ prev, content, ...meta }) => ({ ...meta, bytes: (content || '').length })))
+})
+app.get('/api/gov/versions/:id', (req, res) => {
+  const v = readVersions().find(x => x.id === req.params.id)
+  if (!v) return res.status(404).json({ error: 'no such version' })
+  res.json(v)
+})
+app.post('/api/gov/rollback', (req, res) => {
+  const v = readVersions().find(x => x.id === req.body.id)
+  if (!v) return res.status(404).json({ error: 'no such version' })
+  const target = req.body.to === 'prev' ? v.prev : v.content // roll back TO this version's state (or to before it)
+  if (target == null) return res.status(400).json({ error: 'nothing to roll back to' })
+  const id = track(v.file, target, { scope: v.scope, summary: `rollback to ${v.id}${req.body.to === 'prev' ? ' (before)' : ''}` })
+  res.json({ ok: true, id })
+})
+// approvals: global-scope config changes are proposed, not applied
+const readApprovals = () => readJson(APPROVALS_FILE, [])
+const writeApprovals = a => fs.writeFileSync(APPROVALS_FILE, JSON.stringify(a, null, 2))
+function propose(file, content, summary) {
+  const a = readApprovals()
+  const id = 'p' + Date.now().toString(36)
+  a.push({ id, ts: Date.now(), author: AUTHOR, file, scope: 'global', summary, content, status: 'proposed' })
+  writeApprovals(a)
+  appendVersion({ id: id + '-proposed', ts: Date.now(), author: AUTHOR, machine: os.hostname(), scope: 'global', file, summary: 'PROPOSED: ' + summary, prev: null, content: null })
+  return id
+}
+app.get('/api/gov/approvals', (req, res) => res.json(readApprovals().slice(-100).reverse()))
+app.post('/api/gov/approvals/:id', (req, res) => {
+  const a = readApprovals()
+  const p = a.find(x => x.id === req.params.id)
+  if (!p || p.status !== 'proposed') return res.status(404).json({ error: 'no pending proposal' })
+  p.status = req.body.approve ? 'approved' : 'rejected'
+  p.reviewedBy = AUTHOR; p.reviewedAt = Date.now(); p.note = req.body.note || ''
+  if (req.body.approve) track(p.file, p.content, { scope: 'global', summary: p.summary, approvedBy: AUTHOR })
+  writeApprovals(a)
+  res.json({ ok: true, status: p.status })
+})
+
+// ---------- dry-run: resolve a hypothetical settings content without committing ----------
+let dryRunOverride = null // {scope, settings} — consulted by readJson shim below during resolve
+app.post('/api/gov/dryrun', (req, res) => {
+  const { scope, content } = req.body
+  let proposed
+  try { proposed = JSON.parse(content) } catch (e) { return res.status(400).json({ error: 'invalid JSON: ' + e.message }) }
+  const before = harnessResolve(scope)
+  const file = settingsFileFor(scope)
+  const real = readIf(file)
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(proposed, null, 2)) // ponytail: write+revert beats threading an override through the resolver
+    const after = harnessResolve(scope)
+    const pick = H => ({
+      alwaysBudget: H.resolved.context.alwaysLoadedBudget, compaction: H.resolved.context.compactionThreshold,
+      maxTurns: H.resolved.turnPolicy.maxTurns, guardrails: H.resolved.guardrails, routing: H.resolved.modelRouting,
+      gates: H.verification.length, health: H.health.score, conflicts: H.valid.conflicts,
+      permissions: H.resolved.permissions,
+    })
+    res.json({ before: pick(before), after: pick(after) })
+  } finally {
+    if (real == null) fs.rmSync(file, { force: true })
+    else fs.writeFileSync(file, real)
+  }
+})
+
+// ---------- failure & retry analytics ----------
+const failCache = new Map() // file -> {mtime,size,toolErrs,toolUses,byHour,turns,compactions,retries,proj,last}
+function failStats() {
+  const base = path.join(CLAUDE, 'projects')
+  const files = []
+  const walkF = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walkF(p); else if (e.name.endsWith('.jsonl')) files.push(p) } } catch {} }
+  walkF(base)
+  const out = []
+  for (const f of files) {
+    const st = fs.statSync(f)
+    let rec = failCache.get(f)
+    if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      rec = { mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0], toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, retries: 0, last: 0 }
+      const idName = {}
+      let lastErrTool = null
+      try {
+        for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+          if (!line) continue
+          const isErr = line.includes('"is_error":true')
+          if (!isErr && !line.includes('"tool_use"') && !line.includes('isCompactSummary') && !line.includes('"type":"summary"')) continue
+          try {
+            const j = JSON.parse(line)
+            const t = Date.parse(j.timestamp) || 0
+            rec.last = Math.max(rec.last, t)
+            if (j.isCompactSummary || j.type === 'summary') { rec.compactions++; continue }
+            if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
+              rec.turns++
+              let first = true
+              for (const c of j.message.content) if (c.type === 'tool_use') {
+                idName[c.id] = c.name
+                rec.toolUses[c.name] = (rec.toolUses[c.name] || 0) + 1
+                // retry = the very next tool call after an error hits the same tool
+                if (first && lastErrTool === c.name) rec.retries++
+                if (first) { lastErrTool = null; first = false }
+              }
+            }
+            if (j.type === 'user' && Array.isArray(j.message?.content))
+              for (const c of j.message.content) if (c.type === 'tool_result' && c.is_error) {
+                const name = idName[c.tool_use_id] || '?'
+                rec.toolErrs[name] = (rec.toolErrs[name] || 0) + 1
+                lastErrTool = name
+                if (t) { const d = new Date(t); const k = d.getDay() + ':' + d.getHours(); rec.byHour[k] = (rec.byHour[k] || 0) + 1 }
+              }
+          } catch {}
+        }
+      } catch {}
+      failCache.set(f, rec)
+    }
+    out.push(rec)
+  }
+  return out
+}
+app.get('/api/gov/failures', (req, res) => {
+  const days = Number(req.query.days) || 30
+  const proj = req.query.project ? mangle(req.query.project) : null
+  const cutoff = Date.now() - days * 86400_000
+  const recs = failStats().filter(r => r.last >= cutoff && (!proj || r.proj === proj))
+  const toolErrs = {}, toolUses = {}, byHour = {}
+  let compactions = 0, retries = 0
+  const turnsDist = []
+  for (const r of recs) {
+    for (const [k, v] of Object.entries(r.toolErrs)) toolErrs[k] = (toolErrs[k] || 0) + v
+    for (const [k, v] of Object.entries(r.toolUses)) toolUses[k] = (toolUses[k] || 0) + v
+    for (const [k, v] of Object.entries(r.byHour)) byHour[k] = (byHour[k] || 0) + v
+    compactions += r.compactions; retries += r.retries
+    if (r.turns > 0) turnsDist.push(r.turns)
+  }
+  const tools = Object.keys(toolUses).map(name => ({ name, uses: toolUses[name], errors: toolErrs[name] || 0, rate: toolUses[name] ? (toolErrs[name] || 0) / toolUses[name] : 0 }))
+    .filter(t => t.uses >= 3).sort((a, b) => b.errors - a.errors).slice(0, 12)
+  res.json({ tools, byHour, compactions, retries, turnsDist, sessions: recs.length })
+})
+
+// ---------- trace viewer ----------
+app.get('/api/gov/trace', (req, res) => {
+  const { project, id } = req.query
+  const f = path.join(CLAUDE, 'projects', mangle(String(project || '')), String(id || '') + '.jsonl')
+  if (!/^[\w-]+$/.test(String(id || '')) || !fs.existsSync(f)) return res.status(404).json({ error: 'no such session' })
+  const steps = []
+  let firstTs = null
+  for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+    if (!line) continue
+    try {
+      const j = JSON.parse(line)
+      const ts = Date.parse(j.timestamp) || null
+      firstTs ??= ts
+      if (j.type === 'user' && typeof j.message?.content === 'string' && !j.message.content.startsWith('<'))
+        steps.push({ kind: 'prompt', ts, text: j.message.content.slice(0, 300) })
+      else if (j.type === 'user' && Array.isArray(j.message?.content))
+        for (const c of j.message.content) if (c.type === 'tool_result') steps.push({ kind: 'observe', ts, err: !!c.is_error, text: (typeof c.content === 'string' ? c.content : JSON.stringify(c.content)).slice(0, 200) })
+      else if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
+        const outTok = j.message.usage?.output_tokens || 0
+        for (const c of j.message.content) {
+          if (c.type === 'text' && c.text.trim()) steps.push({ kind: 'reason', ts, tokens: outTok, text: c.text.slice(0, 300) })
+          else if (c.type === 'tool_use') steps.push({ kind: 'act', ts, tokens: outTok, name: c.name, text: JSON.stringify(c.input).slice(0, 200) })
+        }
+      } else if (j.isCompactSummary || j.type === 'summary') steps.push({ kind: 'checkpoint', ts, text: 'context compacted' })
+    } catch {}
+  }
+  for (let i = 0; i < steps.length; i++) steps[i].latency = steps[i + 1]?.ts && steps[i].ts ? steps[i + 1].ts - steps[i].ts : null
+  // config version active during this session
+  const ver = readVersions().filter(v => v.ts <= (firstTs || 0)).pop() || null
+  res.json({ steps: steps.slice(0, 400), total: steps.length, startedAt: firstTs, configVersion: ver ? { id: ver.id, summary: ver.summary, file: ver.file, ts: ver.ts } : null })
+})
+
+// ---------- eval / regression suite ----------
+const EVALS_FILE = path.join(CLAUDE, 'harness-evals.json')
+const EVAL_RUNS = path.join(CLAUDE, 'harness-eval-runs.jsonl')
+const DEFAULT_EVALS = [
+  { name: 'sanity: instruction following', prompt: 'Reply with exactly the word: HARNESS_OK', expect: 'HARNESS_OK' },
+  { name: 'reasoning: arithmetic', prompt: 'What is 17*23? Reply with just the number.', expect: '391' },
+  { name: 'tool use: filesystem', prompt: 'List the files in the current directory, then reply with the word FS_DONE at the end.', expect: 'FS_DONE' },
+]
+const evalRuns = () => { try { return fs.readFileSync(EVAL_RUNS, 'utf8').split('\n').filter(Boolean).map(JSON.parse) } catch { return [] } }
+const activeEvals = new Map() // runId -> {status, done, total}
+app.get('/api/gov/evals', (req, res) => res.json({ tasks: readJson(EVALS_FILE, DEFAULT_EVALS), runs: evalRuns().slice(-40).reverse(), active: [...activeEvals.entries()].map(([id, s]) => ({ id, ...s })) }))
+app.put('/api/gov/evals', (req, res) => { fs.writeFileSync(EVALS_FILE, JSON.stringify(req.body.tasks, null, 2)); res.json({ ok: true }) })
+app.post('/api/gov/evals/run', (req, res) => {
+  const scope = req.body.scope || 'global'
+  const cwd = scope === 'global' ? HOME : scope
+  const tasks = readJson(EVALS_FILE, DEFAULT_EVALS)
+  const runId = 'run' + Date.now().toString(36)
+  activeEvals.set(runId, { status: 'running', done: 0, total: tasks.length })
+  res.json({ ok: true, runId })
+  ;(async () => {
+    const results = []
+    for (const t of tasks) {
+      const r = await new Promise(resolve => {
+        const child = spawn('claude', ['-p', t.prompt, '--output-format', 'json', '--dangerously-skip-permissions'], { cwd, env: process.env, shell: WIN })
+        let out = ''
+        const timer = setTimeout(() => { try { child.kill() } catch {}; resolve({ pass: false, error: 'timeout' }) }, 180000)
+        child.stdout.on('data', d => out += d)
+        child.on('exit', () => {
+          clearTimeout(timer)
+          try {
+            const j = JSON.parse(out)
+            resolve({ pass: new RegExp(t.expect).test(j.result || ''), tokens: (j.usage?.input_tokens || 0) + (j.usage?.output_tokens || 0), turns: j.num_turns, cost: j.total_cost_usd, ms: j.duration_ms })
+          } catch { resolve({ pass: false, error: 'no result' }) }
+        })
+      })
+      results.push({ name: t.name, ...r })
+      activeEvals.get(runId).done++
+    }
+    const passRate = results.filter(r => r.pass).length / (results.length || 1)
+    fs.appendFileSync(EVAL_RUNS, JSON.stringify({ id: runId, ts: Date.now(), scope, passRate, tokens: results.reduce((s, r) => s + (r.tokens || 0), 0), cost: results.reduce((s, r) => s + (r.cost || 0), 0), turns: results.reduce((s, r) => s + (r.turns || 0), 0), results }) + '\n')
+    activeEvals.delete(runId)
+  })().catch(() => activeEvals.delete(runId))
+})
+
+// ---------- costs, budgets, alerts ----------
+// anthropic-ish price ratios off PRICE_PER_M (input price): out=5x, cache-write=1.25x, cache-read=0.1x
+const entryCost = e => { const P = PRICE_PER_M(e.model); return (e.in * P + e.out * P * 5 + e.cc * P * 1.25 + e.cr * P * 0.1) / 1e6 }
+function costAlerts() {
+  const { entries } = collectUsage()
+  const today = new Date().toISOString().slice(0, 10)
+  const gRaw = readJson(settingsFileFor('global'), {})
+  const budgets = deepMerge({ dailyUSD: null, dailyTokens: null }, gRaw.harness?.budgets || {})
+  let usd = 0, tok = 0
+  for (const e of entries) if (new Date(e.t).toISOString().slice(0, 10) === today) { usd += entryCost(e); tok += e.in + e.out + e.cc }
+  const alerts = []
+  for (const [key, cap, val, unit] of [['dailyUSD', budgets.dailyUSD, usd, '$'], ['dailyTokens', budgets.dailyTokens, tok, ' tok']]) {
+    if (!cap) continue
+    if (val >= cap) alerts.push({ level: 'error', text: `${key} cap exceeded: ${unit === '$' ? '$' + val.toFixed(2) : Math.round(val).toLocaleString() + unit} / ${unit === '$' ? '$' + cap : cap.toLocaleString() + unit}` })
+    else if (val >= cap * 0.8) alerts.push({ level: 'warning', text: `${key} at ${Math.round((val / cap) * 100)}% of cap` })
+  }
+  return { todayUSD: usd, todayTokens: tok, budgets, alerts }
+}
+app.get('/api/gov/costs', (req, res) => {
+  const days = Number(req.query.days) || 30
+  const { entries } = collectUsage()
+  const cutoff = Date.now() - days * 86400_000
+  const byDay = {}, byProj = {}, byModel = {}
+  for (const e of entries) {
+    if (e.t < cutoff) continue
+    const c = entryCost(e), d = new Date(e.t).toISOString().slice(0, 10)
+    ;(byDay[d] ||= { usd: 0, tok: 0 }); byDay[d].usd += c; byDay[d].tok += e.in + e.out + e.cc
+    ;(byProj[e.proj] ||= { usd: 0, tok: 0 }); byProj[e.proj].usd += c; byProj[e.proj].tok += e.in + e.out + e.cc
+    ;(byModel[e.model] ||= { usd: 0, tok: 0 }); byModel[e.model].usd += c; byModel[e.model].tok += e.in + e.out + e.cc
+  }
+  res.json({ byDay, byProj, byModel, ...costAlerts() })
+})
+
+// ---------- profiles / presets ----------
+const PROFILES_FILE = path.join(CLAUDE, 'harness-profiles.json')
+const DEFAULT_PROFILES = [
+  { name: 'deep refactor', description: 'long horizon, strict verification, opus for planning', harness: { turnPolicy: { maxTurns: 120, checkpointInterval: 3 }, modelRouting: [{ task: 'Plan & architect', model: 'opus-4-8', fallback: 'sonnet-4-6' }, { task: 'Implement & edit', model: 'sonnet-4-6', fallback: 'sonnet-4-6' }, { task: 'Quick edits & grep', model: 'haiku-4-5', fallback: 'sonnet-4-6' }, { task: 'Subagent default', model: 'sonnet-4-6', fallback: 'haiku-4-5' }] } },
+  { name: 'quick fix', description: 'short horizon, fast models, minimal ceremony', harness: { turnPolicy: { maxTurns: 15, checkpointInterval: 10 }, modelRouting: [{ task: 'Plan & architect', model: 'sonnet-4-6', fallback: 'haiku-4-5' }, { task: 'Implement & edit', model: 'sonnet-4-6', fallback: 'haiku-4-5' }, { task: 'Quick edits & grep', model: 'haiku-4-5', fallback: 'haiku-4-5' }, { task: 'Subagent default', model: 'haiku-4-5', fallback: 'haiku-4-5' }] } },
+  { name: 'research', description: 'wide context, high compaction threshold, read-heavy', harness: { turnPolicy: { maxTurns: 60 }, context: { compactionThreshold: 0.9, keepTurns: 20 } } },
+]
+const readProfiles = () => readJson(PROFILES_FILE, DEFAULT_PROFILES)
+app.get('/api/gov/profiles', (req, res) => res.json(readProfiles()))
+app.put('/api/gov/profiles', (req, res) => {
+  track(PROFILES_FILE, JSON.stringify(req.body.profiles, null, 2), { summary: 'update harness profiles' })
+  res.json({ ok: true })
+})
+app.post('/api/gov/profiles/apply', (req, res) => {
+  const { name, scope } = req.body
+  const p = readProfiles().find(x => x.name === name)
+  if (!p) return res.status(404).json({ error: 'no such profile' })
+  const file = settingsFileFor(scope)
+  const settings = readJson(file, {})
+  const next = JSON.stringify({ ...settings, harness: deepMerge(settings.harness || {}, p.harness) }, null, 2)
+  if (scope === 'global') return res.json({ ok: true, proposed: propose(file, next, `apply profile "${name}" to global`) })
+  track(file, next, { scope, summary: `apply profile "${name}"` })
+  res.json({ ok: true })
+})
+
+// ---------- import / export / library + drift ----------
+const LIBRARY_DIR = path.join(CLAUDE, 'harness-library')
+function exportBundle(project, name, description) {
+  const grab = p => readIf(p)
+  const bundle = {
+    name, description, provenance: { author: AUTHOR, machine: os.hostname(), project, createdAt: Date.now() },
+    settings: readJson(path.join(project, '.claude', 'settings.json'), null),
+    rules: Object.fromEntries([['CLAUDE.md', grab(path.join(project, 'CLAUDE.md'))], ['.claude/CLAUDE.md', grab(path.join(project, '.claude', 'CLAUDE.md'))], ['AGENTS.md', grab(path.join(project, 'AGENTS.md'))]].filter(([, v]) => v != null)),
+    skills: Object.fromEntries(hubListSkills(path.join(project, '.claude', 'skills'), 'project').map(s => [s.name, readIf(s.path)])),
+    agents: Object.fromEntries(hubListAgents(path.join(project, '.claude', 'agents'), 'project').map(a => [a.name, readIf(a.path)])),
+    mcp: readJson(path.join(project, '.mcp.json'), null),
+    profiles: readProfiles(),
+  }
+  return bundle
+}
+app.post('/api/gov/bundle/export', (req, res) => {
+  const { project, name, description } = req.body
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const bundle = exportBundle(project, name || path.basename(project), description || '')
+  fs.mkdirSync(LIBRARY_DIR, { recursive: true })
+  const file = path.join(LIBRARY_DIR, (name || path.basename(project)).replace(/[^\w.-]/g, '_') + '.json')
+  track(file, JSON.stringify(bundle, null, 2), { summary: `export bundle from ${path.basename(project)}` })
+  res.json({ ok: true, file, bundle })
+})
+app.get('/api/gov/library', (req, res) => {
+  const out = []
+  try {
+    for (const f of fs.readdirSync(LIBRARY_DIR).filter(f => f.endsWith('.json'))) {
+      const b = readJson(path.join(LIBRARY_DIR, f), null)
+      if (b) out.push({ file: f, name: b.name, description: b.description, provenance: b.provenance, counts: { rules: Object.keys(b.rules || {}).length, skills: Object.keys(b.skills || {}).length, agents: Object.keys(b.agents || {}).length } })
+    }
+  } catch {}
+  res.json(out)
+})
+app.post('/api/gov/bundle/import', (req, res) => {
+  const { file, project } = req.body
+  const b = readJson(path.join(LIBRARY_DIR, path.basename(file || '')), null)
+  if (!b || !project || !fs.existsSync(project)) return res.status(400).json({ error: 'bad bundle or project' })
+  const written = []
+  const w = (rel, content) => { const p = path.join(project, rel); track(p, content, { scope: project, summary: `import from bundle "${b.name}"` }); written.push(rel) }
+  if (b.settings) w('.claude/settings.json', JSON.stringify(b.settings, null, 2))
+  for (const [rel, src] of Object.entries(b.rules || {})) w(rel, src)
+  for (const [n, src] of Object.entries(b.skills || {})) w(path.join('.claude', 'skills', n, 'SKILL.md'), src)
+  for (const [n, src] of Object.entries(b.agents || {})) w(path.join('.claude', 'agents', n + '.md'), src)
+  if (b.mcp) w('.mcp.json', JSON.stringify(b.mcp, null, 2))
+  res.json({ ok: true, written })
+})
+// drift: compare project's current harness vs an agreed baseline bundle
+app.post('/api/gov/baseline', (req, res) => {
+  const meta = readMeta()
+  ;(meta.baselines ||= {})[req.body.project] = req.body.file
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true })
+})
+app.get('/api/gov/drift', (req, res) => {
+  const project = req.query.project
+  const meta = readMeta()
+  const bFile = meta.baselines?.[project]
+  if (!bFile) return res.json({ baseline: null, drifts: [] })
+  const b = readJson(path.join(LIBRARY_DIR, path.basename(bFile)), null)
+  if (!b) return res.json({ baseline: bFile, error: 'baseline bundle missing', drifts: [] })
+  const cur = exportBundle(project, 'current', '')
+  const drifts = []
+  const cmp = (field, a, c) => { const A = JSON.stringify(a ?? null), C = JSON.stringify(c ?? null); if (A !== C) drifts.push({ field, baseline: A.slice(0, 400), current: C.slice(0, 400), syncable: true }) }
+  cmp('settings.harness', b.settings?.harness, cur.settings?.harness)
+  cmp('settings.permissions', b.settings?.permissions, cur.settings?.permissions)
+  for (const k of new Set([...Object.keys(b.rules || {}), ...Object.keys(cur.rules || {})])) cmp('rules/' + k, b.rules?.[k], cur.rules?.[k])
+  for (const k of new Set([...Object.keys(b.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, b.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
+  res.json({ baseline: bFile, provenance: b.provenance, drifts })
+})
+app.post('/api/gov/drift/sync', (req, res) => {
+  const { project, field } = req.body
+  const meta = readMeta()
+  const b = readJson(path.join(LIBRARY_DIR, path.basename(meta.baselines?.[project] || '')), null)
+  if (!b) return res.status(400).json({ error: 'no baseline' })
+  if (field === 'settings.harness' || field === 'settings.permissions') {
+    const file = path.join(project, '.claude', 'settings.json')
+    const s = readJson(file, {})
+    const key = field.split('.')[1]
+    if (b.settings?.[key] === undefined) delete s[key]; else s[key] = b.settings[key]
+    track(file, JSON.stringify(s, null, 2), { scope: project, summary: `sync ${field} from baseline` })
+  } else if (field.startsWith('rules/')) {
+    const rel = field.slice(6)
+    if (b.rules?.[rel] != null) track(path.join(project, rel), b.rules[rel], { scope: project, summary: `sync ${rel} from baseline` })
+  } else return res.status(400).json({ error: 'field not syncable' })
+  res.json({ ok: true })
+})
+
+// ---------- recommendations ----------
+app.get('/api/gov/recs', (req, res) => {
+  const project = req.query.project
+  const meta = readMeta()
+  const dismissed = meta.recsDismissed || {}
+  const recs = []
+  if (project && fs.existsSync(project)) {
+    const hub = hubResolve(project)
+    for (const f of hub.findings) recs.push({ key: 'finding:' + f.text.slice(0, 60), severity: f.severity, text: f.text, fix: f.artifact?.path || null })
+    // skills that cost a lot when loaded and haven't been touched in 60d
+    const stale = hub.inventory.skills.filter(s => s.fullTokens > 3000 && Date.now() - s.mtime > 60 * 86400_000).slice(0, 5)
+    if (stale.length) recs.push({ key: 'stale-skills:' + project, severity: 'info', text: `${stale.length} large skills untouched for 60+ days (${stale.map(s => s.name).slice(0, 3).join(', ')}) — consider pruning or making on-demand`, fix: stale[0].path })
+    if (hub.budget.alwaysOn > hub.budget.softCap) recs.push({ key: 'budget:' + project, severity: 'error', text: `always-loaded budget ${Math.round(hub.budget.alwaysOn / 100) / 10}k exceeds the ${Math.round(hub.budget.softCap / 1000)}k cap — trim rules or skill metadata`, fix: null })
+  }
+  const { alerts } = costAlerts()
+  for (const a of alerts) recs.push({ key: 'cost:' + a.text.slice(0, 40), severity: a.level, text: a.text + ' — consider downgrading model routing for routine tasks', fix: null })
+  res.json(recs.map(r => ({ ...r, dismissed: dismissed[r.key] || null })))
+})
+app.post('/api/gov/recs/dismiss', (req, res) => {
+  const meta = readMeta()
+  ;(meta.recsDismissed ||= {})[req.body.key] = { reason: req.body.reason || '', ts: Date.now(), by: AUTHOR }
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true })
+})
+
+// ---------- prompt generator / library ----------
+const PROMPTS_DIR = path.join(CLAUDE, 'prompts-library')
+const ASSETS_DIR = path.join(PROMPTS_DIR, 'assets')
+function assemblePrompt(p) {
+  const inputs = p.inputs || []
+  const texts = inputs.filter(i => i.type === 'text').map(i => i.value)
+  const urls = inputs.filter(i => i.type === 'url')
+  const files = inputs.filter(i => i.type === 'file')
+  const images = inputs.filter(i => i.type === 'image')
+  const artifacts = inputs.filter(i => i.type === 'artifact')
+  const tone = { direct: 'Be direct and concise.', thorough: 'Be thorough — explain reasoning and edge cases.', cautious: 'Proceed carefully; confirm before destructive steps.' }[p.tone] || ''
+  const tpl = p.template || 'implementation'
+  const H = { implementation: 'Implement the following', bugfix: 'Fix the following bug', research: 'Research the following question', review: 'Review the following' }[tpl] || 'Task'
+  const lines = [`# ${p.title || H}`, '', `## Goal`, texts[0] || '(describe the goal)', '']
+  if (texts.length > 1) lines.push('## Context', ...texts.slice(1), '')
+  if (files.length || artifacts.length) {
+    lines.push('## Relevant files & artifacts')
+    for (const f of files) lines.push(`- \`${f.value}\``)
+    for (const a of artifacts) lines.push(`- ${a.meta?.kind || 'artifact'}: \`${a.value}\``)
+    lines.push('')
+  }
+  if (urls.length || images.length) {
+    lines.push('## Attached references')
+    for (const u of urls) lines.push(`- [${u.meta?.title || u.value}](${u.value})${u.meta?.description ? ' — ' + u.meta.description : ''}`)
+    for (const im of images) lines.push(`- screenshot: ${im.meta?.name || im.value} (attached)`)
+    lines.push('')
+  }
+  lines.push('## Constraints', tone || 'Follow the project rules (CLAUDE.md).', '')
+  lines.push('## Acceptance criteria', ...(p.acceptance ? p.acceptance.split('\n').map(l => l.startsWith('-') ? l : '- ' + l) : ['- Works end to end', '- No regressions in existing behavior']))
+  return lines.join('\n')
+}
+const promptFile = id => path.join(PROMPTS_DIR, id + '.json')
+app.get('/api/prompts', (req, res) => {
+  const out = []
+  try {
+    for (const f of fs.readdirSync(PROMPTS_DIR).filter(f => f.endsWith('.json'))) {
+      const p = readJson(path.join(PROMPTS_DIR, f), null)
+      if (p) out.push({ id: p.id, title: p.title, tags: p.tags || [], project: p.project || null, updatedAt: p.updatedAt, versions: (p.versions || []).length, inputs: (p.inputs || []).length })
+    }
+  } catch {}
+  const q = String(req.query.q || '').toLowerCase()
+  res.json(out.filter(p => !q || (p.title + (p.tags || []).join(' ')).toLowerCase().includes(q)).sort((a, b) => b.updatedAt - a.updatedAt))
+})
+app.get('/api/prompts/:id', (req, res) => {
+  const p = readJson(promptFile(req.params.id.replace(/[^\w-]/g, '')), null)
+  p ? res.json(p) : res.status(404).json({ error: 'not found' })
+})
+app.post('/api/prompts', (req, res) => {
+  fs.mkdirSync(PROMPTS_DIR, { recursive: true })
+  const b = req.body
+  const id = b.id || 'pr' + Date.now().toString(36)
+  const existing = readJson(promptFile(id), null)
+  const output = assemblePrompt(b)
+  const versions = existing?.versions || []
+  if (existing?.output && existing.output !== output) versions.push({ ts: existing.updatedAt, output: existing.output, tone: existing.tone, template: existing.template })
+  const doc = { id, title: b.title || 'untitled prompt', tags: b.tags || [], project: b.project || null, inputs: b.inputs || [], template: b.template || 'implementation', tone: b.tone || 'direct', acceptance: b.acceptance || '', output, versions: versions.slice(-20), updatedAt: Date.now(), author: AUTHOR }
+  fs.writeFileSync(promptFile(id), JSON.stringify(doc, null, 2))
+  res.json(doc)
+})
+app.delete('/api/prompts/:id', (req, res) => {
+  try { fs.rmSync(promptFile(req.params.id.replace(/[^\w-]/g, ''))) } catch {}
+  res.json({ ok: true })
+})
+app.post('/api/prompts/url-meta', async (req, res) => {
+  try {
+    const r = await fetch(req.body.url, { signal: AbortSignal.timeout(8000), headers: { 'user-agent': 'claude-dashboard' } })
+    const html = (await r.text()).slice(0, 60000)
+    const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]?.trim() || req.body.url
+    const description = (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)/i) || html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["']/i) || [])[1] || ''
+    res.json({ title: title.slice(0, 120), description: description.slice(0, 200), status: r.status })
+  } catch (e) { res.json({ title: req.body.url, description: '', error: e.message }) }
+})
+app.post('/api/prompts/asset', (req, res) => {
+  const { name, dataUrl } = req.body
+  const m = /^data:(image\/\w+);base64,(.+)$/.exec(dataUrl || '')
+  if (!m) return res.status(400).json({ error: 'expected image data URL' })
+  fs.mkdirSync(ASSETS_DIR, { recursive: true })
+  const file = path.join(ASSETS_DIR, Date.now().toString(36) + '-' + String(name || 'img').replace(/[^\w.-]/g, '_'))
+  fs.writeFileSync(file, Buffer.from(m[2], 'base64'))
+  res.json({ ok: true, path: file })
 })
 
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
