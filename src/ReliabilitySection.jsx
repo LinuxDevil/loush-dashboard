@@ -22,10 +22,11 @@ export default function ReliabilitySection() {
   const [tab, setTab] = useState('Failures')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Failures', 'Traces', 'Evals', 'Costs']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Failures', 'Traces', 'Evals', 'CI gate', 'Costs']} tab={tab} setTab={setTab} />
       {tab === 'Failures' && <Failures />}
       {tab === 'Traces' && <Traces />}
       {tab === 'Evals' && <Evals />}
+      {tab === 'CI gate' && <CiGate />}
       {tab === 'Costs' && <Costs />}
     </div>
   )
@@ -225,6 +226,81 @@ function Evals() {
         </div>
       </div>
     </>
+  )
+}
+
+// feature 27: run the eval suite in real CI on PRs touching .claude/, with a merge-blocking pass-rate gate
+function CiGate() {
+  const scopes = useScopes()
+  const [project, setProject] = useState('')
+  const [provider, setProvider] = useState('github')
+  const [minPass, setMinPass] = useState(0.9)
+  const [status, setStatus] = useState(null)
+  const [preview, setPreview] = useState(null)
+  const [runs, setRuns] = useState(null)
+  useEffect(() => { if (scopes.length > 1 && !project) setProject(scopes[1].id) }, [scopes])
+  const load = () => {
+    if (!project) return
+    api.get('/api/ci/status?project=' + encodeURIComponent(project)).then(s => { setStatus(s); if (s.workflow) { setProvider(s.workflow.provider); if (s.workflow.minPass) setMinPass(s.workflow.minPass) } }).catch(() => {})
+    api.get('/api/ci/runs?project=' + encodeURIComponent(project)).then(setRuns).catch(() => {})
+  }
+  useEffect(() => { setPreview(null); setStatus(null); setRuns(null); load() }, [project])
+  const gen = dryRun => api.post('/api/ci/generate', { project, provider, minPass, dryRun })
+    .then(r => { if (dryRun) setPreview(r.files); else { setPreview(null); alert('written:\n' + r.written.join('\n') + '\n\n' + r.note); load() } })
+    .catch(e => alert(e.message))
+  return (
+    <div className="hx-2a">
+      <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ font: `600 15px ${HEAD}` }}>CI eval gating</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <select value={project} onChange={e => setProject(e.target.value)}>
+            {scopes.filter(s => s.id !== 'global').map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <select value={provider} onChange={e => { setProvider(e.target.value); setPreview(null) }}>
+            <option value="github">GitHub Actions</option>
+            <option value="gitlab">GitLab CI</option>
+          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, font: `400 11px ${MONO}`, color: '#8a807a' }}>
+            block merge below {Math.round(minPass * 100)}%
+            <input type="range" min="0.5" max="1" step="0.05" value={minPass} onChange={e => { setMinPass(Number(e.target.value)); setPreview(null) }} style={{ width: 120, padding: 0 }} />
+          </label>
+        </div>
+        {status && (
+          <div style={{ font: `400 11.5px ${MONO}`, color: '#c8bdb4', lineHeight: 1.8 }}>
+            <div>{status.workflow ? <span style={{ color: '#3fb96a' }}>✓ workflow installed ({status.workflow.provider}, gate {Math.round((status.workflow.minPass || 0) * 100)}%)</span> : <span style={{ color: '#e5a03a' }}>no eval workflow in this repo yet</span>}</div>
+            <div>{status.evalsInRepo ? '✓ .claude/harness-evals.json in repo' : '· eval tasks will be copied into the repo (CI needs them committed)'}</div>
+            <div>{status.ghAvailable ? '✓ gh CLI available — run results shown here' : '· gh CLI not found — install it to see CI results inline'}</div>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => gen(true)}>Preview (dry run)</button>
+          <button className="primary" onClick={() => gen(false)} disabled={!preview}>{status?.workflow ? 'Update workflow' : 'Install workflow'}</button>
+        </div>
+        {preview && preview.map(f => (
+          <details key={f.rel}>
+            <summary style={{ font: `400 11px ${MONO}`, color: f.exists ? '#e5a03a' : '#3fb96a', cursor: 'pointer' }}>{f.exists ? '⚠ overwrites' : '+ creates'} {f.rel}</summary>
+            <pre style={{ margin: '6px 0 0', font: `400 10px/1.5 ${MONO}`, color: '#9a9089', background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 10, maxHeight: 240, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{f.content}</pre>
+          </details>
+        ))}
+        <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', lineHeight: 1.6 }}>runs headlessly on every PR touching .claude/ · fails the job (blocking merge) when pass rate drops under the gate · requires the ANTHROPIC_API_KEY repo secret</div>
+      </div>
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 15px ${HEAD}`, marginBottom: 12 }}>CI runs <span style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>via gh · tagged CI vs manual runs in Evals</span></div>
+        {runs?.error && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>{runs.error}</div>}
+        {runs?.runs?.map((r, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
+            <span style={{ font: `600 11px ${MONO}`, color: r.conclusion === 'success' ? '#3fb96a' : r.conclusion === 'failure' ? '#e5484d' : '#e8a06a', width: 70 }}>{r.conclusion || r.status}</span>
+            <span className="badge project">CI</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: `400 11.5px ${MONO}`, color: '#c8bdb4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.displayTitle}</div>
+              <div style={{ font: `400 10px ${MONO}`, color: '#7a716a' }}>{r.headBranch} · {fmtDate(Date.parse(r.createdAt))}</div>
+            </div>
+            <a href={r.url} target="_blank" rel="noreferrer" style={{ font: `400 10.5px ${MONO}`, color: '#7cc4f7' }}>open ↗</a>
+          </div>
+        ))}
+        {runs && !runs.error && !runs.runs?.length && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>no CI runs yet — they appear after the first PR touching .claude/</div>}
+      </div>
+    </div>
   )
 }
 

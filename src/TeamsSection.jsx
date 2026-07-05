@@ -1,6 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import { buildBlocks, Block } from './ChatSection.jsx'
+import TeamDesigner from './TeamDesigner.jsx'
+
+// feature: one-click activation of the experimental agent-teams flag
+function ActivateButton({ style }) {
+  const [flag, setFlag] = useState(null)
+  useEffect(() => { api.get('/api/team/flag').then(setFlag).catch(() => {}) }, [])
+  if (!flag) return null
+  if (flag.enabled) return <span style={{ font: "400 11px 'IBM Plex Mono'", color: '#3fb96a', ...style }}>✓ teams flag enabled</span>
+  return (
+    <button style={{ ...style }} onClick={() =>
+      api.post('/api/team/flag', { enable: true })
+        .then(r => { setFlag(r); alert('Agent teams enabled in ~/.claude/settings.json (versioned — undo in Governance).\nTakes effect on the NEXT Claude Code session.') })
+        .catch(e => alert(e.message))
+    }>⚡ Enable agent teams</button>
+  )
+}
 
 // ---------- visual system (from the Agent Teams mockup) ----------
 const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
@@ -415,7 +431,7 @@ function AgentDetail({ team, member, members, messages, tasks, onClose }) {
 }
 
 // ---------- empty state ----------
-function Empty({ teams, onPick }) {
+function Empty({ teams, onPick, onDesign }) {
   return (
     <div style={{ ...PANEL, maxWidth: 640, padding: '30px 34px' }}>
       <div style={{ font: `600 18px ${HEAD}`, marginBottom: 10 }}>No agent team active</div>
@@ -423,8 +439,8 @@ function Empty({ teams, onPick }) {
         Agent teams is an experimental Claude Code feature where a lead session spawns teammates that share a task list and message each other. To use it:
       </div>
       <ol style={{ font: `400 12.5px ${MONO}`, color: '#c8bdb4', lineHeight: 2, paddingLeft: 20 }}>
-        <li>enable the flag: <code style={{ color: '#e8a06a' }}>{'{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"}}'}</code> in settings.json</li>
-        <li>start a Claude Code session and ask it to <i>“create an agent team to …”</i></li>
+        <li>enable the flag: <ActivateButton style={{ fontSize: 12, padding: '4px 12px' }} /></li>
+        <li>start a Claude Code session and ask it to <i>“create an agent team to …”</i> — or <button className="mini" style={{ marginTop: 0 }} onClick={onDesign}>design one here</button></li>
         <li>this page picks up the team from <code style={{ color: '#e8a06a' }}>~/.claude/teams/</code> automatically</li>
       </ol>
       {teams.length > 0 && (
@@ -444,6 +460,7 @@ export default function TeamsSection() {
   const [data, setData] = useState(null)
   const [team, setTeam] = useState('') // '' = newest
   const [selected, setSelected] = useState(null)
+  const [designing, setDesigning] = useState(false)
   useEffect(() => {
     let live = true
     const load = () => api.get('/api/team' + (team ? '?team=' + encodeURIComponent(team) : '')).then(d => live && setData(d)).catch(() => {})
@@ -452,8 +469,9 @@ export default function TeamsSection() {
     return () => { live = false; clearInterval(t) }
   }, [team])
 
+  if (designing) return <TeamDesigner onClose={() => setDesigning(false)} />
   if (!data) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
-  if (!data.team) return <Empty teams={data.teams || []} onPick={setTeam} />
+  if (!data.team) return <Empty teams={data.teams || []} onPick={setTeam} onDesign={() => setDesigning(true)} />
 
   const { members, tasks, messages } = data
   const leadName = members.find(m => m.isLead)?.name
@@ -475,6 +493,8 @@ export default function TeamsSection() {
           <span style={{ font: `500 11px ${MONO}`, letterSpacing: '0.06em', padding: '2px 8px', borderRadius: 6, background: 'rgba(139,124,246,0.15)', color: '#a78bfa' }}>experimental</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <ActivateButton />
+          <button onClick={() => setDesigning(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 11, border: '1px solid rgba(139,124,246,0.35)', background: 'rgba(139,124,246,0.1)', color: '#a78bfa', font: "600 13px 'IBM Plex Sans'", cursor: 'pointer' }}>🛠 Team designer</button>
           {(data.teams || []).length > 1 && (
             <select value={team || data.team.name} onChange={e => setTeam(e.target.value)} style={{ background: 'rgba(28,24,21,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 11, color: '#c8bdb4', padding: '8px 12px', font: `500 12px ${MONO}` }}>
               {data.teams.map(t => <option key={t} value={t}>{t}</option>)}

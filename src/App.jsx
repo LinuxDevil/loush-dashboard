@@ -15,6 +15,9 @@ import PromptStudio from './PromptStudio.jsx'
 import FlowSection from './FlowSection.jsx'
 import InsightsSection from './InsightsSection.jsx'
 import InboxSection from './InboxSection.jsx'
+import BugsSection from './BugsSection.jsx'
+import QualitySection from './QualitySection.jsx'
+import BoardSection from './BoardSection.jsx'
 import Palette from './Palette.jsx'
 import { api } from './api.js'
 
@@ -27,6 +30,9 @@ const SECTIONS = [
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
   { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: <ChatSection /> },
   { id: 'insights', label: 'Chat Insights', icon: '∿', kicker: 'Live', title: 'Chat stats & duplicated prompts', el: <InsightsSection /> },
+  { id: 'bugs', label: 'Bugs', icon: '⌖', kicker: 'Workflows', title: 'Bug triage', el: <BugsSection /> },
+  { id: 'quality', label: 'Quality', icon: '❖', kicker: 'Workflows', title: 'Analytics events, design drift & reviews', el: <QualitySection /> },
+  { id: 'board', label: 'Task Board', icon: '▦', kicker: 'Workflows', title: 'Agentic task board — dev → review → QA → release', el: <BoardSection /> },
   { id: 'skills', label: 'Skills', icon: '✦', kicker: 'Capabilities', title: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
   { id: 'commands', label: 'Prompts / Commands', icon: '⌘', kicker: 'Capabilities', title: 'Prompts / Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
   { id: 'mcp', label: 'MCP Servers', icon: '⇌', kicker: 'Connections', title: 'MCP Servers', el: <McpSection /> },

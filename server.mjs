@@ -12,7 +12,7 @@ const CLAUDE_JSON = path.join(HOME, '.claude.json')
 const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const WIN = process.platform === 'win32'
 const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
-const PORT = 5178
+const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(express.json({ limit: '10mb' }))
@@ -1689,6 +1689,16 @@ app.get('/api/gov/recs', (req, res) => {
   }
   const { alerts } = costAlerts()
   for (const a of alerts) recs.push({ key: 'cost:' + a.text.slice(0, 40), severity: a.level, text: a.text + ' — consider downgrading model routing for routine tasks', fix: null })
+  if (project && fs.existsSync(project)) {
+    try { // 29: design drift feeds recommendations
+      const dd = designDrift(project)
+      if (dd.manifest && dd.drifts.length) recs.push({ key: 'design-drift:' + project, severity: 'warning', text: `${dd.drifts.length} design-system drift(s) vs the Figma manifest (${dd.drifts.slice(0, 3).map(d => d.component).join(', ')}…) — see Quality → Design drift`, fix: dd.manifest })
+    } catch {}
+    try { // 30: recurring review findings → suggest a hook
+      for (const rc of reviewData(project).recurring.slice(0, 3))
+        recs.push({ key: 'recurring-finding:' + rc.category, severity: 'warning', text: `"${rc.category}" flagged in ${rc.passes} separate reviews (${rc.count} findings) — add a PreToolUse hook to block the pattern automatically (Hooks → Library)`, fix: null })
+    } catch {}
+  }
   res.json(recs.map(r => ({ ...r, dismissed: dismissed[r.key] || null })))
 })
 app.post('/api/gov/recs/dismiss', (req, res) => {
@@ -1789,19 +1799,25 @@ function scanTranscripts() {
   const files = []
   const walkS = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walkS(p); else if (e.name.endsWith('.jsonl')) files.push(p) } } catch {} }
   walkS(base)
-  const all = { prompts: [], invocations: [], sessions: [] }
+  const all = { prompts: [], invocations: [], sessions: [], hooks: {}, hookBlocks: 0, reviews: [] }
+  const HOOK_RE = /(PreToolUse|PostToolUse|UserPromptSubmit|SessionStart|SessionEnd|Stop|SubagentStop|PreCompact|Notification)(?::[\w./ -]+)? hook/
   for (const f of files) {
     let st; try { st = fs.statSync(f) } catch { continue }
     const proj = path.relative(base, f).split(path.sep)[0]
     const sessionId = path.basename(f, '.jsonl')
     let rec = scanCache.get(f)
-    if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      rec = { mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], userMsgs: 0, toolCalls: 0, first: 0, last: 0 }
+    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      rec = { v: 2, mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], reviews: [], hooks: {}, hookBlocks: 0, userMsgs: 0, toolCalls: 0, first: 0, last: 0 }
       // ponytail: "src" attribution = last Skill invoked since the user's prompt — a heuristic, not a real call graph
       let lastSkill = null
       try {
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (!line) continue
+          if (line.includes(' hook')) { // hook firings show up as system/hook-context lines
+            const m = HOOK_RE.exec(line)
+            if (m) rec.hooks[m[1]] = (rec.hooks[m[1]] || 0) + 1
+            if (/hook (denied|blocked)/.test(line)) rec.hookBlocks++
+          }
           let j; try { j = JSON.parse(line) } catch { continue }
           const t = j.timestamp ? Date.parse(j.timestamp) : 0
           if (t) { rec.first ||= t; rec.last = Math.max(rec.last, t) }
@@ -1816,6 +1832,11 @@ function scanTranscripts() {
               if (c.name === 'Skill' && c.input?.skill) { rec.invocations.push({ t, kind: 'skill', name: String(c.input.skill), src: lastSkill }); lastSkill = 'skill:' + c.input.skill }
               else if ((c.name === 'Task' || c.name === 'Agent') && c.input?.subagent_type) rec.invocations.push({ t, kind: 'agent', name: String(c.input.subagent_type), src: lastSkill })
               else if (c.name.startsWith('mcp__')) rec.invocations.push({ t, kind: 'mcp', name: c.name.slice(5).split('__')[0], src: lastSkill })
+              // native /review & /security-review report through the ReportFindings tool
+              else if (c.name === 'ReportFindings' && Array.isArray(c.input?.findings)) rec.reviews.push({
+                t, level: c.input.level || null,
+                findings: c.input.findings.slice(0, 32).map(x => ({ file: x.file, line: x.line, summary: String(x.summary || '').slice(0, 240), category: x.category || 'uncategorized', verdict: x.verdict || null, outcome: x.outcome || null })),
+              })
             }
           }
         }
@@ -1824,6 +1845,9 @@ function scanTranscripts() {
     }
     for (const p of rec.prompts) all.prompts.push({ ...p, proj, sessionId })
     for (const i of rec.invocations) all.invocations.push({ ...i, proj, sessionId })
+    for (const r of rec.reviews) all.reviews.push({ ...r, proj, sessionId, isAgent: f.includes('subagents') })
+    for (const [ev, n] of Object.entries(rec.hooks)) all.hooks[ev] = (all.hooks[ev] || 0) + n
+    all.hookBlocks += rec.hookBlocks
     all.sessions.push({ proj, sessionId, userMsgs: rec.userMsgs, toolCalls: rec.toolCalls, first: rec.first, last: rec.last, isAgent: f.includes('subagents') })
   }
   all.prompts.sort((a, b) => a.t - b.t)
@@ -2017,6 +2041,13 @@ function inboxItems() {
     const lastEv = c.events[c.events.length - 1]
     if (lastEv && lastEv.type === 'result') items.push({ key: 'chat:' + id, kind: 'session', severity: 'info', text: `session in ${path.basename(c.cwd)} is waiting for your input`, ts: Date.now(), section: 'chat' })
   }
+  // 34: blocked board tickets are actually stuck (error) — distinct from paused-by-design idle cards (info)
+  try {
+    for (const t of readBoard().tickets) {
+      if (t.blocked) items.push({ key: 'board:blk:' + t.id + ':' + t.blocked.at, kind: 'board', severity: 'error', text: `ticket "${t.title}" blocked by ${t.blocked.by}: ${t.blocked.needed || t.blocked.reason}`.slice(0, 140), ts: t.blocked.at, section: 'board' })
+      else if (['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage) && !boardRuns.get(t.id)) items.push({ key: 'board:idle:' + t.id + ':' + t.stage, kind: 'board', severity: 'info', text: `ticket "${t.title}" is waiting for your ${t.stage === 'code-review' ? 'review run' : t.stage === 'ready-for-qa' ? 'QA run' : 'release'}`, ts: (t.history || []).slice(-1)[0]?.at || t.createdAt, section: 'board' })
+    }
+  } catch {}
   try {
     const dismissed = readMeta().recsDismissed || {}
     for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)).slice(0, 8)) {
@@ -2238,6 +2269,949 @@ setInterval(() => {
     }
   } catch {}
 }, 60_000)
+
+// ---------- agent teams: activation flag + team designer with AI review ----------
+const TEAMS_FLAG = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'
+app.get('/api/team/flag', (req, res) => {
+  const s = readJson(settingsFileFor('global'), {})
+  res.json({ enabled: s.env?.[TEAMS_FLAG] === '1' })
+})
+app.post('/api/team/flag', (req, res) => {
+  const file = settingsFileFor('global')
+  const s = readJson(file, {})
+  s.env ||= {}
+  if (req.body.enable === false) delete s.env[TEAMS_FLAG]
+  else s.env[TEAMS_FLAG] = '1'
+  // applied directly (not proposed): explicitly user-initiated, versioned & reversible in Governance
+  track(file, JSON.stringify(s, null, 2), { summary: (req.body.enable === false ? 'disable' : 'enable') + ' agent teams flag' })
+  res.json({ ok: true, enabled: req.body.enable !== false })
+})
+
+const TEAM_DESIGNS = path.join(CLAUDE, 'team-designs.json')
+app.get('/api/team/designs', (req, res) => res.json(readJson(TEAM_DESIGNS, [])))
+app.put('/api/team/designs', (req, res) => {
+  track(TEAM_DESIGNS, JSON.stringify(req.body.designs || [], null, 2), { summary: 'update team designs' })
+  res.json({ ok: true })
+})
+
+// AI review of a team design — same claude -p mechanism the eval runner uses
+app.post('/api/team/design/review', (req, res) => {
+  const design = req.body.design
+  if (!design?.name || !Array.isArray(design.members)) return res.status(400).json({ error: 'design needs a name and members[]' })
+  const rubric = `You are reviewing an agent-team design for Claude Code agent teams (a lead session spawns teammates that share a task list and message each other). Judge it like a pragmatic senior engineer: teams cost tokens, so every member must earn its place. An agent whose job is a single transformation with no tool use or autonomy should be "just-a-prompt" (a skill/command instead). Overlapping members should be "merge". Members that add nothing should be "unnecessary".
+
+Reply with ONLY valid JSON (no markdown fences, no prose) matching exactly:
+{"score": <0-100>, "summary": "<2 sentences>",
+ "config": [{"check": "<configuration point>", "pass": true|false, "note": "<short>"}],
+ "members": [{"name": "<member name>", "verdict": "keep"|"just-a-prompt"|"unnecessary"|"merge", "reason": "<short>",
+   "inputs": "<what it consumes>", "outputs": "<what it returns>", "artifacts": ["<files/reports it generates>"],
+   "tasks": ["<initial task list>"], "skills": ["<skills it should use>"], "connectors": ["<MCP servers/tools>"], "adrs": ["<decisions to record>"]}],
+ "collaboration": [{"from": "<member>", "to": "<member>", "what": "<what flows on this edge>"}],
+ "risks": ["<top risks>"]}
+
+The design to review:
+${JSON.stringify(design, null, 2)}`
+  const child = spawn('claude', ['-p', rubric, '--output-format', 'json', '--dangerously-skip-permissions'], { cwd: HOME, env: process.env, shell: WIN })
+  let out = ''
+  const timer = setTimeout(() => { try { child.kill() } catch {}; res.status(504).json({ error: 'review timed out (180s)' }) }, 180_000)
+  child.stdout.on('data', d => out += d)
+  child.on('error', e => { clearTimeout(timer); res.status(500).json({ error: e.message }) })
+  child.on('exit', () => {
+    clearTimeout(timer)
+    if (res.headersSent) return
+    try {
+      const j = JSON.parse(out)
+      const raw = String(j.result || '')
+      const review = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1))
+      res.json({ review, cost: j.total_cost_usd || null, ms: j.duration_ms || null })
+    } catch (e) { res.status(500).json({ error: 'could not parse AI review: ' + e.message, raw: out.slice(0, 800) }) }
+  })
+})
+
+// ================= 25 bugs · 26 hooks · 27 CI gating · 28 analytics · 29 design drift · 30 review loop =================
+
+// ---------- 25: bug triage workspace ----------
+const BUGS_FILE = path.join(CLAUDE, 'bugs.json')
+const readBugs = () => readJson(BUGS_FILE, [])
+const writeBugs = b => track(BUGS_FILE, JSON.stringify(b, null, 2), { summary: 'update bugs' })
+function parseTrace(text) {
+  const frames = [], seen = new Set()
+  const push = (file, line, fn) => { const k = file + ':' + line; if (!seen.has(k) && frames.length < 20 && !/node_modules/.test(file)) { seen.add(k); frames.push({ file, line: Number(line) || null, fn: fn || null }) } }
+  for (const m of text.matchAll(/at (\S+) \((.*?):(\d+):\d+\)/g)) push(m[2], m[3], m[1])              // js: at fn (file:l:c)
+  for (const m of text.matchAll(/at ((?:\/|\.{1,2}\/|[A-Za-z]:\\)[^\s():]+):(\d+):\d+/g)) push(m[1], m[2]) // js: at file:l:c
+  for (const m of text.matchAll(/File "(.*?)", line (\d+)(?:, in (\S+))?/g)) push(m[1], m[2], m[3])   // python
+  for (const m of text.matchAll(/((?:\/|\.{1,2}\/)[\w./-]+\.\w{1,5}):(\d+)/g)) push(m[1], m[2])       // generic path:line
+  const links = [...text.matchAll(/https?:\/\/\S+/g)].map(m => m[0]).slice(0, 5)
+  return { frames, links }
+}
+app.get('/api/bugs', (req, res) => res.json(readBugs().map(b => ({ ...b, bisect: bisects.get(b.id) || null }))))
+app.post('/api/bugs', (req, res) => {
+  const { project, title, severity, intake } = req.body
+  if (!title?.trim()) return res.status(400).json({ error: 'title required' })
+  const bugs = readBugs()
+  const bug = { id: 'bug' + Date.now().toString(36), project: project || null, title: title.trim(), severity: severity || 'medium', status: 'open', intake: String(intake || '').slice(0, 20000), ...parseTrace(String(intake || '')), createdAt: Date.now(), fix: null }
+  bugs.push(bug); writeBugs(bugs)
+  res.json(bug)
+})
+app.patch('/api/bugs/:id', (req, res) => {
+  const bugs = readBugs()
+  const b = bugs.find(x => x.id === req.params.id)
+  if (!b) return res.status(404).json({ error: 'no such bug' })
+  for (const k of ['status', 'severity', 'title', 'project']) if (req.body[k] !== undefined) b[k] = req.body[k]
+  if (req.body.status === 'fixed' && !b.fix) b.fix = { at: Date.now(), configVersion: readVersions().slice(-1)[0]?.id || null, sessionId: req.body.sessionId || null }
+  writeBugs(bugs)
+  res.json(b)
+})
+app.delete('/api/bugs/:id', (req, res) => { writeBugs(readBugs().filter(b => b.id !== req.params.id)); res.json({ ok: true }) })
+// auto-bisect: async, poll status — culprit commit + diffstat + author
+const bisects = new Map() // bugId -> {status, log, culprit}
+app.post('/api/bugs/:id/bisect', (req, res) => {
+  const bug = readBugs().find(b => b.id === req.params.id)
+  const { good, cmd } = req.body
+  if (!bug?.project || !fs.existsSync(bug.project)) return res.status(400).json({ error: 'bug has no valid project' })
+  if (!good || !cmd) return res.status(400).json({ error: 'need a last-known-good ref and a repro command (exit 0 = good)' })
+  if (bisects.get(bug.id)?.status === 'running') return res.status(409).json({ error: 'bisect already running' })
+  bisects.set(bug.id, { status: 'running', startedAt: Date.now() })
+  res.json({ ok: true })
+  ;(async () => {
+    const g = args => spawnSync('git', ['-C', bug.project, ...args], { timeout: 600_000, maxBuffer: 8 * 1024 * 1024 })
+    try {
+      const dirty = g(['status', '--porcelain']).stdout.toString().trim()
+      if (dirty) return bisects.set(bug.id, { status: 'error', log: 'working tree is dirty — commit or stash first (bisect checks out old commits)' })
+      g(['bisect', 'reset'])
+      const start = g(['bisect', 'start', 'HEAD', good])
+      if (start.status !== 0) return bisects.set(bug.id, { status: 'error', log: start.stderr.toString().slice(0, 1000) })
+      const run = g(['bisect', 'run', 'sh', '-c', cmd])
+      const out = run.stdout.toString() + run.stderr.toString()
+      const m = /([0-9a-f]{40}) is the first bad commit/.exec(out)
+      let culprit = null
+      if (m) {
+        const show = g(['show', '-s', '--format=%h%n%an%n%ad%n%s', m[1]]).stdout.toString().split('\n')
+        culprit = { hash: m[1], short: show[0], author: show[1], date: show[2], subject: show[3], stat: g(['show', '--stat', '--format=', m[1]]).stdout.toString().slice(0, 2000) }
+      }
+      bisects.set(bug.id, { status: culprit ? 'done' : 'error', culprit, log: out.slice(-1500), finishedAt: Date.now() })
+    } catch (e) { bisects.set(bug.id, { status: 'error', log: e.message }) }
+    finally { g(['bisect', 'reset']) }
+  })()
+})
+// root-cause session prompt: trace + suspect files + git blame for the suspect lines
+app.get('/api/bugs/:id/context', (req, res) => {
+  const bug = readBugs().find(b => b.id === req.params.id)
+  if (!bug) return res.status(404).json({ error: 'no such bug' })
+  const blames = []
+  if (bug.project && fs.existsSync(bug.project)) {
+    for (const fr of (bug.frames || []).slice(0, 6)) {
+      if (!fr.line) continue
+      const rel = fr.file.startsWith('/') ? path.relative(bug.project, fr.file) : fr.file
+      if (rel.startsWith('..')) continue
+      const r = spawnSync('git', ['-C', bug.project, 'blame', '-L', `${Math.max(1, fr.line - 2)},${fr.line + 2}`, '--date=short', '--', rel], { timeout: 5000 })
+      if (r.status === 0) blames.push({ file: rel, line: fr.line, blame: r.stdout.toString().slice(0, 800) })
+    }
+  }
+  const culprit = bisects.get(bug.id)?.culprit
+  const prompt = [
+    `Root-cause this bug: ${bug.title} (severity: ${bug.severity})`,
+    '',
+    '## Trace / intake', '```', bug.intake.slice(0, 4000), '```',
+    (bug.frames || []).length ? '\n## Suspect files — read these first\n' + bug.frames.slice(0, 8).map(f => `- read @${f.file}${f.line ? ` (line ${f.line}${f.fn ? `, in ${f.fn}` : ''})` : ''}`).join('\n') : '',
+    blames.length ? '\n## git blame around the suspect lines\n' + blames.map(b => `${b.file}:${b.line}\n\`\`\`\n${b.blame}\`\`\``).join('\n') : '',
+    culprit ? `\n## Bisect culprit\n${culprit.short} by ${culprit.author} (${culprit.date}): ${culprit.subject}\n\`\`\`\n${culprit.stat}\`\`\`` : '',
+    '\nFind the root cause, fix it, then write a regression test that fails before the fix and passes after.',
+  ].filter(Boolean).join('\n')
+  res.json({ prompt, blames, culprit: culprit || null })
+})
+
+// ---------- 26: native hooks — matcher test, dry-run, health, pattern library ----------
+app.post('/api/hooks/test', (req, res) => {
+  const { matcher, tool } = req.body
+  let fires, note = ''
+  if (!matcher) { fires = true; note = 'empty matcher matches every tool' }
+  else try { fires = new RegExp(`^(${matcher})$`).test(tool || '') } catch (e) { fires = matcher === tool; note = 'invalid regex — fell back to exact match' }
+  res.json({ fires, note })
+})
+app.post('/api/hooks/dryrun', (req, res) => {
+  const { command, event = 'PreToolUse', toolName = 'Bash', toolInput = {} } = req.body
+  if (!command) return res.status(400).json({ error: 'command required' })
+  const payload = JSON.stringify({ hook_event_name: event, tool_name: toolName, tool_input: toolInput, cwd: HOME, session_id: 'dryrun' })
+  const child = spawn('sh', ['-c', command], { cwd: HOME, env: process.env, shell: false })
+  let out = '', err = ''
+  const t0 = Date.now()
+  const timer = setTimeout(() => { try { child.kill() } catch {}; res.json({ exit: null, decision: 'timeout (10s)', stdout: out.slice(0, 800), stderr: err.slice(0, 800) }) }, 10_000)
+  child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d)
+  child.stdin.write(payload); child.stdin.end()
+  child.on('error', e => { clearTimeout(timer); if (!res.headersSent) res.json({ exit: null, decision: 'spawn error', stderr: e.message }) })
+  child.on('exit', code => {
+    clearTimeout(timer)
+    if (res.headersSent) return
+    let decision = code === 0 ? 'allow' : code === 2 ? 'BLOCK (exit 2)' : `non-blocking error (exit ${code})`
+    try { const j = JSON.parse(out); if (j.decision) decision = j.decision + ' (json)' } catch {}
+    res.json({ exit: code, decision, ms: Date.now() - t0, stdout: out.slice(0, 800), stderr: err.slice(0, 800) })
+  })
+})
+app.get('/api/hooks/health', (req, res) => {
+  const { hooks, hookBlocks, sessions } = scanTranscripts()
+  const total = Object.values(hooks).reduce((a, b) => a + b, 0)
+  res.json({ byEvent: hooks, blocks: hookBlocks, total, sessions: sessions.filter(s => !s.isAgent).length,
+    // ponytail: firings counted from transcript hook-context lines — latency is not recorded there; measure a hook's cost with dry-run
+    note: 'firings parsed from transcript hook-output lines · per-call latency not in transcripts — use dry-run to time a hook' })
+})
+const HOOK_LIBRARY = [
+  { name: 'block-prod-file-edit', event: 'PreToolUse', matcher: 'Edit|Write', description: 'blocks edits to .env, secrets, and prod-named paths',
+    command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=(JSON.parse(s).tool_input||{}).file_path||'';if(/\\.env|secrets\\/|\\bprod(uction)?\\b/.test(p)){console.error('blocked: protected path '+p);process.exit(2)}})"` },
+  { name: 'secret-scan-pre-write', event: 'PreToolUse', matcher: 'Edit|Write', description: 'blocks writes whose content looks like a credential (AWS key, private key, password=)',
+    command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const i=JSON.parse(s).tool_input||{};const c=(i.content||i.new_string||'');if(/AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|password\\s*=\\s*['\\\"][^'\\\"]{6,}/.test(c)){console.error('blocked: looks like a secret');process.exit(2)}})"` },
+  { name: 'require-tests-before-stop', event: 'Stop', matcher: '', description: 'refuses to finish if source changed but no test file was touched',
+    command: `sh -c 'CH=$(git diff --name-only HEAD 2>/dev/null); echo "$CH" | grep -qE "\\.(ts|js|py|go|tsx)$" || exit 0; echo "$CH" | grep -qE "(test|spec)" && exit 0; echo "source changed but no tests touched" >&2; exit 2'` },
+  { name: 'log-tool-usage', event: 'PostToolUse', matcher: '', description: 'appends every tool call to ~/.claude/tool-log.jsonl for auditing',
+    command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);require('fs').appendFileSync(require('os').homedir()+'/.claude/tool-log.jsonl',JSON.stringify({t:Date.now(),tool:j.tool_name})+'\\n')})"` },
+]
+app.get('/api/hooks/library', (req, res) => res.json(HOOK_LIBRARY))
+app.post('/api/hooks/install', (req, res) => {
+  const pat = HOOK_LIBRARY.find(h => h.name === req.body.name)
+  const scope = req.body.scope || 'global'
+  if (!pat) return res.status(404).json({ error: 'unknown pattern' })
+  const file = settingsFileFor(scope)
+  const s = readJson(file, {})
+  s.hooks ||= {}
+  s.hooks[pat.event] ||= []
+  if (s.hooks[pat.event].some(g => (g.hooks || []).some(h => h.command === pat.command))) return res.json({ ok: true, already: true })
+  s.hooks[pat.event].push({ matcher: pat.matcher, hooks: [{ type: 'command', command: pat.command, timeout: 10 }] })
+  const content = JSON.stringify(s, null, 2)
+  if (scope === 'global') return res.json({ ok: true, proposed: propose(file, content, `install hook pattern "${pat.name}"`) })
+  track(file, content, { scope, summary: `install hook pattern "${pat.name}"` })
+  res.json({ ok: true })
+})
+
+// ---------- 27: CI/CD eval gating ----------
+const ciWorkflowPath = (project, provider) => provider === 'gitlab' ? path.join(project, '.gitlab-ci.yml') : path.join(project, '.github', 'workflows', 'harness-evals.yml')
+function ciYaml(provider, minPass) {
+  const runner = `node -e "const fs=require('fs'),{execSync}=require('child_process');const tasks=JSON.parse(fs.readFileSync('.claude/harness-evals.json','utf8'));let pass=0;for(const t of tasks){let ok=false;try{const r=JSON.parse(execSync('claude -p '+JSON.stringify(t.prompt)+' --output-format json --dangerously-skip-permissions',{timeout:180000,encoding:'utf8'}));ok=new RegExp(t.expect).test(r.result||'')}catch(e){}console.log((ok?'PASS':'FAIL')+' '+t.name);if(ok)pass++}const rate=pass/tasks.length;console.log('pass rate '+Math.round(rate*100)+'% (gate ${Math.round(minPass * 100)}%)');if(rate<${minPass})process.exit(1)"`
+  if (provider === 'gitlab') return `# generated by claude-dashboard — harness eval gate (min pass ${Math.round(minPass * 100)}%)
+harness-evals:
+  image: node:22
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [".claude/**/*"]
+  script:
+    - npm install -g @anthropic-ai/claude-code
+    - ${runner}
+  variables:
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+`
+  return `# generated by claude-dashboard — harness eval gate (min pass ${Math.round(minPass * 100)}%)
+name: harness-evals
+on:
+  pull_request:
+    paths: ['.claude/**']
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: ${runner}
+        env:
+          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+`
+}
+app.get('/api/ci/status', (req, res) => {
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  let existing = null
+  for (const provider of ['github', 'gitlab']) {
+    const p = ciWorkflowPath(project, provider)
+    const src = readIf(p)
+    if (src && src.includes('harness-eval')) existing = { provider, path: p, minPass: Number((/min pass (\d+)%/.exec(src) || [])[1] || 0) / 100 }
+  }
+  const gh = spawnSync('gh', ['--version'], { timeout: 3000 })
+  res.json({ workflow: existing, ghAvailable: gh.status === 0, evalsInRepo: fs.existsSync(path.join(project, '.claude', 'harness-evals.json')) })
+})
+app.post('/api/ci/generate', (req, res) => {
+  const { project, provider = 'github', minPass = 0.9, dryRun } = req.body
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const files = [
+    { rel: path.relative(project, ciWorkflowPath(project, provider)), content: ciYaml(provider, minPass) },
+    { rel: '.claude/harness-evals.json', content: JSON.stringify(readJson(EVALS_FILE, DEFAULT_EVALS), null, 2) }, // evals must live in-repo for CI
+  ]
+  if (dryRun) return res.json({ files: files.map(f => ({ ...f, exists: fs.existsSync(path.join(project, f.rel)) })) })
+  for (const f of files) track(path.join(project, f.rel), f.content, { scope: project, summary: `CI eval gate (${provider}, min ${Math.round(minPass * 100)}%)` })
+  res.json({ ok: true, written: files.map(f => f.rel), note: 'set the ANTHROPIC_API_KEY secret in your repo settings' })
+})
+app.get('/api/ci/runs', (req, res) => {
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const r = spawnSync('gh', ['run', 'list', '--workflow', 'harness-evals.yml', '--json', 'status,conclusion,createdAt,headBranch,displayTitle,url', '--limit', '15'], { cwd: project, timeout: 15000 })
+  if (r.status !== 0) return res.json({ error: (r.stderr || '').toString().slice(0, 200) || 'gh CLI unavailable or no workflow runs', runs: [] })
+  try { res.json({ runs: JSON.parse(r.stdout.toString()).map(x => ({ ...x, source: 'CI' })) }) } catch { res.json({ runs: [] }) }
+})
+
+// ---------- 28: analytics instrumentation registry + taxonomy drift ----------
+const TRACK_RE = /(?:\.|\b)(track|capture|logEvent|trackEvent|recordEvent)\s*\(\s*['"`]([\w .:/-]{3,60})['"`]/
+const SRC_EXT = /\.(js|jsx|ts|tsx|py|swift|kt|java|vue|rb)$/
+function scanTracking(project) {
+  const events = new Map() // name -> {locations, props}
+  let filesScanned = 0
+  const walkT = (d, depth) => {
+    if (depth > 6 || filesScanned > 4000) return
+    let entries; try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || ['node_modules', 'dist', 'build', 'vendor', 'coverage'].includes(e.name)) continue
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) { walkT(p, depth + 1); continue }
+      if (!SRC_EXT.test(e.name) || filesScanned > 4000) continue
+      filesScanned++
+      let src; try { src = fs.readFileSync(p, 'utf8') } catch { continue }
+      if (src.length > 1024 * 1024) continue
+      src.split('\n').forEach((line, i) => {
+        const m = TRACK_RE.exec(line)
+        if (!m) return
+        const ev = events.get(m[2]) || { name: m[2], locations: [], props: new Set() }
+        if (ev.locations.length < 20) ev.locations.push({ file: path.relative(project, p), line: i + 1, callee: m[1] })
+        const propM = /\{([^{}]*)\}/.exec(line.slice(m.index))
+        if (propM) for (const k of propM[1].split(',').map(s => s.split(':')[0].trim()).filter(s => /^\w+$/.test(s))) ev.props.add(k)
+        events.set(m[2], ev)
+      })
+    }
+  }
+  walkT(project, 0)
+  return { events: [...events.values()].map(e => ({ ...e, props: [...e.props] })), filesScanned }
+}
+const caseOf = n => /^[a-z0-9]+(_[a-z0-9]+)*$/.test(n) ? 'snake_case' : /^[a-z0-9]+([A-Z][a-z0-9]*)+$/.test(n) ? 'camelCase' : /^[\w]+([./:][\w]+)+$/.test(n) ? 'dot.separated' : /^[A-Z]/.test(n) ? 'TitleCase' : 'other'
+const taxonomyPath = project => path.join(project, '.claude', 'analytics-taxonomy.json')
+function analyticsRegistry(project) {
+  const { events, filesScanned } = scanTracking(project)
+  const tax = readJson(taxonomyPath(project), null)
+  const convention = tax?.convention || (() => { // derive dominant style
+    const c = {}; for (const e of events) c[caseOf(e.name)] = (c[caseOf(e.name)] || 0) + 1
+    return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || null
+  })()
+  const known = new Set((tax?.events || []).map(e => e.name))
+  const checked = events.map(e => {
+    const issues = []
+    if (convention && caseOf(e.name) !== convention) issues.push(`naming: ${caseOf(e.name)} — convention is ${convention}`)
+    if (tax && !known.has(e.name)) issues.push('not in taxonomy')
+    const req = (tax?.events || []).find(x => x.name === e.name)?.required || []
+    for (const r of req) if (!e.props.includes(r)) issues.push(`missing required property "${r}"`)
+    // near-duplicate name check
+    const twin = events.find(o => o !== e && o.name.toLowerCase().replace(/[_.\s-]/g, '') === e.name.toLowerCase().replace(/[_.\s-]/g, ''))
+    if (twin) issues.push(`near-duplicate of "${twin.name}"`)
+    return { ...e, count: e.locations.length, issues, ok: issues.length === 0 }
+  })
+  const missing = (tax?.events || []).filter(e => !events.some(x => x.name === e.name)).map(e => e.name)
+  return { events: checked.sort((a, b) => b.count - a.count), convention, taxonomy: tax ? taxonomyPath(project) : null, missingFromCode: missing, filesScanned }
+}
+app.get('/api/analytics/registry', (req, res) => {
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  res.json(analyticsRegistry(project))
+})
+app.post('/api/analytics/taxonomy', (req, res) => { // bootstrap taxonomy from what the code does today
+  const project = req.body.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const reg = analyticsRegistry(project)
+  const tax = { convention: reg.convention, events: reg.events.map(e => ({ name: e.name, required: e.props.slice(0, 8) })) }
+  track(taxonomyPath(project), JSON.stringify(tax, null, 2), { scope: project, summary: 'bootstrap analytics taxonomy from code' })
+  res.json({ ok: true, path: taxonomyPath(project), events: tax.events.length })
+})
+app.get('/api/analytics/drift', (req, res) => { // uncommitted new events vs taxonomy — catch drift before commit
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const r = spawnSync('git', ['-C', project, 'diff', 'HEAD', '--unified=0'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 })
+  const tax = readJson(taxonomyPath(project), null)
+  const known = new Set((tax?.events || []).map(e => e.name))
+  const added = []
+  for (const line of (r.stdout || '').toString().split('\n')) {
+    if (!line.startsWith('+') || line.startsWith('+++')) continue
+    const m = TRACK_RE.exec(line)
+    if (m) added.push({ name: m[2], issues: [tax && !known.has(m[2]) && 'not in taxonomy', tax?.convention && caseOf(m[2]) !== tax.convention && `naming: ${caseOf(m[2])} vs ${tax.convention}`].filter(Boolean) })
+  }
+  res.json({ added, hasTaxonomy: !!tax })
+})
+
+// ---------- 29: design-system drift vs Figma manifest + MCP call budget ----------
+const manifestPath = project => path.join(project, '.claude', 'design-manifest.json')
+function scanComponents(project) {
+  const comps = new Map()
+  let n = 0
+  let dirs = ['src/components', 'src/ui', 'components', 'app/components', 'src'].map(d => path.join(project, d)).filter(fs.existsSync)
+  if (!dirs.length) dirs = [project] // monorepo / nested layout — walk the root instead
+  const walkC = (d, depth) => {
+    if (depth > 4 || n > 1500) return
+    let entries; try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) { walkC(p, depth + 1); continue }
+      if (!/\.(jsx|tsx|vue|swift)$/.test(e.name)) continue
+      n++
+      let src; try { src = fs.readFileSync(p, 'utf8') } catch { continue }
+      for (const m of src.matchAll(/export (?:default )?(?:function|const) ([A-Z]\w+)/g)) {
+        const name = m[1]
+        const propM = new RegExp(`(?:function ${name}|const ${name} =[^(]*)\\(\\s*\\{([^}]*)\\}`).exec(src)
+        const props = propM ? propM[1].split(',').map(s => s.split(/[:=]/)[0].trim()).filter(s => /^\w+$/.test(s)) : []
+        if (!comps.has(name)) comps.set(name, { name, file: path.relative(project, p), props })
+      }
+    }
+  }
+  for (const d of [...new Set(dirs)]) walkC(d, 0)
+  return [...comps.values()]
+}
+function designDrift(project) {
+  const manifest = readJson(manifestPath(project), null)
+  const code = scanComponents(project)
+  if (!manifest) return { manifest: null, code: code.length, drifts: [] }
+  const drifts = []
+  const byName = Object.fromEntries(code.map(c => [c.name, c]))
+  for (const [name, spec] of Object.entries(manifest.components || {})) {
+    const c = byName[name]
+    if (!c) { drifts.push({ component: name, type: 'missing-in-code', detail: 'in the Figma manifest but not implemented', figmaNode: spec.figmaNode || null }); continue }
+    for (const p of spec.props || []) if (!c.props.includes(p)) drifts.push({ component: name, type: 'prop-drift', detail: `manifest prop "${p}" not in code (${c.file}) — renamed or dropped?`, figmaNode: spec.figmaNode || null })
+    for (const v of spec.variants || []) if (!c.props.includes('variant') && !(spec.props || []).includes(v)) continue
+  }
+  for (const c of code) if (!manifest.components?.[c.name] && c.props.length) drifts.push({ component: c.name, type: 'undocumented', detail: `${c.file} — in code but not in the Figma manifest`, figmaNode: null })
+  return { manifest: manifestPath(project), code: code.length, drifts: drifts.slice(0, 80) }
+}
+app.get('/api/design/drift', (req, res) => {
+  const project = req.query.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  // figma MCP usage from transcripts — call budget awareness for batch design work
+  const { invocations } = scanTranscripts()
+  const proj = mangle(project)
+  const figma = invocations.filter(i => i.kind === 'mcp' && /figma/i.test(i.name))
+  const day = Date.now() - 86400_000, week = Date.now() - 7 * 86400_000
+  res.json({
+    ...designDrift(project),
+    figmaCalls: { day: figma.filter(i => i.proj === proj && i.t >= day).length, week: figma.filter(i => i.proj === proj && i.t >= week).length, allProjectsDay: figma.filter(i => i.t >= day).length },
+  })
+})
+app.post('/api/design/manifest', (req, res) => { // bootstrap manifest from code — a Figma MCP session can then enrich it with node ids/variants
+  const project = req.body.project
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const comps = scanComponents(project)
+  const manifest = { generatedFrom: 'code', createdAt: Date.now(), components: Object.fromEntries(comps.map(c => [c.name, { props: c.props, variants: [], figmaNode: null }])) }
+  track(manifestPath(project), JSON.stringify(manifest, null, 2), { scope: project, summary: 'bootstrap design manifest from code' })
+  res.json({ ok: true, path: manifestPath(project), components: comps.length })
+})
+
+// ---------- 30: code review loop — /review & /security-review history from transcripts ----------
+function reviewData(project) {
+  const { reviews } = scanTranscripts()
+  const proj = project ? mangle(project) : null
+  const rel = reviews.filter(r => !proj || r.proj === proj).sort((a, b) => b.t - a.t)
+  const sessions = rel.slice(0, 60).map(r => ({
+    t: r.t, proj: r.proj, sessionId: r.sessionId, source: r.isAgent ? 'subagent' : 'main', level: r.level,
+    findings: r.findings,
+    fixed: r.findings.filter(f => f.outcome === 'fixed').length,
+    dismissed: r.findings.filter(f => f.outcome === 'skipped' || f.outcome === 'no_change_needed').length,
+  }))
+  // recurring: same category across ≥3 distinct review passes
+  const byCat = {}
+  for (const r of rel) for (const f of r.findings) { const c = byCat[f.category] ||= { category: f.category, count: 0, passes: new Set(), examples: [] }; c.count++; c.passes.add(r.sessionId); if (c.examples.length < 3) c.examples.push(f.summary) }
+  const recurring = Object.values(byCat).filter(c => c.passes.size >= 3).map(c => ({ category: c.category, count: c.count, passes: c.passes.size, examples: c.examples }))
+    .sort((a, b) => b.count - a.count)
+  return { sessions, recurring, totalFindings: rel.reduce((s, r) => s + r.findings.length, 0) }
+}
+app.get('/api/reviews', (req, res) => res.json(reviewData(req.query.project)))
+
+// ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
+const BOARD_FILE = path.join(CLAUDE, 'taskboard.json')
+const WORKTREES = path.join(CLAUDE, 'board-worktrees')
+const DEFAULT_STAGES = ['backlog', 'in-progress', 'code-review', 'fixing', 'ready-for-qa', 'qa-running', 'bug-reported', 'ready-for-release', 'released']
+const DEFAULT_BOARD = {
+  teams: [], // {id, name, version, stages: {dev|review|qa: {model, instructions}}}
+  pipelines: [
+    { id: 'default', name: 'Team Production', version: 1, stages: DEFAULT_STAGES, wip: {} },
+    { id: 'solo', name: 'Solo Side Project', version: 1, stages: ['backlog', 'in-progress', 'ready-for-release', 'released'], wip: {} },
+  ],
+  projects: {}, // proj -> {pipeline, base, branchPrefix, mergeMethod, requirePr, defaultModel, previewCmd, previewStopCmd, previewIdleMin, qaSeesFindings}
+  tickets: [],
+}
+const readBoard = () => { const b = readJson(BOARD_FILE, {}); return { ...DEFAULT_BOARD, ...b, pipelines: b.pipelines?.length ? b.pipelines : DEFAULT_BOARD.pipelines } }
+const writeBoard = b => track(BOARD_FILE, JSON.stringify(b, null, 2), { summary: 'update task board' })
+const projCfg = (board, project) => ({ pipeline: 'default', base: 'main', branchPrefix: 'ticket/', mergeMethod: 'merge', requirePr: false, defaultModel: '', previewCmd: '', previewStopCmd: '', previewIdleMin: 240, qaSeesFindings: false, ...(board.projects[project] || {}) })
+const tkt = (board, id) => board.tickets.find(t => t.id === id)
+const stamp = (t, to, note) => { (t.history ||= []).push({ at: Date.now(), from: t.stage, to, note: note || '' }); t.stage = to }
+const blockT = (t, by, category, reason, needed) => { t.blocked = { at: Date.now(), by, category, reason: String(reason).slice(0, 1500), needed: needed || '' }; (t.history ||= []).push({ at: Date.now(), from: t.stage, to: 'blocked:' + category, note: String(reason).slice(0, 200) }) }
+const pct = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))] }
+const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { const m = re.exec(s || ''); if (m) try { return JSON.parse(m[0]) } catch {} } return null }
+
+// one-shot headless agent run — same claude -p pattern as evals/team-plan; BLOCKED: marker = feature 34
+const boardRuns = new Map() // ticketId -> {kind, startedAt}
+function runAgent({ cwd, prompt, model, timeoutMs = 1800_000, resume }) {
+  return new Promise(resolve => {
+    const args = ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions']
+    if (model) args.push('--model', model)
+    if (resume) args.push('--resume', resume)
+    const child = spawn('claude', args, { cwd, env: process.env, shell: WIN })
+    let out = '', err = ''
+    const timer = setTimeout(() => { try { child.kill() } catch {}; resolve({ error: 'timeout after ' + timeoutMs / 60000 + 'min' }) }, timeoutMs)
+    child.stdout.on('data', d => out += d)
+    child.stderr.on('data', d => err += d)
+    child.on('error', e => { clearTimeout(timer); resolve({ error: e.message }) })
+    child.on('exit', () => {
+      clearTimeout(timer)
+      try {
+        const j = JSON.parse(out)
+        const blocked = /^BLOCKED:\s*(.+)/m.exec(j.result || '')
+        resolve({ result: j.result || '', blocked: blocked?.[1] || null, cost: j.total_cost_usd || 0, turns: j.num_turns || 0, sessionId: j.session_id || null, ms: j.duration_ms || 0 })
+      } catch { resolve({ error: (err || out).slice(0, 1200) || 'no output from claude' }) }
+    })
+  })
+}
+function recordRun(t, kind, model, r, handoff) {
+  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff }) // handoff = feature 36 audit: what was passed vs deliberately excluded
+}
+const teamStage = (board, t, stageKind) => { const team = board.teams.find(x => x.id === t.team); const s = team?.stages?.[stageKind] || {}; return { model: t.model || s.model || projCfg(board, t.project).defaultModel || undefined, instructions: s.instructions || '' } }
+const gitB = (project, args, timeout = 60_000) => spawnSync('git', ['-C', project, ...args], { timeout, maxBuffer: 8 * 1024 * 1024 })
+const changedFiles = (project, base, ref) => { const r = gitB(project, ['diff', '--name-only', `${base}...${ref}`]); return r.status === 0 ? r.stdout.toString().trim().split('\n').filter(Boolean) : [] }
+// 35: early conflict warning — overlapping changed files vs other in-flight branches (best-effort, after work exists)
+function conflictScan(board, t) {
+  if (!t.branch || !fs.existsSync(t.project)) return
+  const cfg = projCfg(board, t.project)
+  const mine = new Set(changedFiles(t.project, cfg.base, t.branch))
+  t.conflictRisk = []
+  for (const o of board.tickets) {
+    if (o.id === t.id || o.project !== t.project || !o.branch || o.stage === 'released' || o.stage === 'backlog') continue
+    const overlap = changedFiles(t.project, cfg.base, o.branch).filter(f => mine.has(f))
+    if (overlap.length) t.conflictRisk.push({ ticket: o.id, title: o.title, files: overlap.slice(0, 10) })
+  }
+}
+function ensureWorktree(board, t) {
+  const cfg = projCfg(board, t.project)
+  t.branch ||= cfg.branchPrefix + t.id
+  t.worktree ||= path.join(WORKTREES, t.id)
+  if (fs.existsSync(path.join(t.worktree, '.git'))) return null
+  fs.mkdirSync(WORKTREES, { recursive: true })
+  // 35 stacked mode: dependent branches base on their blocker's branch when it exists
+  const dep = (t.deps || []).map(d => tkt(board, d)).find(d => d?.branch && d.project === t.project)
+  const baseRef = dep?.branch && gitB(t.project, ['rev-parse', '--verify', dep.branch]).status === 0 ? dep.branch : cfg.base
+  const r = gitB(t.project, ['worktree', 'add', t.worktree, '-b', t.branch, baseRef])
+  if (r.status !== 0) {
+    const r2 = gitB(t.project, ['worktree', 'add', t.worktree, t.branch]) // branch already exists — reattach
+    if (r2.status !== 0) return (r.stderr.toString() + r2.stderr.toString()).slice(0, 800)
+  }
+  t.basedOn = baseRef
+  return null
+}
+
+app.get('/api/board', (req, res) => {
+  const board = readBoard()
+  const project = req.query.project
+  const tickets = board.tickets.filter(t => !project || t.project === project).map(t => ({
+    ...t,
+    running: boardRuns.get(t.id) || null,
+    depBlocked: (t.deps || []).filter(d => { const o = tkt(board, d); return o && !['ready-for-release', 'released'].includes(o.stage) }),
+  }))
+  res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
+})
+app.post('/api/board/tickets', (req, res) => {
+  const { project, title, desc, parent, deps, team, model, type } = req.body
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'valid project required' })
+  if (!title?.trim()) return res.status(400).json({ error: 'title required' })
+  const board = readBoard()
+  const cfg = projCfg(board, project)
+  const pipe = board.pipelines.find(p => p.id === cfg.pipeline) || board.pipelines[0]
+  const t = {
+    id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    project, title: title.trim(), desc: String(desc || '').slice(0, 20000), type: type || 'feature',
+    parent: parent || null, deps: deps || [], team: team || null, model: model || null,
+    stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`, // 37: in-flight tickets keep the template version they started on
+    blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
+    history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created' }], createdAt: Date.now(), releasedAt: null,
+  }
+  board.tickets.push(t); writeBoard(board)
+  res.json(t)
+})
+app.patch('/api/board/tickets/:id', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  for (const k of ['title', 'desc', 'team', 'model', 'deps', 'qa', 'type']) if (req.body[k] !== undefined) t[k] = req.body[k]
+  if (req.body.stage && req.body.stage !== t.stage) {
+    stamp(t, req.body.stage, 'manual move')
+    if (req.body.stage === 'released') { t.releasedAt = Date.now(); stopPreview(t) }
+  }
+  if (req.body.blocked === null && t.blocked) { t.blocked = null; (t.history ||= []).push({ at: Date.now(), from: 'blocked', to: t.stage, note: 'manually unblocked' }) }
+  writeBoard(board); res.json(t)
+})
+app.delete('/api/board/tickets/:id', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (t) { stopPreview(t); if (t.worktree && fs.existsSync(t.worktree)) gitB(t.project, ['worktree', 'remove', '--force', t.worktree]) }
+  board.tickets = board.tickets.filter(x => x.id !== req.params.id)
+  writeBoard(board); res.json({ ok: true })
+})
+
+// 31: intake analysis — agent proposes an independently-workable sub-ticket breakdown
+app.post('/api/board/tickets/:id/analyze', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  if (boardRuns.has(t.id)) return res.status(409).json({ error: 'a run is already active on this ticket' })
+  const { model } = teamStage(board, t, 'dev')
+  boardRuns.set(t.id, { kind: 'analyze', startedAt: Date.now() })
+  res.json({ ok: true })
+  ;(async () => {
+    const prompt = `Analyze this ticket and propose a breakdown into independently-workable sub-tickets (e.g. "add API endpoint", "add frontend form", "write migration"). Explore the codebase briefly to ground the breakdown.\n\n## Ticket: ${t.title}\n${t.desc}\n\nReturn ONLY a JSON array: [{"title": "...", "desc": "1-3 sentence scope incl. likely files", "deps": [indices of sub-tickets this one is blocked by]}]. 2-6 sub-tickets; fewer is better.`
+    const r = await runAgent({ cwd: t.project, prompt, model, timeoutMs: 300_000 })
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    boardRuns.delete(t.id)
+    if (!t2) return
+    recordRun(t2, 'analyze', model, r, { passed: ['ticket title+desc', 'codebase (agent-explored)'], excluded: ['prior tickets', 'chat history'] })
+    t2.proposal = r.error ? null : (extractJson(r.result) || []).filter(s => s.title).slice(0, 8)
+    writeBoard(b2)
+  })().catch(() => boardRuns.delete(t.id))
+})
+app.post('/api/board/tickets/:id/breakdown', (req, res) => { // accept (possibly user-edited) breakdown → child tickets
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  const subs = (req.body.subs || []).filter(s => s.title?.trim())
+  const ids = subs.map(() => 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5))
+  subs.forEach((s, i) => board.tickets.push({
+    id: ids[i], project: t.project, title: s.title.trim(), desc: String(s.desc || ''), type: 'sub', parent: t.id,
+    deps: (s.deps || []).map(d => ids[d]).filter(Boolean), team: t.team, model: t.model,
+    stage: 'backlog', stages: t.stages, pipelineVersion: t.pipelineVersion,
+    blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
+    history: [{ at: Date.now(), from: null, to: 'backlog', note: 'from breakdown of ' + t.id }], createdAt: Date.now(), releasedAt: null,
+  }))
+  t.proposal = null
+  writeBoard(board); res.json({ ok: true, created: ids.length })
+})
+
+// Backlog → In Progress: dev agent in an isolated worktree branch. 36: gets ticket + breakdown + linked context, NOT prior tickets' history.
+function startTicket(id, { model: modelOverride, reply, resume } = {}, res) {
+  const board = readBoard(); const t = tkt(board, id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  if (boardRuns.has(t.id)) return res.status(409).json({ error: 'already running' })
+  const unmet = (t.deps || []).map(d => tkt(board, d)).filter(d => d && !['ready-for-release', 'released'].includes(d.stage))
+  if (unmet.length) return res.status(400).json({ error: 'blocked by: ' + unmet.map(d => d.title).join(', ') })
+  const pipe = board.pipelines.find(p => p.id === projCfg(board, t.project).pipeline) || board.pipelines[0]
+  const wip = pipe.wip?.['in-progress']
+  if (wip && board.tickets.filter(x => x.project === t.project && x.stage === 'in-progress').length >= wip) return res.status(400).json({ error: `WIP limit for in-progress is ${wip}` })
+  if (modelOverride) t.model = modelOverride // mid-flight escalation lives on the ticket
+  const wtErr = ensureWorktree(board, t)
+  if (wtErr) { blockT(t, 'system', 'provision', 'worktree/branch creation failed: ' + wtErr); writeBoard(board); return res.status(400).json({ error: wtErr }) }
+  const { model, instructions } = teamStage(board, t, 'dev')
+  const kids = board.tickets.filter(x => x.parent === t.id)
+  stamp(t, 'in-progress', 'dev agent started' + (model ? ' (' + model + ')' : ''))
+  boardRuns.set(t.id, { kind: 'dev', startedAt: Date.now() })
+  writeBoard(board)
+  res.json({ ok: true })
+  ;(async () => {
+    const prompt = [
+      `Implement this ticket. You are in an isolated git worktree on branch ${t.branch} — commit incrementally with clear messages. Run the project's tests/build before declaring done.`,
+      instructions, `\n## Ticket: ${t.title}\n${t.desc}`,
+      kids.length ? '\n## Accepted sub-ticket breakdown\n' + kids.map(k => `- ${k.title}: ${k.desc}`).join('\n') : '',
+      t.type === 'bug' && t.qaEvidence ? '\n## QA evidence / repro\n' + t.qaEvidence : '',
+      reply ? '\n## Answer to your blocking question\n' + reply : '',
+      '\nIf you hit a genuinely ambiguous requirement, missing credential, or unresolvable dependency: stop and print a final line "BLOCKED: <exactly what you need>".',
+    ].filter(Boolean).join('\n')
+    const r = await runAgent({ cwd: t.worktree, prompt, model, resume })
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    boardRuns.delete(t.id)
+    if (!t2) return
+    recordRun(t2, 'dev', model, r, { passed: ['ticket', 'sub-ticket breakdown', 'worktree codebase + CLAUDE.md', ...(reply ? ['unblock reply'] : [])], excluded: ['prior tickets', 'other branches'] })
+    if (r.error) blockT(t2, 'dev agent', 'agent-error', r.error)
+    else if (r.blocked) blockT(t2, 'dev agent', 'needs-input', r.blocked, r.blocked)
+    else { stamp(t2, 'code-review', 'dev done — idle until you run code review'); conflictScan(b2, t2) }
+    writeBoard(b2)
+  })().catch(() => boardRuns.delete(t.id))
+}
+app.post('/api/board/tickets/:id/start', (req, res) => startTicket(req.params.id, req.body, res))
+
+// Code Review (manual trigger). 36: review agent gets diff + ticket + dev summary — not the dev transcript.
+app.post('/api/board/tickets/:id/review', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t?.worktree) return res.status(400).json({ error: 'no worktree — start the ticket first' })
+  if (boardRuns.has(t.id)) return res.status(409).json({ error: 'already running' })
+  const { model, instructions } = teamStage(board, t, 'review')
+  const cfg = projCfg(board, t.project)
+  const devRun = (t.runs || []).filter(r => r.kind === 'dev').pop()
+  boardRuns.set(t.id, { kind: 'review', startedAt: Date.now() })
+  writeBoard(board)
+  res.json({ ok: true })
+  ;(async () => {
+    const prompt = [
+      `Senior code review of this branch. Run \`git diff ${cfg.base}...HEAD\` and review the changes against the ticket. ${instructions}`,
+      `\n## Ticket: ${t.title}\n${t.desc}`,
+      devRun ? '\n## Dev agent summary of what it did\n' + devRun.summary : '',
+      '\nReturn ONLY JSON: [{"severity": "critical|high|medium|low", "file": "path", "summary": "one sentence"}]. Empty array [] if clean. critical/high = must fix before QA.',
+    ].filter(Boolean).join('\n')
+    const r = await runAgent({ cwd: t.worktree, prompt, model, timeoutMs: 900_000 })
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    boardRuns.delete(t.id)
+    if (!t2) return
+    recordRun(t2, 'review', model, r, { passed: ['diff vs ' + cfg.base, 'ticket', 'dev agent summary'], excluded: ['dev agent raw transcript'] })
+    if (r.error) blockT(t2, 'review agent', 'agent-error', r.error)
+    else {
+      t2.findings = (extractJson(r.result) || []).filter(f => f.summary).map(f => ({ ...f, at: Date.now() }))
+      const blocking = t2.findings.filter(f => ['critical', 'high'].includes(f.severity))
+      if (!blocking.length) { stamp(t2, 'ready-for-qa', `review clean (${t2.findings.length} minor) — idle until you run QA`); startPreview(b2, t2) } // 33: auto-provision on review-clean
+      else stamp(t2, 'code-review', `${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}`)
+    }
+    writeBoard(b2)
+  })().catch(() => boardRuns.delete(t.id))
+})
+
+// fix loop: dev agent gets findings + diff context, not a codebase re-read. Cap 3 iterations → Blocked (34).
+app.post('/api/board/tickets/:id/fix', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t?.findings?.length) return res.status(400).json({ error: 'no findings to fix' })
+  if (boardRuns.has(t.id)) return res.status(409).json({ error: 'already running' })
+  const fixes = (t.runs || []).filter(r => r.kind === 'fix').length
+  if (fixes >= 3) { blockT(t, 'fix loop', 'max-iterations', '3 fix iterations without a clean review — take over manually'); writeBoard(board); return res.status(400).json({ error: 'max fix iterations hit — ticket blocked' }) }
+  const { model } = teamStage(board, t, 'dev')
+  const cfg = projCfg(board, t.project)
+  stamp(t, 'fixing', 'auto-fixing review findings (' + (fixes + 1) + '/3)')
+  boardRuns.set(t.id, { kind: 'fix', startedAt: Date.now() })
+  writeBoard(board)
+  res.json({ ok: true })
+  ;(async () => {
+    const prompt = `Fix these code-review findings on the current branch (diff vs ${cfg.base}). Commit the fixes. Do NOT re-architect — address the findings only.\n\n## Ticket: ${t.title}\n\n## Findings\n${t.findings.map(f => `- [${f.severity}] ${f.file}: ${f.summary}`).join('\n')}`
+    const r = await runAgent({ cwd: t.worktree, prompt, model, resume: (t.runs || []).filter(x => x.kind === 'dev' && x.sessionId).pop()?.sessionId })
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    boardRuns.delete(t.id)
+    if (!t2) return
+    recordRun(t2, 'fix', model, r, { passed: ['findings', 'original diff context (resumed session when possible)'], excluded: ['full codebase re-read'] })
+    if (r.error) blockT(t2, 'fix agent', 'agent-error', r.error)
+    else stamp(t2, 'code-review', 'fixes committed — re-run code review')
+    writeBoard(b2)
+  })().catch(() => boardRuns.delete(t.id))
+})
+
+// 33: preview environments — plug-in point is a per-project shell command; URL parsed from its output
+const previews = new Map() // ticketId -> child
+function startPreview(board, t) {
+  const cfg = projCfg(board, t.project)
+  if (!cfg.previewCmd || previews.has(t.id)) return
+  const child = spawn('sh', ['-c', cfg.previewCmd], { cwd: t.worktree || t.project, env: { ...process.env, TICKET: t.id, BRANCH: t.branch || '', WORKTREE: t.worktree || '' }, detached: true })
+  previews.set(t.id, child)
+  let out = ''
+  const onData = d => {
+    out += d
+    const m = /https?:\/\/[^\s'"]+/.exec(out)
+    if (m && !t.preview?.url) {
+      const b2 = readBoard(); const t2 = tkt(b2, t.id)
+      if (t2) { t2.preview = { url: m[0], startedAt: Date.now() }; if (t2.qa) t2.qa.baseUrl = m[0]; else t2.qa = { baseUrl: m[0] }; writeBoard(b2) }
+    }
+  }
+  child.stdout.on('data', onData); child.stderr.on('data', onData)
+  child.on('exit', code => {
+    previews.delete(t.id)
+    if (code && !out.includes('http')) { // build/migration failure before serving → Blocked, not a silently broken ready-for-qa
+      const b2 = readBoard(); const t2 = tkt(b2, t.id)
+      if (t2 && t2.stage === 'ready-for-qa') { blockT(t2, 'preview provisioning', 'provision', 'preview command exited ' + code + ':\n' + out.slice(-1200)); writeBoard(b2) }
+    }
+  })
+}
+function stopPreview(t) {
+  const child = previews.get(t.id)
+  if (child) { try { process.kill(-child.pid) } catch { try { child.kill() } catch {} }; previews.delete(t.id) }
+  if (t.preview) t.preview = null
+}
+app.post('/api/board/tickets/:id/preview', (req, res) => { const b = readBoard(); const t = tkt(b, req.params.id); if (!t) return res.status(404).json({ error: 'no such ticket' }); startPreview(b, t); writeBoard(b); res.json({ ok: true }) })
+app.delete('/api/board/tickets/:id/preview', (req, res) => { const b = readBoard(); const t = tkt(b, req.params.id); if (t) { stopPreview(t); writeBoard(b) } res.json({ ok: true }) })
+setInterval(() => { // idle teardown — preview cost shouldn't outlive attention
+  const b = readBoard(); let dirty = false
+  for (const t of b.tickets) if (t.preview && Date.now() - t.preview.startedAt > projCfg(b, t.project).previewIdleMin * 60_000) { stopPreview(t); dirty = true }
+  if (dirty) writeBoard(b)
+}, 600_000).unref()
+
+// Ready for QA → QA Running (manual trigger). 36: QA gets ticket+AC+changed files+preview URL — NOT review findings unless opted in.
+app.post('/api/board/tickets/:id/qa', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t?.worktree) return res.status(400).json({ error: 'no worktree — start the ticket first' })
+  if (boardRuns.has(t.id)) return res.status(409).json({ error: 'already running' })
+  const pipe = board.pipelines.find(p => p.id === projCfg(board, t.project).pipeline) || board.pipelines[0]
+  const wip = pipe.wip?.['qa-running']
+  if (wip && board.tickets.filter(x => x.project === t.project && x.stage === 'qa-running').length >= wip) return res.status(400).json({ error: `WIP limit for qa-running is ${wip}` })
+  t.qa = { ...(t.qa || {}), ...req.body } // baseUrl, scope, env, login, notes
+  const cfg = projCfg(board, t.project)
+  const { model, instructions } = teamStage(board, t, 'qa')
+  const files = changedFiles(t.project, cfg.base, t.branch || 'HEAD')
+  stamp(t, 'qa-running', 'QA agent started')
+  boardRuns.set(t.id, { kind: 'qa', startedAt: Date.now() })
+  writeBoard(board)
+  res.json({ ok: true })
+  ;(async () => {
+    const prompt = [
+      `You are a QA agent. From the ticket below, derive acceptance criteria (if not given) and a concrete test-case list (functional, edge cases, regression-relevant). Execute each case: API assertions via curl, UI flows via browser tools if available — otherwise mark them "manual" with exact steps. Capture evidence (response bodies, observed text).`,
+      instructions,
+      `\n## Ticket: ${t.title}\n${t.desc}`,
+      `\n## Changed files (focus tests here)\n${files.slice(0, 40).join('\n') || '(unknown)'}`,
+      `\n## Environment\nbase URL: ${t.qa.baseUrl || '(none — API/unit-level checks only)'}\nenv: ${t.qa.env || 'staging'}\nscope: ${t.qa.scope || 'whole ticket'}\nlogin/notes: ${t.qa.notes || '-'}`,
+      cfg.qaSeesFindings && t.findings?.length ? '\n## Code-review findings (user opted QA in)\n' + t.findings.map(f => `- ${f.summary}`).join('\n') : '',
+      '\nReturn ONLY JSON: {"cases": [{"name": "...", "kind": "ui|api|manual", "pass": true|false, "severity": "critical|high|medium|low", "evidence": "≤300 chars"}]}',
+    ].filter(Boolean).join('\n')
+    const r = await runAgent({ cwd: t.worktree, prompt, model, timeoutMs: 1800_000 })
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    boardRuns.delete(t.id)
+    if (!t2) return
+    recordRun(t2, 'qa', model, r, { passed: ['ticket+AC', 'changed files list', 'preview URL + QA inputs', ...(cfg.qaSeesFindings ? ['review findings (opt-in)'] : [])], excluded: cfg.qaSeesFindings ? [] : ['code-review findings'] })
+    if (r.error) return blockT(t2, 'QA agent', 'agent-error', r.error), writeBoard(b2)
+    const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
+    const failed = cases.filter(c => c.pass === false)
+    ;(t2.qaResults ||= []).push({ at: Date.now(), cases, pass: !failed.length }) // saved per ticket — regression pack for future runs (feeds feature 4)
+    if (failed.length) {
+      stamp(t2, 'bug-reported', `${failed.length} QA failure${failed.length === 1 ? '' : 's'} — bugs filed`)
+      for (const c of failed.slice(0, 5)) b2.tickets.push({ // QA auto-files linked bug sub-tickets with repro + evidence + exact commit
+        id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        project: t2.project, title: 'QA bug: ' + c.name, type: 'bug', parent: t2.id,
+        desc: `QA-found on ${t2.branch} @ ${gitB(t2.project, ['rev-parse', '--short', t2.branch]).stdout?.toString().trim() || '?'}\nseverity: ${c.severity || 'medium'}\n\nrepro / evidence:\n${c.evidence || '(see QA run)'}`,
+        qaEvidence: c.evidence || '', deps: [], team: t2.team, model: t2.model,
+        stage: 'backlog', stages: t2.stages, pipelineVersion: t2.pipelineVersion,
+        blocked: null, branch: t2.branch, worktree: t2.worktree, qa: t2.qa, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
+        history: [{ at: Date.now(), from: null, to: 'backlog', note: 'auto-filed by QA on ' + t2.id }], createdAt: Date.now(), releasedAt: null,
+      })
+    } else stamp(t2, 'ready-for-release', 'QA clean — human release gate')
+    writeBoard(b2)
+  })().catch(() => boardRuns.delete(t.id))
+})
+
+// 35: release — merge queue (per-repo lock, no races), rebase attempt on conflict → Blocked with hunks. Human gate: only ever manual.
+const mergeLocks = new Map() // project -> Promise
+app.post('/api/board/tickets/:id/release', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  const cfg = projCfg(board, t.project)
+  if (cfg.requirePr) { // human-approved PR path: don't merge, hand over the command
+    stamp(t, 'released', 'marked released (PR flow)'); t.releasedAt = Date.now(); stopPreview(t); writeBoard(board)
+    return res.json({ ok: true, prCmd: `cd ${t.project} && gh pr create --head ${t.branch} --base ${cfg.base} --title "${t.title.replace(/"/g, '')}" --body "Ticket ${t.id}"` })
+  }
+  const prev = mergeLocks.get(t.project) || Promise.resolve()
+  const job = prev.then(() => {
+    const b2 = readBoard(); const t2 = tkt(b2, t.id)
+    if (!t2?.branch) return
+    const dirty = gitB(t2.project, ['status', '--porcelain']).stdout.toString().trim()
+    if (dirty) { blockT(t2, 'merge', 'merge-conflict', 'main working tree is dirty — commit or stash before releasing'); writeBoard(b2); return }
+    gitB(t2.project, ['checkout', cfg.base])
+    // second-to-merge rebases forward first; on conflict → Blocked with the conflicting hunks, never auto-resolved
+    const reb = spawnSync('git', ['-C', t2.worktree, 'rebase', cfg.base], { timeout: 120_000 })
+    if (reb.status !== 0) {
+      const hunks = spawnSync('git', ['-C', t2.worktree, 'diff'], { timeout: 30_000 }).stdout.toString().slice(0, 3000)
+      spawnSync('git', ['-C', t2.worktree, 'rebase', '--abort'], { timeout: 30_000 })
+      blockT(t2, 'merge', 'merge-conflict', 'rebase onto ' + cfg.base + ' conflicts:\n' + (reb.stderr.toString().slice(0, 500) || '') + '\n' + hunks)
+      writeBoard(b2); return
+    }
+    const method = cfg.mergeMethod === 'squash' ? ['merge', '--squash', t2.branch] : cfg.mergeMethod === 'rebase' ? ['merge', '--ff-only', t2.branch] : ['merge', '--no-ff', '-m', `merge: ${t2.title} (${t2.id})`, t2.branch]
+    const m = gitB(t2.project, method, 120_000)
+    if (m.status !== 0) { gitB(t2.project, ['merge', '--abort']); blockT(t2, 'merge', 'merge-conflict', m.stderr.toString().slice(0, 2000)); writeBoard(b2); return }
+    if (cfg.mergeMethod === 'squash') gitB(t2.project, ['commit', '-m', `${t2.title} (${t2.id})`])
+    const sha = gitB(t2.project, ['rev-parse', '--short', 'HEAD']).stdout.toString().trim()
+    stamp(t2, 'released', `merged ${t2.branch} → ${cfg.base} @ ${sha} (${cfg.mergeMethod})`) // audit: ticket + commit + agent/model in history & runs
+    t2.releasedAt = Date.now(); stopPreview(t2)
+    if (t2.worktree && fs.existsSync(t2.worktree)) gitB(t2.project, ['worktree', 'remove', '--force', t2.worktree])
+    writeBoard(b2)
+  }).catch(() => {})
+  mergeLocks.set(t.project, job)
+  job.then(() => { if (mergeLocks.get(t.project) === job) mergeLocks.delete(t.project) })
+  res.json({ ok: true, queued: true })
+})
+
+// 34: unblock — reply resumes the same agent with the answer injected
+app.post('/api/board/tickets/:id/unblock', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t?.blocked) return res.status(400).json({ error: 'ticket is not blocked' })
+  const lastSession = (t.runs || []).filter(r => r.sessionId).pop()?.sessionId
+  t.blocked = null
+  t.stage = 'backlog' // re-enters the dev flow; startTicket stamps in-progress
+  ;(t.history ||= []).push({ at: Date.now(), from: 'blocked', to: 'backlog', note: 'unblocked with reply' })
+  writeBoard(board)
+  startTicket(t.id, { reply: req.body.reply || '', resume: lastSession }, res)
+})
+
+// teams / pipelines / per-project config (8-style versioning: bumped on every save)
+app.post('/api/board/teams', (req, res) => {
+  const board = readBoard(); const team = req.body
+  if (!team.name?.trim()) return res.status(400).json({ error: 'name required' })
+  const existing = board.teams.find(x => x.id === team.id)
+  if (existing) Object.assign(existing, team, { version: (existing.version || 1) + 1 })
+  else board.teams.push({ ...team, id: 'team' + Date.now().toString(36), version: 1 })
+  writeBoard(board); res.json({ ok: true })
+})
+app.delete('/api/board/teams/:id', (req, res) => { const b = readBoard(); b.teams = b.teams.filter(x => x.id !== req.params.id); writeBoard(b); res.json({ ok: true }) })
+app.post('/api/board/pipelines', (req, res) => {
+  const board = readBoard(); const p = req.body
+  if (!p.name?.trim() || !p.stages?.length) return res.status(400).json({ error: 'name and stages required' })
+  const existing = board.pipelines.find(x => x.id === p.id)
+  if (existing) Object.assign(existing, p, { version: (existing.version || 1) + 1 })
+  else board.pipelines.push({ ...p, id: 'pipe' + Date.now().toString(36), version: 1 })
+  writeBoard(board); res.json({ ok: true })
+})
+app.post('/api/board/config', (req, res) => {
+  const { project, ...cfg } = req.body
+  if (!project) return res.status(400).json({ error: 'project required' })
+  const board = readBoard()
+  board.projects[project] = { ...projCfg(board, project), ...cfg }
+  writeBoard(board); res.json(board.projects[project])
+})
+
+// 32: task board analytics — all computed live from ticket history/runs, no stored numbers
+app.get('/api/board/analytics', (req, res) => {
+  const board = readBoard()
+  const days = Number(req.query.days) || 30
+  const since = Date.now() - days * 86400_000
+  const tickets = board.tickets.filter(t => (!req.query.project || t.project === req.query.project) && t.createdAt >= since - 90 * 86400_000)
+  const stageSet = [...new Set([...DEFAULT_STAGES, ...board.pipelines.flatMap(p => p.stages)])]
+  const columns = Object.fromEntries(stageSet.map(s => [s, tickets.filter(t => t.stage === s && !t.blocked).length]))
+  const blockedNow = tickets.filter(t => t.blocked)
+  // time-in-stage from history pairs (current stage counts up to now unless released)
+  const stageDur = {}, blockedDur = {}
+  for (const t of tickets) {
+    const h = t.history || []
+    for (let i = 0; i < h.length; i++) {
+      const end = h[i + 1]?.at ?? (t.stage === 'released' ? h[i].at : Date.now())
+      const d = Math.max(0, end - h[i].at)
+      if (h[i].to.startsWith('blocked:')) (blockedDur[h[i].to.slice(8)] ||= []).push(d)
+      else (stageDur[h[i].to] ||= []).push(d)
+    }
+  }
+  const released = tickets.filter(t => t.releasedAt && t.releasedAt >= since)
+  const cycles = released.map(t => t.releasedAt - t.createdAt)
+  const perDay = {}
+  for (const t of released) { const k = new Date(t.releasedAt).toISOString().slice(0, 10); perDay[k] = (perDay[k] || 0) + 1 }
+  const bugs = tickets.filter(t => t.type === 'bug' && t.parent)
+  // per team/model/agent quality + cost breakdowns
+  const groupBy = key => {
+    const g = {}
+    for (const t of tickets) {
+      const k = key(t) || '(none)'
+      const o = g[k] ||= { released: 0, bugs: 0, findings: 0, reviews: 0, cost: 0, cycles: [], escalations: 0, touches: 0 }
+      if (t.releasedAt) { o.released++; o.cycles.push(t.releasedAt - t.createdAt) }
+      o.bugs += tickets.filter(b => b.type === 'bug' && b.parent === t.id).length
+      const firstReview = (t.runs || []).find(r => r.kind === 'review')
+      if (firstReview) { o.reviews++; o.findings += (t.findings || []).length }
+      o.cost += (t.runs || []).reduce((s, r) => s + (r.cost || 0), 0)
+      const models = new Set((t.runs || []).map(r => r.model))
+      if (models.size > 1) o.escalations++
+      o.touches += (t.runs || []).filter(r => ['review', 'qa', 'fix'].includes(r.kind)).length // manual triggers = human-touch proxy
+    }
+    return Object.fromEntries(Object.entries(g).map(([k, o]) => [k, { ...o, avgCycleH: o.cycles.length ? Math.round(o.cycles.reduce((a, b) => a + b, 0) / o.cycles.length / 3600_000 * 10) / 10 : null, bugRatio: o.released ? Math.round(o.bugs / o.released * 100) / 100 : null, cycles: undefined }]))
+  }
+  // QA cycles per released ticket: bug-free first pass vs 1/2/3+
+  const qaDist = { 0: 0, 1: 0, 2: 0, '3+': 0 }
+  for (const t of released) { const fails = (t.qaResults || []).filter(q => !q.pass).length; qaDist[fails >= 3 ? '3+' : fails]++ }
+  const runCost = kind => tickets.reduce((s, t) => s + (t.runs || []).filter(r => r.kind === kind).reduce((a, r) => a + (r.cost || 0), 0), 0)
+  const sunk = tickets.filter(t => !t.releasedAt).reduce((s, t) => s + (t.runs || []).reduce((a, r) => a + (r.cost || 0), 0), 0)
+  // regression pack effectiveness: cases seen ≥2 runs — do they ever catch anything?
+  const caseStats = {}
+  for (const t of tickets) for (const q of t.qaResults || []) for (const c of q.cases || []) { const o = caseStats[c.name] ||= { runs: 0, fails: 0 }; o.runs++; if (c.pass === false) o.fails++ }
+  const stale = Object.entries(caseStats).filter(([, o]) => o.runs >= 2 && !o.fails).length
+  res.json({
+    days, total: tickets.length, columns, blockedNow: blockedNow.map(t => ({ id: t.id, title: t.title, category: t.blocked.category, since: t.blocked.at })),
+    timeInStageH: Object.fromEntries(Object.entries(stageDur).map(([s, arr]) => [s, { avg: Math.round(arr.reduce((a, b) => a + b, 0) / arr.length / 3600_000 * 10) / 10, p90: Math.round((pct(arr, 0.9) || 0) / 3600_000 * 10) / 10, n: arr.length }])),
+    blockedByReasonH: Object.fromEntries(Object.entries(blockedDur).map(([c, arr]) => [c, Math.round(arr.reduce((a, b) => a + b, 0) / 3600_000 * 10) / 10])),
+    cycle: { p50h: cycles.length ? Math.round(pct(cycles, 0.5) / 3600_000 * 10) / 10 : null, p90h: cycles.length ? Math.round(pct(cycles, 0.9) / 3600_000 * 10) / 10 : null, released: released.length },
+    throughputPerDay: perDay,
+    bugRatio: released.length ? Math.round(bugs.length / released.length * 100) / 100 : null,
+    qaCyclesDist: qaDist,
+    byTeam: groupBy(t => board.teams.find(x => x.id === t.team)?.name),
+    byModel: groupBy(t => t.model || projCfg(board, t.project).defaultModel || '(default)'),
+    costByStage: { dev: runCost('dev') + runCost('fix'), review: runCost('review'), qa: runCost('qa') + runCost('analyze') },
+    costSunkUnreleased: sunk,
+    costPerReleased: released.length ? (tickets.reduce((s, t) => s + (t.runs || []).reduce((a, r) => a + (r.cost || 0), 0), 0) - sunk) / released.length : null,
+    staleRegressionCases: stale,
+  })
+})
 
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
