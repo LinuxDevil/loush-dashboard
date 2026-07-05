@@ -19,9 +19,10 @@ export default function LibrarySection() {
   const [tab, setTab] = useState('Profiles')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Profiles', 'Bundles', 'Recommendations']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Profiles', 'Bundles', 'Context bundles', 'Recommendations']} tab={tab} setTab={setTab} />
       {tab === 'Profiles' && <Profiles />}
       {tab === 'Bundles' && <Bundles />}
+      {tab === 'Context bundles' && <CtxBundles />}
       {tab === 'Recommendations' && <Recs />}
     </div>
   )
@@ -149,6 +150,72 @@ function Bundles() {
         {library.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>empty — export a project to start your library</div>}
       </div>
     </div>
+  )
+}
+
+// feature 22: named sets of files/docs/rules to load into a session in one go
+export const bundlePrompt = b =>
+  `Load this context before we start — "${b.name}"${b.description ? ` (${b.description})` : ''}:\n` +
+  (b.refs || []).map(r => `- read ${r.startsWith('http') ? r : '@' + r}`).join('\n') +
+  (b.notes ? `\n\nNotes:\n${b.notes}` : '')
+
+function CtxBundles() {
+  const [bundles, setBundles] = useState([])
+  const [edit, setEdit] = useState(null) // {index|-1, name, description, refs (textarea), notes}
+  const load = () => api.get('/api/ctxbundles').then(setBundles)
+  useEffect(() => { load() }, [])
+  const save = async list => { await api.put('/api/ctxbundles', { bundles: list }).catch(e => alert(e.message)); load() }
+  const copy = b => navigator.clipboard.writeText(bundlePrompt(b)).then(() => alert('load-prompt copied — paste it into any session (Chat section or the CLI)'))
+  const toChat = b => { sessionStorage.setItem('ctx-bundle-prompt', bundlePrompt(b)); window.dispatchEvent(new Event('nav-chat')) }
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button className="mini" style={{ marginTop: 0 }} onClick={() => setEdit({ index: -1, name: '', description: '', refs: '', notes: '' })}>+ new context bundle</button>
+        <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>stop re-attaching the same files — save a named set once, load it into any session on demand · stored in ~/.claude/context-bundles.json</span>
+      </div>
+      <div className="hx-overview" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+        {bundles.map((b, i) => (
+          <div key={b.name + i} style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ font: `600 15px ${HEAD}` }}>{b.name}</div>
+            <div style={{ font: "400 12px 'IBM Plex Sans'", color: '#b0a69e', lineHeight: 1.5 }}>{b.description || 'no description'}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+              {(b.refs || []).slice(0, 6).map(r => <span key={r} style={{ font: `400 10.5px ${MONO}`, color: '#8a807a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {r}</span>)}
+              {(b.refs || []).length > 6 && <span style={{ font: `400 10px ${MONO}`, color: '#5a514a' }}>+{b.refs.length - 6} more</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="primary" style={{ fontSize: 12 }} onClick={() => toChat(b)}>Load in chat</button>
+              <button className="mini" style={{ marginTop: 0 }} onClick={() => copy(b)}>copy prompt</button>
+              <button className="mini" style={{ marginTop: 0 }} onClick={() => setEdit({ index: i, name: b.name, description: b.description || '', refs: (b.refs || []).join('\n'), notes: b.notes || '' })}>edit</button>
+              <button className="mini danger" style={{ marginTop: 0 }} onClick={() => confirm('Delete bundle?') && save(bundles.filter((_, j) => j !== i))}>delete</button>
+            </div>
+          </div>
+        ))}
+        {bundles.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>none yet — e.g. "auth subsystem context": the 6 files + ADR you attach every time</div>}
+      </div>
+      {edit && (
+        <>
+          <div className="drawer-overlay" onClick={() => setEdit(null)} />
+          <div className="drawer" role="dialog" aria-label="edit context bundle">
+            <div className="drawer-head"><h3>{edit.index < 0 ? 'New' : 'Edit'} context bundle</h3><button className="ghost" onClick={() => setEdit(null)}>✕</button></div>
+            <div className="drawer-body">
+              <label className="field">name<input value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} placeholder="auth subsystem context" /></label>
+              <label className="field">description<input value={edit.description} onChange={e => setEdit({ ...edit, description: e.target.value })} /></label>
+              <label className="field">references — one path or URL per line
+                <textarea rows={7} value={edit.refs} onChange={e => setEdit({ ...edit, refs: e.target.value })} placeholder={'src/auth/session.ts\ndocs/adr/007-auth.md\nhttps://…'} /></label>
+              <label className="field">notes / rules loaded with it
+                <textarea rows={4} value={edit.notes} onChange={e => setEdit({ ...edit, notes: e.target.value })} /></label>
+            </div>
+            <div className="drawer-foot">
+              <button onClick={() => setEdit(null)}>Cancel</button>
+              <button className="primary" disabled={!edit.name.trim()} onClick={() => {
+                const b = { name: edit.name.trim(), description: edit.description, refs: edit.refs.split('\n').map(s => s.trim()).filter(Boolean), notes: edit.notes }
+                save(edit.index < 0 ? [...bundles, b] : bundles.map((x, j) => j === edit.index ? b : x)); setEdit(null)
+              }}>Save</button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   )
 }
 

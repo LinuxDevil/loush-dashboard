@@ -12,6 +12,10 @@ import GovernanceSection from './GovernanceSection.jsx'
 import ReliabilitySection from './ReliabilitySection.jsx'
 import LibrarySection from './LibrarySection.jsx'
 import PromptStudio from './PromptStudio.jsx'
+import FlowSection from './FlowSection.jsx'
+import InsightsSection from './InsightsSection.jsx'
+import InboxSection from './InboxSection.jsx'
+import Palette from './Palette.jsx'
 import { api } from './api.js'
 
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
@@ -19,13 +23,16 @@ const xpLevel = msgs => Math.floor(Math.sqrt(msgs / 50))
 
 const SECTIONS = [
   { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'Your Claude Code, at a glance', el: <Overview /> },
+  { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox', el: <InboxSection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
   { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: <ChatSection /> },
+  { id: 'insights', label: 'Chat Insights', icon: '∿', kicker: 'Live', title: 'Chat stats & duplicated prompts', el: <InsightsSection /> },
   { id: 'skills', label: 'Skills', icon: '✦', kicker: 'Capabilities', title: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
   { id: 'commands', label: 'Prompts / Commands', icon: '⌘', kicker: 'Capabilities', title: 'Prompts / Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
   { id: 'mcp', label: 'MCP Servers', icon: '⇌', kicker: 'Connections', title: 'MCP Servers', el: <McpSection /> },
   { id: 'agents', label: 'Agents', icon: '◆', kicker: 'Capabilities', title: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
+  { id: 'flow', label: 'Flow Graph', icon: '⇶', kicker: 'Capabilities', title: 'Skills & agents flow', el: <FlowSection /> },
   { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness', el: <HarnessSection /> },
   { id: 'governance', label: 'Governance', icon: '☑', kicker: 'Harness engineering', title: 'Versions, approvals & drift', el: <GovernanceSection /> },
   { id: 'reliability', label: 'Reliability', icon: '𝜎', kicker: 'Harness engineering', title: 'Evals, failures, traces & costs', el: <ReliabilitySection /> },
@@ -62,6 +69,7 @@ function SidebarFoot() {
 export default function App() {
   const [section, setSection] = useState('overview')
   const [chip, setChip] = useState(null)
+  const [inboxCount, setInboxCount] = useState(0)
   useEffect(() => {
     api.get('/api/usage').then(u => {
       const ab = u.activeBlock
@@ -71,6 +79,27 @@ export default function App() {
         resets: ab ? Math.round((ab.end - Date.now()) / 60000) : null,
       })
     }).catch(() => {})
+    const navChat = () => setSection('chat') // context bundles hand-off
+    window.addEventListener('nav-chat', navChat)
+    // inbox badge + desktop notifications for new error/warning items
+    const seen = new Set()
+    let first = true
+    const poll = () => api.get('/api/inbox').then(items => {
+      const open = items.filter(i => !i.done)
+      setInboxCount(open.length)
+      api.get('/api/notify').then(cfg => {
+        for (const i of open) {
+          if (i.severity === 'info' || seen.has(i.key)) continue
+          seen.add(i.key)
+          if (!first && cfg.desktop && typeof Notification !== 'undefined' && Notification.permission === 'granted')
+            new Notification('claude-dashboard', { body: i.text })
+        }
+        first = false
+      }).catch(() => {})
+    }).catch(() => {})
+    poll()
+    const t = setInterval(poll, 60_000)
+    return () => { clearInterval(t); window.removeEventListener('nav-chat', navChat) }
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
   return (
@@ -80,6 +109,7 @@ export default function App() {
         {SECTIONS.map(s => (
           <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => setSection(s.id)}>
             <span className="nav-icon">{s.icon}</span> {s.label}
+            {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
         ))}
         <SidebarFoot />
@@ -105,8 +135,9 @@ export default function App() {
             <div className="avatar">AM</div>
           </div>
         </header>
-        <div key={section}>{cur.el}</div>
+        <div key={section}>{section === 'inbox' ? <InboxSection onNav={setSection} /> : cur.el}</div>
       </main>
+      <Palette sections={SECTIONS} onNav={setSection} />
     </div>
   )
 }

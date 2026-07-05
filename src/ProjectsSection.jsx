@@ -27,14 +27,88 @@ function ResChips({ p }) {
   )
 }
 
+// feature 18: new-project harness scaffolder — dry-run preview, then real writes via /api/scaffold
+function Scaffolder({ projects, onClose, onDone }) {
+  const [dir, setDir] = useState('')
+  const [profiles, setProfiles] = useState([])
+  const [skills, setSkills] = useState([])
+  const [profile, setProfile] = useState('')
+  const [cloneFrom, setCloneFrom] = useState('')
+  const [picked, setPicked] = useState([])
+  const [skillQ, setSkillQ] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api.get('/api/gov/profiles').then(setProfiles).catch(() => {})
+    api.get('/api/res/skills').then(s => setSkills(s.filter(x => x.scope === 'user'))).catch(() => {})
+  }, [])
+  const body = { dir: dir.trim(), profile: profile || undefined, cloneFrom: cloneFrom || undefined, skills: picked }
+  const dryRun = () => api.post('/api/scaffold', { ...body, dryRun: true }).then(r => { setPreview(r.files); setErr('') }).catch(e => { setErr(e.message); setPreview(null) })
+  const create = () => api.post('/api/scaffold', body).then(r => { alert('written:\n' + r.written.join('\n')); onDone(); onClose() }).catch(e => setErr(e.message))
+  return (
+    <>
+      <div className="drawer-overlay" onClick={onClose} />
+      <div className="drawer" role="dialog" aria-label="scaffold harness" style={{ width: 470 }}>
+        <div className="drawer-head"><h3>Scaffold a project harness</h3><button className="ghost" onClick={onClose}>✕</button></div>
+        <div className="drawer-body">
+          <label className="field">target directory (must exist)
+            <input value={dir} onChange={e => { setDir(e.target.value); setPreview(null) }} placeholder="/Users/you/code/new-repo" /></label>
+          <label className="field">profile
+            <select value={profile} onChange={e => { setProfile(e.target.value); setPreview(null) }} style={{ width: '100%' }}>
+              <option value="">— none —</option>
+              {profiles.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+            </select></label>
+          <label className="field">clone setup from
+            <select value={cloneFrom} onChange={e => { setCloneFrom(e.target.value); setPreview(null) }} style={{ width: '100%' }}>
+              <option value="">— start fresh —</option>
+              {projects.filter(p => p.exists).map(p => <option key={p.path} value={p.path}>{p.name}</option>)}
+            </select></label>
+          <div className="field">recommended skills (copied from ~/.claude/skills)
+            <input value={skillQ} onChange={e => setSkillQ(e.target.value)} placeholder="filter skills…" />
+            <div style={{ maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3, textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+              {skills.filter(s => !skillQ || s.name.includes(skillQ)).slice(0, 40).map(s => (
+                <label key={s.name} style={{ display: 'flex', gap: 8, alignItems: 'center', font: "400 12px 'IBM Plex Mono'", color: '#c8bdb4', cursor: 'pointer' }}>
+                  <input type="checkbox" style={{ width: 13 }} checked={picked.includes(s.name)}
+                    onChange={e => { setPicked(p => e.target.checked ? [...p, s.name] : p.filter(x => x !== s.name)); setPreview(null) }} />
+                  {s.name}
+                </label>
+              ))}
+            </div>
+          </div>
+          {err && <div className="drawer-err">{err}</div>}
+          {preview && (
+            <div className="field">dry-run preview — nothing written yet
+              <div style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+                {preview.map(f => (
+                  <details key={f.rel} style={{ padding: '4px 0', font: "400 12px 'IBM Plex Mono'" }}>
+                    <summary style={{ cursor: 'pointer', color: f.exists ? '#e5a03a' : '#3fb96a' }}>{f.exists ? '⚠ overwrites' : '+ creates'} {f.rel}</summary>
+                    <pre style={{ margin: '6px 0 0', padding: 10, background: 'rgba(0,0,0,0.3)', borderRadius: 8, maxHeight: 160, overflow: 'auto', font: "400 10.5px/1.5 'IBM Plex Mono'", color: '#9a9089', whiteSpace: 'pre-wrap' }}>{f.content.slice(0, 1500)}</pre>
+                  </details>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="drawer-foot">
+          <button onClick={dryRun} disabled={!dir.trim()}>Preview (dry run)</button>
+          <button className="primary" onClick={create} disabled={!preview}>Create harness</button>
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function ProjectsSection() {
   const [projects, setProjects] = useState(null)
+  const [scaffolding, setScaffolding] = useState(false)
   const { slice, pager } = usePager(projects || [], 9)
   const load = () => api.get('/api/projects').then(setProjects)
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
-    return () => clearInterval(t)
+    const open = () => setScaffolding(true) // palette action
+    window.addEventListener('open-scaffolder', open)
+    return () => { clearInterval(t); window.removeEventListener('open-scaffolder', open) }
   }, [])
 
   if (!projects) return <p className="muted center">scanning projects & transcripts…</p>
@@ -53,6 +127,10 @@ export default function ProjectsSection() {
 
   return (
     <div className="overview">
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button className="primary" onClick={() => setScaffolding(true)}>+ Scaffold harness for a new repo</button>
+      </div>
+      {scaffolding && <Scaffolder projects={projects} onClose={() => setScaffolding(false)} onDone={load} />}
       <div className="proj-stats">
         {stats.map(([label, value, color, sub], i) => (
           <div className="proj-stat" key={label} style={{ animationDelay: 0.05 * i + 's' }}>

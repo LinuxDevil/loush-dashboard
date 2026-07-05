@@ -119,6 +119,7 @@ export default function Overview() {
   const [usageErr, setUsageErr] = useState(null)
   const [projects, setProjects] = useState([])
   const [hookCount, setHookCount] = useState(0)
+  const [pins, setPins] = useState([])
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [sort, setSort] = useState({ col: 'score', dir: -1 })
@@ -127,6 +128,7 @@ export default function Overview() {
     api.get('/api/overview').then(setData)
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
     api.get('/api/projects').then(setProjects).catch(() => {})
+    api.get('/api/pins').then(setPins).catch(() => {})
     api.get('/api/hooks').then(d => {
       let n = 0
       for (const s of Object.values(d)) for (const groups of Object.values(s.settings?.hooks || {})) for (const g of groups) n += (g.hooks || []).length
@@ -259,7 +261,16 @@ export default function Overview() {
           </div>
         </div>
         <div className="panel" style={{ animationDelay: '.5s' }}>
-          <h3>Recent sessions</h3>
+          <h3>Recent sessions {pins.length > 0 && <span className="muted">+ {pins.length} pinned</span>}</h3>
+          {pins.slice(0, 3).map(p => (
+            <div className="sess-row" key={p.sessionId}>
+              <span style={{ color: '#e5a03a', flexShrink: 0 }}>★</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="mini-name">{p.label || p.title || p.sessionId}</div>
+                <div className="mini-meta">{(p.cwd || '').split('/').pop()} · resume from Chat{p.configVersion ? ` · cfg ${p.configVersion}` : ''}</div>
+              </div>
+            </div>
+          ))}
           {usage?.recentSessions.map((s, i) => (
             <div className="sess-row" key={i}>
               <span className="sess-dot" style={{ background: PROJ_COLORS[i % 6] }} />

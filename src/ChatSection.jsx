@@ -67,11 +67,38 @@ export function Block({ b }) {
   return null
 }
 
+// feature 20: promote any message to a reusable artifact in one click
+function capture(text) {
+  const kind = prompt('Capture as: command / skill / prompt / note', 'command')
+  if (!kind) return
+  const done = p => p.then(r => alert('saved' + (r.path ? ' → ' + r.path : ''))).catch(e => alert(e.message))
+  if (kind === 'command' || kind === 'skill') {
+    const name = prompt(`${kind} name:`)
+    if (!name) return
+    const content = kind === 'command'
+      ? `---\ndescription: captured from a chat session\n---\n\n${text}\n\n$ARGUMENTS\n`
+      : `---\nname: ${name}\ndescription: captured from a chat session\n---\n\n${text}\n`
+    done(api.post(`/api/res/${kind}s`, { scope: 'user', name, content }))
+  } else if (kind === 'prompt') {
+    done(api.post('/api/prompts', { title: text.slice(0, 60), tags: ['captured'], inputs: [{ type: 'text', value: text }] }))
+  } else {
+    done(api.post('/api/notes', { title: text.slice(0, 40), content: text }))
+  }
+}
+
+const Cap = ({ text, children }) => (
+  <div className="cap-wrap">
+    {children}
+    <button className="cap-btn" title="capture as command / skill / prompt / note" onClick={() => capture(text)}>⤴</button>
+  </div>
+)
+
 export default function ChatSection() {
   const [projects, setProjects] = useState([])
   const [cwd, setCwd] = useState('')
   const [sessions, setSessions] = useState([])
   const [active, setActive] = useState([]) // live server-side chats
+  const [pins, setPins] = useState([])
   const [chatId, setChatId] = useState(null)
   const [events, setEvents] = useState([])
   const [input, setInput] = useState('')
@@ -79,10 +106,18 @@ export default function ChatSection() {
   const esRef = useRef(null)
   const endRef = useRef(null)
 
+  const loadPins = () => api.get('/api/pins').then(setPins).catch(() => {})
   useEffect(() => {
     api.get('/api/projects').then(ps => { const ex = ps.filter(p => p.exists); setProjects(ex); if (ex[0]) setCwd(ex[0].path) })
     api.get('/api/chat').then(setActive).catch(() => {})
+    loadPins()
+    const pre = sessionStorage.getItem('ctx-bundle-prompt') // feature 22 hand-off
+    if (pre) { setInput(pre); sessionStorage.removeItem('ctx-bundle-prompt') }
   }, [])
+  const togglePin = (s, pinned) => {
+    const label = pinned ? (prompt('Label (optional):', '') ?? '') : ''
+    api.put('/api/pins', { sessionId: s.sessionId, cwd: s.cwd || cwd, title: s.title || '', label, pinned }).then(loadPins).catch(e => alert(e.message))
+  }
   useEffect(() => { if (cwd) api.get('/api/chat/sessions?cwd=' + encodeURIComponent(cwd)).then(setSessions) }, [cwd])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events])
 
@@ -143,15 +178,36 @@ export default function ChatSection() {
             ))}
           </div>
         )}
+        {pins.length > 0 && (
+          <div className="chat-sessions">
+            <h3>Pinned</h3>
+            {pins.map(p => (
+              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', { cwd: p.cwd || cwd, resume: p.sessionId }).then(({ id }) => attach(id, p.cwd)) }}>
+                <b>★ {p.label || p.title || p.sessionId}</b>
+                <span className="dim">
+                  {(p.cwd || '').split('/').pop()}{p.configVersion ? ` · cfg ${p.configVersion}` : ''}
+                  <button className="mini" style={{ marginLeft: 8, marginTop: 0 }} onClick={e => { e.stopPropagation(); togglePin(p, false) }}>unpin</button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="chat-sessions">
           <h3>Past sessions</h3>
           {sessions.length === 0 && <div className="dim">none for this project</div>}
-          {sessions.map(s => (
-            <div key={s.sessionId} className="chat-session" onClick={() => start(s.sessionId)}>
-              <b>{s.title || s.sessionId}</b>
-              <span className="dim">{fmtDate(s.mtime)}</span>
-            </div>
-          ))}
+          {sessions.map(s => {
+            const pinned = pins.some(p => p.sessionId === s.sessionId)
+            return (
+              <div key={s.sessionId} className="chat-session" onClick={() => start(s.sessionId)}>
+                <b>{s.title || s.sessionId}</b>
+                <span className="dim">
+                  {fmtDate(s.mtime)}
+                  <button className="mini" title={pinned ? 'unpin' : 'pin (bookmarks the session + current config version)'} style={{ marginLeft: 8, marginTop: 0, color: pinned ? '#e5a03a' : undefined }}
+                    onClick={e => { e.stopPropagation(); togglePin({ ...s, cwd }, !pinned) }}>{pinned ? '★' : '☆'}</button>
+                </span>
+              </div>
+            )
+          })}
         </div>
       </div>
     )
@@ -166,7 +222,7 @@ export default function ChatSection() {
         <button className="mini" onClick={stop}>{ended ? 'close' : 'stop session'}</button>
       </div>
       <div className="chat-log">
-        {blocks.map((b, i) => <Block key={i} b={b} />)}
+        {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text') ? <Cap key={i} text={b.text}><Block b={b} /></Cap> : <Block key={i} b={b} />)}
         {busy && <div className="chat-line dim">✦ working…</div>}
         <div ref={endRef} />
       </div>

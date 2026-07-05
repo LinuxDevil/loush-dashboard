@@ -46,11 +46,12 @@ export default function GovernanceSection() {
   const [tab, setTab] = useState('Versions')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Versions', 'Approvals', 'Audit log', 'Drift']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Versions', 'Approvals', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
       {tab === 'Versions' && <Versions />}
       {tab === 'Approvals' && <Approvals />}
       {tab === 'Audit log' && <Audit />}
       {tab === 'Drift' && <Drift />}
+      {tab === 'Batch ops' && <BatchOps />}
     </div>
   )
 }
@@ -203,6 +204,85 @@ function Audit() {
           </div>
         ))}
         {list.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>empty — every dashboard config write lands here</div>}
+      </div>
+    </div>
+  )
+}
+
+// feature 19: apply one change across many projects — always dry-run first
+const BATCH_OPS = [
+  ['set-setting', 'set a settings field'],
+  ['enable-skill', 'enable a global skill'],
+  ['disable-skill', 'disable a project skill'],
+  ['push-rule', 'push a rule to CLAUDE.md'],
+  ['sync-drift', 'sync drift from baseline'],
+]
+function BatchOps() {
+  const scopes = useScopes()
+  const [op, setOp] = useState('set-setting')
+  const [targets, setTargets] = useState([])
+  const [skills, setSkills] = useState([])
+  const [params, setParams] = useState({ path: 'harness.turnPolicy.maxTurns', value: '40', skill: '', rule: '' })
+  const [result, setResult] = useState(null)
+  useEffect(() => { api.get('/api/res/skills').then(s => setSkills([...new Set(s.map(x => x.name))])).catch(() => {}) }, [])
+  const projects = scopes.filter(s => s.id !== 'global')
+  const toggle = id => { setTargets(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]); setResult(null) }
+  const buildParams = () => {
+    if (op === 'set-setting') { let v; try { v = JSON.parse(params.value) } catch { v = params.value }; return { path: params.path, value: v } }
+    if (op === 'enable-skill' || op === 'disable-skill') return { skill: params.skill }
+    if (op === 'push-rule') return { rule: params.rule }
+    return {}
+  }
+  const run = dryRun => api.post('/api/batch', { op, targets, params: buildParams(), dryRun }).then(setResult).catch(e => alert(e.message))
+  const set = (k, v) => { setParams(p => ({ ...p, [k]: v })); setResult(null) }
+  return (
+    <div className="hx-2a">
+      <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ font: `600 15px ${HEAD}` }}>Batch operation</div>
+        <select value={op} onChange={e => { setOp(e.target.value); setResult(null) }} style={{ width: '100%' }}>
+          {BATCH_OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        {op === 'set-setting' && <>
+          <input value={params.path} onChange={e => set('path', e.target.value)} placeholder="dot path, e.g. harness.turnPolicy.maxTurns" />
+          <input value={params.value} onChange={e => set('value', e.target.value)} placeholder='value (JSON) — null deletes the field' />
+        </>}
+        {(op === 'enable-skill' || op === 'disable-skill') && (
+          <select value={params.skill} onChange={e => set('skill', e.target.value)} style={{ width: '100%' }}>
+            <option value="">— pick a skill —</option>
+            {skills.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
+        {op === 'push-rule' && <textarea rows={4} value={params.rule} onChange={e => set('rule', e.target.value)} placeholder={'markdown appended to each project\'s CLAUDE.md (skipped when already present)'} />}
+        {op === 'sync-drift' && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>syncs every drifted field back to the project's baseline bundle — projects without a baseline are skipped</div>}
+        <div>
+          <div style={{ font: `600 11px ${MONO}`, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#8a807a', marginBottom: 8 }}>
+            targets <button className="mini" style={{ marginTop: 0, marginLeft: 8 }} onClick={() => setTargets(targets.length === projects.length ? [] : projects.map(p => p.id))}>{targets.length === projects.length ? 'none' : 'all'}</button>
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {projects.map(p => (
+              <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', font: `400 12px ${MONO}`, color: '#c8bdb4', cursor: 'pointer' }}>
+                <input type="checkbox" style={{ width: 13 }} checked={targets.includes(p.id)} onChange={() => toggle(p.id)} />
+                {p.label} {p.ovCount > 0 && <span style={{ font: `600 8px ${MONO}`, padding: '1px 5px', borderRadius: 4, background: 'rgba(139,124,246,0.16)', color: '#a78bfa' }}>OVR {p.ovCount}</span>}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => run(true)} disabled={!targets.length}>Dry run</button>
+          <button className="primary" onClick={() => run(false)} disabled={!result?.dryRun || !result.results.some(r => r.changed)}>Apply to {targets.length} project{targets.length === 1 ? '' : 's'}</button>
+        </div>
+        <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>apply is enabled only after a dry run · every write is versioned and reversible in Versions</div>
+      </div>
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 15px ${HEAD}`, marginBottom: 12 }}>{result ? (result.dryRun ? 'Dry-run preview' : 'Applied') : 'Preview'}</div>
+        {result?.results.map(r => (
+          <div key={r.target} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
+            <span style={{ font: `600 12px ${MONO}`, color: '#e8a06a', flexShrink: 0, width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.target.split('/').pop()}</span>
+            <span style={{ flex: 1, font: `400 11.5px ${MONO}`, color: r.desc.startsWith('error') ? '#e5484d' : r.changed ? '#c8bdb4' : '#7a716a' }}>{r.desc}</span>
+            <span style={{ font: `600 10px ${MONO}`, color: r.applied ? '#3fb96a' : r.changed ? '#e5a03a' : '#5a514a', flexShrink: 0 }}>{r.applied ? '✓ applied' : r.changed ? 'would change' : 'no-op'}</span>
+          </div>
+        ))}
+        {!result && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>pick targets and dry-run to see per-project effects</div>}
       </div>
     </div>
   )

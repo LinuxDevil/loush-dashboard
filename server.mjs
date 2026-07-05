@@ -1637,13 +1637,12 @@ app.post('/api/gov/baseline', (req, res) => {
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
   res.json({ ok: true })
 })
-app.get('/api/gov/drift', (req, res) => {
-  const project = req.query.project
+function driftFor(project) {
   const meta = readMeta()
   const bFile = meta.baselines?.[project]
-  if (!bFile) return res.json({ baseline: null, drifts: [] })
+  if (!bFile) return { baseline: null, drifts: [] }
   const b = readJson(path.join(LIBRARY_DIR, path.basename(bFile)), null)
-  if (!b) return res.json({ baseline: bFile, error: 'baseline bundle missing', drifts: [] })
+  if (!b) return { baseline: bFile, error: 'baseline bundle missing', drifts: [] }
   const cur = exportBundle(project, 'current', '')
   const drifts = []
   const cmp = (field, a, c) => { const A = JSON.stringify(a ?? null), C = JSON.stringify(c ?? null); if (A !== C) drifts.push({ field, baseline: A.slice(0, 400), current: C.slice(0, 400), syncable: true }) }
@@ -1651,13 +1650,13 @@ app.get('/api/gov/drift', (req, res) => {
   cmp('settings.permissions', b.settings?.permissions, cur.settings?.permissions)
   for (const k of new Set([...Object.keys(b.rules || {}), ...Object.keys(cur.rules || {})])) cmp('rules/' + k, b.rules?.[k], cur.rules?.[k])
   for (const k of new Set([...Object.keys(b.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, b.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
-  res.json({ baseline: bFile, provenance: b.provenance, drifts })
-})
-app.post('/api/gov/drift/sync', (req, res) => {
-  const { project, field } = req.body
+  return { baseline: bFile, provenance: b.provenance, drifts }
+}
+app.get('/api/gov/drift', (req, res) => res.json(driftFor(req.query.project)))
+function syncDriftField(project, field) {
   const meta = readMeta()
   const b = readJson(path.join(LIBRARY_DIR, path.basename(meta.baselines?.[project] || '')), null)
-  if (!b) return res.status(400).json({ error: 'no baseline' })
+  if (!b) throw Object.assign(new Error('no baseline'), { status: 400 })
   if (field === 'settings.harness' || field === 'settings.permissions') {
     const file = path.join(project, '.claude', 'settings.json')
     const s = readJson(file, {})
@@ -1667,7 +1666,10 @@ app.post('/api/gov/drift/sync', (req, res) => {
   } else if (field.startsWith('rules/')) {
     const rel = field.slice(6)
     if (b.rules?.[rel] != null) track(path.join(project, rel), b.rules[rel], { scope: project, summary: `sync ${rel} from baseline` })
-  } else return res.status(400).json({ error: 'field not syncable' })
+  } else throw Object.assign(new Error('field not syncable'), { status: 400 })
+}
+app.post('/api/gov/drift/sync', (req, res) => {
+  syncDriftField(req.body.project, req.body.field)
   res.json({ ok: true })
 })
 
@@ -1777,6 +1779,465 @@ app.post('/api/prompts/asset', (req, res) => {
   fs.writeFileSync(file, Buffer.from(m[2], 'base64'))
   res.json({ ok: true, path: file })
 })
+
+// ================= flow graph, chat insights, inbox, palette, scaffold, batch, pins, bundles =================
+
+// ---------- transcript prompt/invocation scan (per-file mtime cache, like usageCache) ----------
+const scanCache = new Map() // file -> {mtime,size,prompts,invocations,userMsgs,toolCalls,first,last}
+function scanTranscripts() {
+  const base = path.join(CLAUDE, 'projects')
+  const files = []
+  const walkS = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walkS(p); else if (e.name.endsWith('.jsonl')) files.push(p) } } catch {} }
+  walkS(base)
+  const all = { prompts: [], invocations: [], sessions: [] }
+  for (const f of files) {
+    let st; try { st = fs.statSync(f) } catch { continue }
+    const proj = path.relative(base, f).split(path.sep)[0]
+    const sessionId = path.basename(f, '.jsonl')
+    let rec = scanCache.get(f)
+    if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      rec = { mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], userMsgs: 0, toolCalls: 0, first: 0, last: 0 }
+      // ponytail: "src" attribution = last Skill invoked since the user's prompt — a heuristic, not a real call graph
+      let lastSkill = null
+      try {
+        for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+          if (!line) continue
+          let j; try { j = JSON.parse(line) } catch { continue }
+          const t = j.timestamp ? Date.parse(j.timestamp) : 0
+          if (t) { rec.first ||= t; rec.last = Math.max(rec.last, t) }
+          if (j.type === 'user' && !j.isMeta && j.message) {
+            const c = j.message.content
+            const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x.type === 'text').map(x => x.text).join(' ') : ''
+            if (text.trim() && !text.startsWith('<') && !text.startsWith('[Request interrupted')) { rec.prompts.push({ t, text: text.slice(0, 500) }); rec.userMsgs++; lastSkill = null }
+          } else if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
+            for (const c of j.message.content) {
+              if (c.type !== 'tool_use') continue
+              rec.toolCalls++
+              if (c.name === 'Skill' && c.input?.skill) { rec.invocations.push({ t, kind: 'skill', name: String(c.input.skill), src: lastSkill }); lastSkill = 'skill:' + c.input.skill }
+              else if ((c.name === 'Task' || c.name === 'Agent') && c.input?.subagent_type) rec.invocations.push({ t, kind: 'agent', name: String(c.input.subagent_type), src: lastSkill })
+              else if (c.name.startsWith('mcp__')) rec.invocations.push({ t, kind: 'mcp', name: c.name.slice(5).split('__')[0], src: lastSkill })
+            }
+          }
+        }
+      } catch {}
+      scanCache.set(f, rec)
+    }
+    for (const p of rec.prompts) all.prompts.push({ ...p, proj, sessionId })
+    for (const i of rec.invocations) all.invocations.push({ ...i, proj, sessionId })
+    all.sessions.push({ proj, sessionId, userMsgs: rec.userMsgs, toolCalls: rec.toolCalls, first: rec.first, last: rec.last, isAgent: f.includes('subagents') })
+  }
+  all.prompts.sort((a, b) => a.t - b.t)
+  return all
+}
+
+// ---------- 13: skills & agents flow graph ----------
+app.get('/api/flow', (req, res) => {
+  const project = req.query.project && req.query.project !== 'global' && fs.existsSync(req.query.project) ? req.query.project : null
+  const nodes = [], seen = new Set()
+  const nid = (kind, name) => kind + ':' + name
+  const addNode = (kind, name, extra = {}) => { const id = nid(kind, name); if (!seen.has(id)) { seen.add(id); nodes.push({ id, kind, name, ...extra }) }; return id }
+  addNode('entry', 'prompt')
+  const bodies = {}
+  for (const kind of ['skills', 'commands', 'agents']) {
+    const dirs = [{ scope: 'global', dir: path.join(CLAUDE, kind) }]
+    if (project) dirs.push({ scope: 'project', dir: path.join(project, '.claude', kind) })
+    for (const { scope, dir } of dirs) {
+      if (!fs.existsSync(dir)) continue
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const name = kind === 'skills' ? entry.name : entry.name.replace(/\.md$/, '')
+        const file = kind === 'skills' ? path.join(dir, name, 'SKILL.md') : path.join(dir, name + '.md')
+        if (!fs.existsSync(file)) continue
+        const content = fs.readFileSync(file, 'utf8')
+        const { fm } = parseFM(content)
+        const nodeKind = kind === 'agents' ? 'agent' : kind === 'skills' ? 'skill' : 'command'
+        const id = addNode(nodeKind, name, { scope, model: fm.model || null, description: String(fm.description || '').slice(0, 160) })
+        bodies[id] = content
+      }
+    }
+  }
+  try { for (const name of Object.keys(readClaudeJson().mcpServers || {})) addNode('mcp', name, { scope: 'global' }) } catch {}
+  if (project) for (const name of Object.keys(readJson(path.join(project, '.mcp.json'), {}).mcpServers || {})) addNode('mcp', name, { scope: 'project' })
+  // defined edges: an item's body mentions another item's name (or its mcp__ prefix)
+  const defined = new Map()
+  const named = nodes.filter(n => n.kind !== 'entry')
+  for (const [srcId, body] of Object.entries(bodies)) {
+    for (const n of named) {
+      if (n.id === srcId || n.name.length < 4) continue
+      const hit = n.kind === 'mcp' ? body.includes('mcp__' + n.name) :
+        new RegExp('(^|[\\s"`\'(/])' + n.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([\\s"`\'):.,]|$)', 'm').test(body)
+      if (hit) defined.set(srcId + '→' + n.id, { from: srcId, to: n.id })
+    }
+  }
+  for (const n of nodes) if (n.kind === 'skill' || n.kind === 'command') defined.set('entry:prompt→' + n.id, { from: 'entry:prompt', to: n.id, trigger: true })
+  // observed edges: real invocations from transcripts, weighted by frequency
+  const { invocations } = scanTranscripts()
+  const projFilter = project ? mangle(project) : null
+  const observed = new Map(), nodeUse = {}
+  for (const inv of invocations) {
+    if (projFilter && inv.proj !== projFilter) continue
+    const to = nid(inv.kind, inv.name)
+    if (!seen.has(to)) addNode(inv.kind, inv.name, { ghost: true }) // used in sessions but not defined in this scope (plugin skills etc.)
+    const from = inv.src && seen.has(inv.src) ? inv.src : 'entry:prompt'
+    const k = from + '→' + to
+    const e = observed.get(k) || { from, to, count: 0, last: 0 }
+    e.count++; e.last = Math.max(e.last, inv.t); observed.set(k, e)
+    const u = nodeUse[to] ||= { count: 0, last: 0 }; u.count++; u.last = Math.max(u.last, inv.t)
+  }
+  for (const n of nodes) Object.assign(n, nodeUse[n.id] || { count: 0, last: null })
+  // dead ends: defined but never observed; cycles: DFS over defined edges
+  const deadEnds = nodes.filter(n => n.kind !== 'entry' && !n.ghost && !n.count).map(n => n.id)
+  const adj = {}; for (const e of defined.values()) (adj[e.from] ||= []).push(e.to)
+  const cycles = [], state = {}
+  const dfs = (v, stack) => {
+    state[v] = 1
+    for (const w of adj[v] || []) {
+      if (state[w] === 1) cycles.push([...stack.slice(stack.indexOf(w)), w].join(' → '))
+      else if (!state[w]) dfs(w, [...stack, w])
+    }
+    state[v] = 2
+  }
+  for (const n of nodes) if (!state[n.id]) dfs(n.id, [n.id])
+  // most-traveled path: greedy walk over observed counts from the entry
+  const out = {}; for (const e of observed.values()) (out[e.from] ||= []).push(e)
+  const trail = ['entry:prompt']
+  for (let i = 0; i < 6; i++) {
+    const next = (out[trail[trail.length - 1]] || []).filter(e => !trail.includes(e.to)).sort((a, b) => b.count - a.count)[0]
+    if (!next) break
+    trail.push(next.to)
+  }
+  res.json({ nodes, defined: [...defined.values()], observed: [...observed.values()], deadEnds, cycles: [...new Set(cycles)].slice(0, 10), trail: trail.length > 1 ? trail : [] })
+})
+
+// ---------- 14: duplicated prompts across chats ----------
+const normPrompt = s => s.toLowerCase().replace(/\s+/g, ' ').trim()
+const tokset = s => new Set(normPrompt(s).split(' ').filter(w => w.length > 2))
+const jaccard = (a, b) => { let i = 0; for (const w of a) if (b.has(w)) i++; return i / (a.size + b.size - i || 1) }
+app.get('/api/dupes', (req, res) => {
+  const days = Number(req.query.days) || 90
+  const sim = Math.min(1, Math.max(0.3, Number(req.query.sim) || 0.75))
+  const projFilter = req.query.project ? mangle(req.query.project) : null
+  const cutoff = Date.now() - days * 86400_000
+  const { prompts } = scanTranscripts()
+  // slash-commands are already reusable artifacts — exclude them
+  const list = prompts.filter(p => p.t >= cutoff && (!projFilter || p.proj === projFilter) && p.text.length >= 25 && !p.text.startsWith('/')).slice(-4000)
+  const clusters = []
+  for (const p of list) {
+    const toks = tokset(p.text)
+    let best = null, bestScore = 0
+    for (const c of clusters) { const s = jaccard(toks, c.toks); if (s > bestScore) { bestScore = s; best = c } }
+    if (best && bestScore >= sim) best.items.push(p)
+    else clusters.push({ canonical: p.text, toks, items: [p] })
+  }
+  const out = clusters.filter(c => c.items.length >= 2).sort((a, b) => b.items.length - a.items.length).slice(0, 60).map(c => ({
+    canonical: c.canonical, count: c.items.length,
+    projects: [...new Set(c.items.map(i => i.proj))],
+    sessions: new Set(c.items.map(i => i.sessionId)).size,
+    first: c.items[0].t, last: c.items[c.items.length - 1].t,
+    exact: new Set(c.items.map(i => normPrompt(i.text))).size === 1,
+    items: c.items.slice(-10).map(({ t, proj, sessionId, text }) => ({ t, proj, sessionId, text: text.slice(0, 240) })),
+  }))
+  res.json({ scanned: list.length, clusters: out })
+})
+
+// ---------- 15: chat stats ----------
+app.get('/api/chatstats', (req, res) => {
+  const days = Number(req.query.days) || 30
+  const projFilter = req.query.project ? mangle(req.query.project) : null
+  const cutoff = Date.now() - days * 86400_000
+  const { prompts, sessions } = scanTranscripts()
+  const { entries } = collectUsage()
+  const sess = sessions.filter(s => !s.isAgent && s.userMsgs > 0 && s.last >= cutoff && (!projFilter || s.proj === projFilter))
+  const pr = prompts.filter(p => p.t >= cutoff && (!projFilter || p.proj === projFilter))
+  const en = entries.filter(e => e.t >= cutoff && (!projFilter || e.proj === projFilter))
+  const heat = Array.from({ length: 7 }, () => new Array(24).fill(0))
+  for (const p of pr) { const d = new Date(p.t); heat[d.getDay()][d.getHours()]++ }
+  // correction rate: a prompt re-phrasing the previous one in the same session within 3 minutes
+  let reprompts = 0
+  const prevBySess = {}
+  for (const p of pr) {
+    const prev = prevBySess[p.sessionId]
+    if (prev && p.t - prev.t < 180_000 && jaccard(tokset(p.text), tokset(prev.text)) >= 0.5) reprompts++
+    prevBySess[p.sessionId] = p
+  }
+  const oneShot = sess.filter(s => s.userMsgs === 1 && s.toolCalls > 0).length
+  // ponytail: "abandoned" = one prompt, zero tool calls — crude but observable
+  const abandoned = sess.filter(s => s.userMsgs === 1 && s.toolCalls === 0).length
+  const cost = en.reduce((s, e) => s + entryCost(e), 0)
+  const byProj = {}, byModel = {}
+  for (const e of en) { byProj[e.proj] = (byProj[e.proj] || 0) + entryCost(e); byModel[e.model] = (byModel[e.model] || 0) + entryCost(e) }
+  const durs = sess.map(s => s.last - s.first).filter(d => d > 0)
+  const dupes = new Map()
+  for (const p of pr) { if (p.text.length >= 25 && !p.text.startsWith('/')) { const k = normPrompt(p.text); dupes.set(k, (dupes.get(k) || 0) + 1) } }
+  const reused = [...dupes.entries()].filter(([, n]) => n >= 2)
+  const byHour = new Array(24).fill(0); for (const p of pr) byHour[new Date(p.t).getHours()]++
+  res.json({
+    chats: sess.length, msgs: pr.length,
+    avgMsgs: sess.length ? pr.length / sess.length : 0,
+    activeDays: new Set(pr.map(p => new Date(p.t).toISOString().slice(0, 10))).size,
+    heat, byHour,
+    avgSessionMs: durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : 0,
+    toolsPerChat: sess.length ? sess.reduce((x, s) => x + s.toolCalls, 0) / sess.length : 0,
+    oneShotRate: sess.length ? oneShot / sess.length : 0,
+    abandonRate: sess.length ? abandoned / sess.length : 0,
+    repromptRate: pr.length ? reprompts / pr.length : 0,
+    reuseRate: dupes.size ? reused.reduce((s, [, n]) => s + n, 0) / Math.max(1, [...dupes.values()].reduce((a, b) => a + b, 0)) : 0,
+    dupClusters: reused.length,
+    tokIn: en.reduce((s, e) => s + e.in + e.cc + e.cr, 0), tokOut: en.reduce((s, e) => s + e.out, 0),
+    cost, costPerChat: sess.length ? cost / sess.length : 0,
+    byProj: Object.entries(byProj).sort((a, b) => b[1] - a[1]).slice(0, 6),
+    byModel: Object.entries(byModel).sort((a, b) => b[1] - a[1]).slice(0, 6),
+    longest: [...sess].sort((a, b) => b.userMsgs - a.userMsgs).slice(0, 6).map(s => ({ proj: s.proj, sessionId: s.sessionId, userMsgs: s.userMsgs, toolCalls: s.toolCalls, last: s.last })),
+    topPrompts: reused.sort((a, b) => b[1] - a[1]).slice(0, 6).map(([text, n]) => ({ text: text.slice(0, 140), count: n })),
+  })
+})
+
+// ---------- 16: global search (palette) ----------
+app.get('/api/search', (req, res) => {
+  const q = String(req.query.q || '').toLowerCase()
+  if (q.length < 3) return res.json([])
+  const { prompts } = scanTranscripts()
+  const out = []
+  for (let i = prompts.length - 1; i >= 0 && out.length < 15; i--) {
+    const p = prompts[i]
+    const idx = p.text.toLowerCase().indexOf(q)
+    if (idx >= 0) out.push({ proj: p.proj, sessionId: p.sessionId, t: p.t, snippet: p.text.slice(Math.max(0, idx - 40), idx + 120) })
+  }
+  res.json(out)
+})
+
+// ---------- 17: attention inbox ----------
+function inboxItems() {
+  const items = []
+  for (const a of readApprovals()) if (a.status === 'proposed') items.push({ key: 'appr:' + a.id, kind: 'approval', severity: 'warning', text: `pending approval: ${a.summary}`, ts: a.ts, section: 'governance' })
+  const { alerts } = costAlerts()
+  for (const a of alerts) items.push({ key: 'cost:' + a.text.slice(0, 40), kind: 'budget', severity: a.level, text: a.text, ts: Date.now(), section: 'reliability' })
+  for (const r of evalRuns().slice(-10)) if (r.passRate < 1) items.push({ key: 'eval:' + r.id, kind: 'eval', severity: r.passRate === 0 ? 'error' : 'warning', text: `eval run at ${Math.round(r.passRate * 100)}% pass (${r.scope === 'global' ? 'global' : path.basename(r.scope)})`, ts: r.ts, section: 'reliability' })
+  for (const [id, c] of chats) {
+    if (!c.alive) continue
+    const lastEv = c.events[c.events.length - 1]
+    if (lastEv && lastEv.type === 'result') items.push({ key: 'chat:' + id, kind: 'session', severity: 'info', text: `session in ${path.basename(c.cwd)} is waiting for your input`, ts: Date.now(), section: 'chat' })
+  }
+  try {
+    const dismissed = readMeta().recsDismissed || {}
+    for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)).slice(0, 8)) {
+      const hub = hubResolve(dir)
+      for (const f of (hub.findings || []).filter(f => f.severity === 'error').slice(0, 2)) {
+        const key = 'finding:' + f.text.slice(0, 60)
+        if (!dismissed[key]) items.push({ key, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'library' })
+      }
+    }
+  } catch {}
+  const done = readMeta().inboxDone || {}
+  const sev = { error: 0, warning: 1, info: 2 }
+  return items.map(i => ({ ...i, done: !!done[i.key] })).sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
+}
+app.get('/api/inbox', (req, res) => res.json(inboxItems()))
+app.post('/api/inbox/done', (req, res) => {
+  const meta = readMeta()
+  meta.inboxDone ||= {}
+  if (req.body.done) meta.inboxDone[req.body.key] = Date.now()
+  else delete meta.inboxDone[req.body.key]
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true })
+})
+
+// ---------- 24: daily digest ----------
+app.get('/api/digest', (req, res) => {
+  const since = Date.now() - (Number(req.query.days) || 1) * 86400_000
+  const { entries, lineEvents } = collectUsage()
+  const en = entries.filter(e => e.t >= since)
+  const byProj = {}
+  for (const e of en) { const p = byProj[e.proj] ||= { out: 0, cost: 0, msgs: 0 }; p.out += e.out; p.cost += entryCost(e); p.msgs++ }
+  const lines = lineEvents.filter(l => l.t >= since)
+  const commits = []
+  try {
+    for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d))) {
+      const r = spawnSync('git', ['-C', dir, 'log', '--since=' + new Date(since).toISOString(), '--oneline'], { timeout: 3000 })
+      const list = r.stdout ? r.stdout.toString().split('\n').filter(Boolean) : []
+      if (list.length) commits.push({ project: path.basename(dir), count: list.length, latest: list[0].slice(0, 90) })
+    }
+  } catch {}
+  const evals = evalRuns().filter(r => r.ts >= since)
+  const drift = []
+  for (const proj of Object.keys(readMeta().baselines || {})) {
+    try { const d = driftFor(proj); if (d.drifts.length) drift.push({ project: path.basename(proj), fields: d.drifts.length }) } catch {}
+  }
+  res.json({
+    since,
+    tokens: en.reduce((s, e) => s + e.out, 0), cost: en.reduce((s, e) => s + entryCost(e), 0), msgs: en.length,
+    lines: { add: lines.reduce((s, l) => s + l.add, 0), del: lines.reduce((s, l) => s + l.del, 0) },
+    byProj: Object.entries(byProj).sort((a, b) => b[1].cost - a[1].cost).slice(0, 8),
+    commits: commits.sort((a, b) => b.count - a.count),
+    evals: { runs: evals.length, passRate: evals.length ? evals.reduce((s, r) => s + r.passRate, 0) / evals.length : null },
+    drift,
+    attention: inboxItems().filter(i => !i.done).slice(0, 6),
+  })
+})
+
+// ---------- 18: new-project harness scaffolder ----------
+function scaffoldFiles(dir, { profile, cloneFrom, skills = [] }) {
+  const files = []
+  let settings = { permissions: { deny: ['Read(./.env)', 'Read(./.env.*)', 'Read(./secrets/**)'], ask: ['Bash(git push*)', 'WebFetch'], allow: ['Bash(git status*)', 'Bash(git diff*)', 'Bash(git log*)'] } }
+  const p = profile ? readProfiles().find(x => x.name === profile) : null
+  if (p) settings.harness = p.harness
+  if (cloneFrom && fs.existsSync(cloneFrom)) {
+    const src = readJson(path.join(cloneFrom, '.claude', 'settings.json'), null)
+    if (src) settings = p ? { ...src, harness: deepMerge(src.harness || {}, p.harness) } : src
+    const mcp = readJson(path.join(cloneFrom, '.mcp.json'), null)
+    if (mcp) files.push({ rel: '.mcp.json', content: JSON.stringify(mcp, null, 2) })
+    for (const s of hubListSkills(path.join(cloneFrom, '.claude', 'skills'), 'project')) files.push({ rel: `.claude/skills/${s.name}/SKILL.md`, content: readIf(s.path) || '' })
+    for (const a of hubListAgents(path.join(cloneFrom, '.claude', 'agents'), 'project')) files.push({ rel: `.claude/agents/${a.name}.md`, content: readIf(a.path) || '' })
+    const md = readIf(path.join(cloneFrom, 'CLAUDE.md'))
+    if (md) files.push({ rel: 'CLAUDE.md', content: md })
+  }
+  files.unshift({ rel: '.claude/settings.json', content: JSON.stringify(settings, null, 2) })
+  if (!files.some(f => f.rel === 'CLAUDE.md')) {
+    let langs = []
+    try { langs = repoInfo(dir).langs } catch {}
+    files.push({ rel: 'CLAUDE.md', content: `# ${path.basename(dir)}\n\n${langs.length ? `Primary language: ${langs.join(', ')}.\n\n` : ''}## Conventions\n\n- Keep diffs small; prefer already-installed dependencies.\n- Run the project's tests before claiming a change works.\n\n## Commands\n\n<!-- build / test / run commands here -->\n` })
+  }
+  for (const name of skills) {
+    const src = readIf(path.join(CLAUDE, 'skills', name, 'SKILL.md'))
+    if (src && !files.some(f => f.rel === `.claude/skills/${name}/SKILL.md`)) files.push({ rel: `.claude/skills/${name}/SKILL.md`, content: src })
+  }
+  return files
+}
+app.post('/api/scaffold', (req, res) => {
+  const { dir, profile, cloneFrom, skills, dryRun } = req.body
+  if (!dir || !fs.existsSync(dir)) return res.status(400).json({ error: 'target directory does not exist — create it first' })
+  const files = scaffoldFiles(dir, { profile, cloneFrom, skills })
+  if (dryRun) return res.json({ files: files.map(f => ({ ...f, exists: fs.existsSync(path.join(dir, f.rel)) })) })
+  const written = []
+  for (const f of files) { track(path.join(dir, f.rel), f.content, { scope: dir, summary: 'scaffold harness' }); written.push(f.rel) }
+  try { // register so it shows up in Projects
+    const cj = readClaudeJson()
+    if (!cj.projects?.[dir]) { (cj.projects ||= {})[dir] = {}; backup(CLAUDE_JSON); fs.writeFileSync(CLAUDE_JSON, JSON.stringify(cj, null, 2)) }
+  } catch {}
+  res.json({ ok: true, written })
+})
+
+// ---------- 19: batch operations across projects ----------
+function batchPlan(op, target, params) {
+  if (op === 'set-setting') {
+    if (!/^(harness|permissions|model|env)(\.|$)/.test(params.path || '')) throw new Error('path must be under harness/permissions/model/env')
+    const file = path.join(target, '.claude', 'settings.json')
+    const s = readJson(file, {})
+    const before = JSON.stringify(getPath(s, params.path) ?? null)
+    const keys = params.path.split('.')
+    let o = s
+    for (const k of keys.slice(0, -1)) o = o[k] = (o[k] && typeof o[k] === 'object') ? o[k] : {}
+    if (params.value === null) delete o[keys[keys.length - 1]]
+    else o[keys[keys.length - 1]] = params.value
+    const content = JSON.stringify(s, null, 2)
+    const changed = before !== JSON.stringify(params.value ?? null)
+    return { desc: `${params.path}: ${before} → ${JSON.stringify(params.value)}`, changed, apply: () => track(file, content, { scope: target, summary: `batch: set ${params.path}` }) }
+  }
+  if (op === 'enable-skill') {
+    const src = path.join(CLAUDE, 'skills', params.skill, 'SKILL.md')
+    const dst = path.join(target, '.claude', 'skills', params.skill, 'SKILL.md')
+    if (!fs.existsSync(src)) return { desc: `global skill "${params.skill}" not found`, changed: false }
+    const changed = !fs.existsSync(dst)
+    return { desc: changed ? `copy skill "${params.skill}" into project` : 'already enabled', changed, apply: () => track(dst, fs.readFileSync(src, 'utf8'), { scope: target, summary: `batch: enable skill ${params.skill}` }) }
+  }
+  if (op === 'disable-skill') {
+    const dst = path.join(target, '.claude', 'skills', params.skill)
+    const changed = fs.existsSync(dst)
+    return {
+      desc: changed ? `remove project skill "${params.skill}"` : 'not present', changed,
+      apply: () => { backup(dst); fs.rmSync(dst, { recursive: true }); appendVersion({ id: 'v' + Date.now().toString(36), ts: Date.now(), author: AUTHOR, machine: os.hostname(), scope: target, file: dst, summary: `batch: disable skill ${params.skill}`, prev: null, content: null }) },
+    }
+  }
+  if (op === 'push-rule') {
+    const file = path.join(target, 'CLAUDE.md')
+    const cur = readIf(file) || ''
+    const rule = String(params.rule || '').trim()
+    if (!rule) throw new Error('empty rule')
+    const changed = !cur.includes(rule)
+    return { desc: changed ? 'append rule to CLAUDE.md' : 'rule already present', changed, apply: () => track(file, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + '\n' + rule + '\n', { scope: target, summary: 'batch: push rule' }) }
+  }
+  if (op === 'sync-drift') {
+    const d = driftFor(target)
+    const syncable = (d.drifts || []).filter(x => x.syncable)
+    return { desc: d.baseline ? `${syncable.length} drifted field(s): ${syncable.map(x => x.field).join(', ').slice(0, 120)}` : 'no baseline set', changed: syncable.length > 0, apply: () => syncable.forEach(x => syncDriftField(target, x.field)) }
+  }
+  throw new Error('unknown op: ' + op)
+}
+app.post('/api/batch', (req, res) => {
+  const { op, targets, params = {}, dryRun } = req.body
+  const results = []
+  for (const t of targets || []) {
+    if (!fs.existsSync(t)) { results.push({ target: t, desc: 'directory missing', changed: false }); continue }
+    try {
+      const plan = batchPlan(op, t, params)
+      if (!dryRun && plan.changed && plan.apply) plan.apply()
+      results.push({ target: t, desc: plan.desc, changed: plan.changed, applied: !dryRun && plan.changed })
+    } catch (e) { results.push({ target: t, desc: 'error: ' + e.message, changed: false }) }
+  }
+  res.json({ dryRun: !!dryRun, results })
+})
+
+// ---------- 21: session bookmarks (pins live in dashboard-meta.json) ----------
+app.get('/api/pins', (req, res) => {
+  const meta = readMeta()
+  res.json(Object.values(meta.pins || {}).sort((a, b) => b.ts - a.ts))
+})
+app.put('/api/pins', (req, res) => {
+  const { sessionId, cwd, label, title, pinned } = req.body
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
+  const meta = readMeta()
+  meta.pins ||= {}
+  if (pinned) meta.pins[sessionId] = { sessionId, cwd, label: label || '', title: title || '', ts: Date.now(), configVersion: readVersions().slice(-1)[0]?.id || null }
+  else delete meta.pins[sessionId]
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true })
+})
+
+// ---------- 22: reusable context bundles ----------
+const CTX_FILE = path.join(CLAUDE, 'context-bundles.json')
+app.get('/api/ctxbundles', (req, res) => res.json(readJson(CTX_FILE, [])))
+app.put('/api/ctxbundles', (req, res) => {
+  track(CTX_FILE, JSON.stringify(req.body.bundles || [], null, 2), { summary: 'update context bundles' })
+  res.json({ ok: true })
+})
+
+// ---------- 20: quick capture — notes land in ~/.claude/notes (visible in Artifacts) ----------
+app.post('/api/notes', (req, res) => {
+  const dir = path.join(CLAUDE, 'notes')
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, (String(req.body.title || 'note').replace(/[^\w-]+/g, '-').slice(0, 40) || 'note') + '-' + Date.now().toString(36) + '.md')
+  fs.writeFileSync(file, req.body.content || '')
+  res.json({ ok: true, path: file })
+})
+
+// ---------- 23: notifications (desktop handled client-side; slack via webhook) ----------
+app.get('/api/notify', (req, res) => res.json(readMeta().notify || { desktop: true, slackWebhook: '' }))
+app.put('/api/notify', (req, res) => {
+  const meta = readMeta()
+  meta.notify = { desktop: !!req.body.desktop, slackWebhook: String(req.body.slackWebhook || '') }
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true })
+})
+app.post('/api/notify/test', async (req, res) => {
+  const hook = (readMeta().notify || {}).slackWebhook
+  if (!hook) return res.status(400).json({ error: 'no slack webhook configured' })
+  try {
+    const r = await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'claude-dashboard: test notification' }), signal: AbortSignal.timeout(8000) })
+    res.json({ ok: r.ok, status: r.status })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// push new error/warning inbox items to slack (dedup per server run)
+const slackNotified = new Set()
+setInterval(() => {
+  const hook = (readMeta().notify || {}).slackWebhook
+  if (!hook) return
+  try {
+    for (const i of inboxItems()) {
+      if (i.done || i.severity === 'info' || slackNotified.has(i.key)) continue
+      slackNotified.add(i.key)
+      fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `[claude-dashboard] ${i.severity.toUpperCase()}: ${i.text}` }) }).catch(() => {})
+    }
+  } catch {}
+}, 60_000)
 
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 

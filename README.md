@@ -27,6 +27,20 @@ Opens http://localhost:5177 (frontend, Vite) proxying to the API on :5178 (Expre
 | **Hooks** | `~/.claude/settings.json` → `hooks` (user), `./.claude/settings.json` (project), `./.claude/settings.local.json` (local) | Left pane: flattened view of every hook (event, matcher, command, timeout). Right pane: raw JSON editor of the `hooks` block only — the rest of settings.json is preserved untouched. |
 | **Artifacts** | read-only scan of `~/.claude` (rename/delete write) | Excluded from the scan: `plugins/`, `node_modules/`, `.git/`, `file-history/`, `paste-cache/`, `telemetry/`, `todos/`, `statsig/`, SQLite/lock files, dotfiles. Cap: 8000 files. |
 
+### Newer sections & global features
+
+| Feature | Where | Notes |
+|---|---|---|
+| **Flow Graph** | sidebar → Flow Graph | SVG orchestration topology: entry → skills/commands → agents → MCP. Toggle **defined** (parsed from skill/agent bodies) vs **observed** (real invocations from transcripts, edge width = frequency). Click a node to isolate its up/downstream path; flags dead ends (never ran), cycles, and the most-traveled path. Scope-aware. |
+| **Chat Insights** | sidebar → Chat Insights | Stats tab: chats, one-shot rate, cost/chat, day×hour heatmap, correction/abandon/reuse rates, leaderboards. Duplicate prompts tab: exact+fuzzy (Jaccard) clusters with **save as command** / **send to Prompt Studio** actions; similarity slider, project + time filters. |
+| **Inbox** | sidebar → Inbox | One queue: sessions waiting on input, pending approvals, budget alerts, failed evals, error recommendations. Also: Daily digest tab (shipped commits, spend, drift, attention items) and Notifications tab (desktop + Slack webhook; the server pushes new error/warning items every 60s while running). Sidebar shows an open-count badge. |
+| **⌘K palette** | anywhere | Jump to any section/project/skill/agent/MCP server, run actions (evals, scaffolder), full-text search across chat prompts (3+ chars). |
+| **Scaffolder** | Projects → "+ Scaffold harness" | Pick a profile and/or clone another project's setup; dry-run preview, then writes `.claude/settings.json`, starter CLAUDE.md, chosen skills, and registers the project in `~/.claude.json`. |
+| **Batch ops** | Governance → Batch ops | Set a settings field / enable-disable a skill / push a CLAUDE.md rule / sync drift across many projects at once. Dry-run required before apply; every write versioned. |
+| **Quick capture** | Chat, hover any message → ⤴ | Promote a message to a command, skill, Prompt Studio entry, or note (`~/.claude/notes/`). |
+| **Pins & resume** | Chat session lists → ☆ | Pin/label sessions (stored in dashboard-meta.json with the config version active at pin time); pinned surface on Overview and resume in one click. |
+| **Context bundles** | Library → Context bundles | Named sets of file refs/URLs/notes (`~/.claude/context-bundles.json`); "Load in chat" prefills a session prompt with `@ref` lines. |
+
 ## Creating & editing
 
 **+ New** opens a right-side drawer with type-specific fields (skills: name/description/argument-hint/allowed-tools; agents add tools/model/color; MCP: transport, command/args/env or URL). **Edit fields** on any detail view opens the same drawer prefilled from the parsed frontmatter — saving rewrites only the frontmatter block in the on-disk conventions (quoted strings, YAML lists, inline agent tools) and preserves the markdown body, including unsaved inline-editor changes. The body itself is still edited inline with the CodeMirror editor.

@@ -313,6 +313,12 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .chat-session:hover { border-color: var(--accent); }
 .chat-session b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- quick capture + inbox badge ---------- */
+.cap-wrap { position: relative; display: flex; flex-direction: column; }
+.cap-wrap .cap-btn { position: absolute; top: 4px; right: 4px; opacity: 0; padding: 1px 7px; font-size: 12px; border-radius: 7px; background: rgba(0, 0, 0, 0.45); transition: opacity 0.15s; }
+.cap-wrap:hover .cap-btn { opacity: 1; }
+.nav-badge { margin-left: auto; font: 600 10px var(--mono); padding: 1px 7px; border-radius: 8px; background: rgba(229, 72, 77, 0.18); color: #f08a8d; }
+
 /* ---------- agent teams ---------- */
 @keyframes nodeGlow { 0%, 100% { opacity: 0.55; transform: scale(1) } 50% { opacity: 1; transform: scale(1.12) } }
 @keyframes dash { to { stroke-dashoffset: -16 } }
