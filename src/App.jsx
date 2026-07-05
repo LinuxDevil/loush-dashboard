@@ -7,6 +7,7 @@ import Overview from './Overview.jsx'
 import ProjectsSection from './ProjectsSection.jsx'
 import ChatSection from './ChatSection.jsx'
 import TeamsSection from './TeamsSection.jsx'
+import HarnessSection from './HarnessSection.jsx'
 import { api } from './api.js'
 
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
@@ -21,9 +22,29 @@ const SECTIONS = [
   { id: 'mcp', label: 'MCP Servers', icon: '⇌', kicker: 'Connections', title: 'MCP Servers', el: <McpSection /> },
   { id: 'agents', label: 'Agents', icon: '◆', kicker: 'Capabilities', title: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
+  { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness', el: <HarnessSection /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
 ]
+
+function SidebarFoot() {
+  const [h, setH] = useState(null)
+  useEffect(() => {
+    const load = () => api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [])
+  const ok = !h || h.ok
+  return (
+    <div className="sidebar-foot" title={h && !h.ok ? h.conflicts.join('\n') : ''}>
+      <div className="live" style={ok ? {} : { color: '#e5484d' }}>
+        {ok ? 'harness valid' : `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}`}
+      </div>
+      {ok ? 'settings schema · backups synced' : h.conflicts[0]?.slice(0, 44)}
+    </div>
+  )
+}
 
 export default function App() {
   const [section, setSection] = useState('overview')
@@ -48,10 +69,7 @@ export default function App() {
             <span className="nav-icon">{s.icon}</span> {s.label}
           </button>
         ))}
-        <div className="sidebar-foot">
-          <div className="live">backups synced</div>
-          ~/.claude/dashboard-backups
-        </div>
+        <SidebarFoot />
       </nav>
       <main className="content">
         <header className="topbar">

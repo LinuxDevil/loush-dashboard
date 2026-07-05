@@ -7,6 +7,7 @@ async function req(url, opts) {
 export const api = {
   get: url => req(url),
   put: (url, body) => req(url, { method: 'PUT', body }),
+  patch: (url, body) => req(url, { method: 'PATCH', body }),
   post: (url, body) => req(url, { method: 'POST', body }),
   del: url => req(url, { method: 'DELETE' }),
 }

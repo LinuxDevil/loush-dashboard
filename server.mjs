@@ -879,6 +879,173 @@ app.post('/api/team/plan', (req, res) => {
   res.json({ ok: true })
 })
 
+// ---------- harness (scope-based config with inheritance) ----------
+// Real fields (permissions, model, env, hooks) live where Claude Code reads them.
+// Mockup-only concepts (turn policy, context budget, routing) persist under a
+// `harness` namespace in the same settings.json so inheritance is genuine.
+const HARNESS_DEFAULTS = {
+  turnPolicy: { maxTurns: 40, stopConditions: ['task done', 'needs input', 'budget hit'], retry: '3x exp backoff (2s->8s)', onError: 'checkpoint + retry', checkpointInterval: 5 },
+  context: { windowSize: 200000, compactionThreshold: 0.82, keepTurns: 12, alwaysLoadedBudget: { systemPrompt: 2100, toolDefs: 1700, softCap: 8000 } },
+  modelRouting: [
+    { task: 'Plan & architect', model: 'opus-4-8', fallback: 'sonnet-4-6' },
+    { task: 'Implement & edit', model: 'sonnet-4-6', fallback: 'sonnet-4-6' },
+    { task: 'Quick edits & grep', model: 'haiku-4-5', fallback: 'sonnet-4-6' },
+    { task: 'Subagent default', model: 'sonnet-4-6', fallback: 'haiku-4-5' },
+  ],
+  environment: { sandbox: 'filesystem · repo-scoped', network: 'off (opt-in)' },
+}
+const GUARDRAIL_DEFS = [
+  { rule: 'Destructive shell (rm -rf, dd)', pattern: 'Bash(rm -rf*)', dflt: 'BLOCK' },
+  { rule: 'git push / force-push', pattern: 'Bash(git push*)', dflt: 'ASK' },
+  { rule: 'Outbound network requests', pattern: 'WebFetch', dflt: 'ASK' },
+  { rule: 'Read secret files (.env, keys)', pattern: 'Read(./.env)', dflt: 'DENY' },
+  { rule: 'Package install', pattern: 'Bash(npm install*)', dflt: 'ALLOW' },
+]
+const settingsFileFor = scope => (scope === 'global' ? path.join(CLAUDE, 'settings.json') : path.join(scope, '.claude', 'settings.json'))
+const claudeMdFor = scope => (scope === 'global' ? path.join(CLAUDE, 'CLAUDE.md') : path.join(scope, 'CLAUDE.md'))
+const leafPaths = (obj, prefix = '') => {
+  let out = []
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === undefined || v === null) continue
+    const p = prefix ? prefix + '.' + k : k
+    if (typeof v === 'object' && !Array.isArray(v)) out = out.concat(leafPaths(v, p))
+    else out.push(p)
+  }
+  return out
+}
+const getPath = (obj, p) => p.split('.').reduce((o, k) => (o == null ? undefined : o[Array.isArray(o) ? Number(k) : k]), obj)
+const deepMerge = (base, over) => {
+  if (over === undefined) return base
+  if (base && over && typeof base === 'object' && typeof over === 'object' && !Array.isArray(base) && !Array.isArray(over)) {
+    const out = { ...base }
+    for (const k of Object.keys(over)) out[k] = deepMerge(base[k], over[k])
+    return out
+  }
+  return over
+}
+function harnessResolve(scope) {
+  const gRaw = readJson(settingsFileFor('global'), {})
+  const pRaw = scope === 'global' ? {} : readJson(settingsFileFor(scope), {})
+  const overridden = scope === 'global' ? [] : leafPaths({ harness: pRaw.harness, permissions: pRaw.permissions, model: pRaw.model, env: pRaw.env })
+  const settings = deepMerge(gRaw, pRaw)
+  const h = deepMerge(HARNESS_DEFAULTS, settings.harness || {})
+  const perms = settings.permissions || {}
+  const guardMode = pat => {
+    const inList = l => (perms[l] || []).some(r => r === pat)
+    return inList('deny') ? 'DENY' : inList('ask') ? 'ASK' : inList('allow') ? 'ALLOW' : null
+  }
+  const guardrails = GUARDRAIL_DEFS.map(g => ({ ...g, mode: guardMode(g.pattern) || g.dflt, fromConfig: !!guardMode(g.pattern) }))
+  // verification gates: real hooks + harness.verification entries
+  const gates = []
+  for (const [event, matchers] of Object.entries(settings.hooks || {}))
+    for (const m of Array.isArray(matchers) ? matchers : [])
+      for (const hk of m.hooks || [])
+        gates.push({ name: `${event}${m.matcher ? ' · ' + m.matcher : ''}`, command: String(hk.command || '').slice(0, 80), status: 'hook', kind: 'hook' })
+  for (const v of Array.isArray(settings.harness?.verification) ? settings.harness.verification : (Array.isArray(h.verification) ? h.verification : []))
+    gates.push({ name: v.name, command: v.command, status: verifyResults.get(scope + '|' + v.name)?.status || 'manual', kind: 'gate' })
+  // validation
+  const conflicts = []
+  for (const [s, f] of [['global', settingsFileFor('global')], [scope, settingsFileFor(scope)]]) {
+    if (s === 'global' && scope !== 'global') {} // still validate both
+    if (!fs.existsSync(f)) continue
+    try { JSON.parse(fs.readFileSync(f, 'utf8')) } catch (e) { conflicts.push(`${f}: invalid JSON — ${e.message.slice(0, 60)}`) }
+  }
+  for (const l of ['allow', 'ask', 'deny']) for (const r of perms[l] || []) if (typeof r !== 'string') conflicts.push(`permissions.${l} contains a non-string entry`)
+  const dupes = (perms.allow || []).filter(r => (perms.deny || []).includes(r))
+  for (const d of dupes) conflicts.push(`"${d}" is in both allow and deny`)
+  if (h.turnPolicy.maxTurns < 1 || h.turnPolicy.maxTurns > 500) conflicts.push('harness.turnPolicy.maxTurns out of range (1-500)')
+  if (h.context.compactionThreshold < 0.3 || h.context.compactionThreshold > 0.98) conflicts.push('harness.context.compactionThreshold out of range (0.3-0.98)')
+  // instructions
+  const mdPath = claudeMdFor(scope)
+  const md = fs.existsSync(mdPath) ? fs.readFileSync(mdPath, 'utf8') : (scope !== 'global' && fs.existsSync(path.join(scope, '.claude', 'CLAUDE.md')) ? fs.readFileSync(path.join(scope, '.claude', 'CLAUDE.md'), 'utf8') : null)
+  const claudeMdTokens = md ? tokens(md) : 0
+  // live context usage: latest transcript entry for this scope's project
+  let usedTokens = null
+  try {
+    const { entries } = collectUsage()
+    const proj = scope === 'global' ? null : mangle(scope)
+    const rel = proj ? entries.filter(e => e.proj === proj) : entries
+    const last = rel[rel.length - 1]
+    if (last) usedTokens = Math.min(last.in + last.cr, h.context.windowSize)
+  } catch {}
+  // health: computed, not stored
+  const checks = [
+    ['add a deny list', (perms.deny || []).length > 0, 15],
+    ['add ask-first rules', (perms.ask || []).length > 0, 10],
+    ['add auto-allow rules', (perms.allow || []).length > 0, 10],
+    ['create CLAUDE.md', !!md, 10],
+    ['trim always-loaded budget under soft cap', h.context.alwaysLoadedBudget.systemPrompt + h.context.alwaysLoadedBudget.toolDefs + claudeMdTokens <= h.context.alwaysLoadedBudget.softCap, 10],
+    ['set compaction between 50–95%', h.context.compactionThreshold >= 0.5 && h.context.compactionThreshold <= 0.95, 10],
+    ['set turn budget between 10–200', h.turnPolicy.maxTurns >= 10 && h.turnPolicy.maxTurns <= 200, 10],
+    ['add ≥2 verification gates', gates.length >= 2, 15],
+    ['resolve schema conflicts', conflicts.length === 0, 10],
+  ]
+  const health = checks.reduce((s, [, ok, w]) => s + (ok ? w : 0), 0)
+  const failing = checks.filter(c => !c[1]).map(c => c[0])
+  return {
+    resolved: {
+      turnPolicy: h.turnPolicy, context: h.context, modelRouting: h.modelRouting,
+      guardrails: guardrails.map(({ rule, pattern, mode }) => ({ rule, pattern, mode })),
+      permissions: { autoAllow: perms.allow || [], askFirst: perms.ask || [], denied: perms.deny || [], sandbox: h.environment.sandbox },
+      environment: { workingDir: scope === 'global' ? HOME : scope, sandbox: h.environment.sandbox, network: h.environment.network, shell: (process.env.SHELL || '/bin/sh') + ' · non-interactive', envVars: Object.keys(settings.env || {}).length },
+      model: settings.model || null,
+    },
+    verification: gates, overridden,
+    meta: { configPath: settingsFileFor(scope), instrPath: mdPath, claudeMd: md, claudeMdTokens, usedTokens, windowSize: h.context.windowSize },
+    health: { score: health, failing },
+    valid: { ok: conflicts.length === 0, conflicts },
+  }
+}
+const verifyResults = new Map() // scope|name -> {status, out, t}
+app.get('/api/harness', (req, res) => {
+  const cj = readJson(CLAUDE_JSON, {})
+  const scopes = [{ id: 'global', label: 'Global', path: settingsFileFor('global'), ovCount: 0 }]
+  for (const dir of Object.keys(cj.projects || {})) {
+    if (dir === HOME || !fs.existsSync(dir)) continue // HOME's ".claude" IS the global scope
+    const pset = readJson(path.join(dir, '.claude', 'settings.json'), null)
+    scopes.push({ id: dir, label: path.basename(dir), path: path.join(dir, '.claude', 'settings.json'), ovCount: pset ? leafPaths({ harness: pset.harness, permissions: pset.permissions, model: pset.model, env: pset.env }).length : 0 })
+  }
+  const scope = req.query.scope && (req.query.scope === 'global' || scopes.some(s => s.id === req.query.scope)) ? req.query.scope : 'global'
+  res.json({ scopes, scope, ...harnessResolve(scope) })
+})
+app.patch('/api/harness', (req, res) => {
+  const { scope, path: dotPath, value } = req.body
+  if (!dotPath || !/^(harness|permissions|model|env)(\.|$)/.test(dotPath)) return res.status(400).json({ error: 'path must be under harness/permissions/model/env' })
+  const file = settingsFileFor(scope)
+  const settings = readJson(file, {})
+  const bak = backup(file)
+  const keys = dotPath.split('.')
+  let o = settings
+  for (const k of keys.slice(0, -1)) o = o[k] = (o[k] && typeof o[k] === 'object') ? o[k] : {}
+  if (value === null) delete o[keys[keys.length - 1]]
+  else o[keys[keys.length - 1]] = value
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2))
+  res.json({ ok: true, backup: bak, ...harnessResolve(scope) })
+})
+app.get('/api/harness/raw', (req, res) => {
+  const file = settingsFileFor(req.query.scope || 'global')
+  res.json({ path: file, content: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '{\n}\n' })
+})
+app.put('/api/harness/raw', (req, res) => {
+  const { scope, content } = req.body
+  try { JSON.parse(content) } catch (e) { return res.status(400).json({ error: 'invalid JSON: ' + e.message }) }
+  const file = settingsFileFor(scope || 'global')
+  const bak = backup(file)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, content)
+  res.json({ ok: true, backup: bak })
+})
+app.post('/api/harness/verify', (req, res) => {
+  const { scope, name, command } = req.body
+  const cwd = scope === 'global' ? HOME : scope
+  execFile('/bin/sh', ['-c', command], { cwd, timeout: 60000 }, (err, stdout, stderr) => {
+    const status = err ? 'failing' : 'passing'
+    verifyResults.set(scope + '|' + name, { status, t: Date.now() })
+    res.json({ status, out: String(stdout || '').slice(-400), err: String(stderr || '').slice(-400) })
+  })
+})
+
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))

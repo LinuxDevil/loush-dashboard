@@ -317,3 +317,20 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 @keyframes nodeGlow { 0%, 100% { opacity: 0.55; transform: scale(1) } 50% { opacity: 1; transform: scale(1.12) } }
 @keyframes dash { to { stroke-dashoffset: -16 } }
 @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+
+/* ---------- harness ---------- */
+@keyframes dashRot { to { stroke-dashoffset: -24 } }
+.hx-overview { display: grid; grid-template-columns: minmax(280px, 1.1fr) repeat(4, 1fr); gap: 14px; }
+.hx-loopgrid { display: grid; grid-template-columns: 210px 1fr; gap: 18px; align-items: center; }
+.hx-2a { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; }
+.hx-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.hx-2b { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 16px; align-items: start; }
+@media (max-width: 1350px) { .hx-overview { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1100px) {
+  .hx-overview { grid-template-columns: 1fr 1fr; }
+  .hx-2a, .hx-2, .hx-2b { grid-template-columns: 1fr; }
+  .hx-loopgrid { grid-template-columns: 1fr; }
+}
+.hx button:focus-visible, .hx [tabindex]:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.7); outline-offset: 2px; }
+.hx-ed { cursor: pointer; border-bottom: 1px dashed rgba(255, 255, 255, 0.18); }
+.hx-ed:hover { border-bottom-color: var(--accent); color: #fff; }
