@@ -585,14 +585,33 @@ function chatBroadcast(chat, ev) {
   const line = `data: ${JSON.stringify(ev)}\n\n`
   for (const l of chat.listeners) l.write(line)
 }
+// past conversation history from the on-disk transcript (resumed CLI sessions emit nothing until the first new message)
+function historyEvents(cwd, sessionId) {
+  const out = []
+  try {
+    for (const line of fs.readFileSync(path.join(CLAUDE, 'projects', mangle(cwd), sessionId + '.jsonl'), 'utf8').split('\n')) {
+      try {
+        const j = JSON.parse(line)
+        if ((j.type !== 'user' && j.type !== 'assistant') || j.isMeta || !j.message) continue
+        if (typeof j.message.content === 'string' && j.message.content.startsWith('<')) continue
+        out.push({ type: j.type, message: j.message, parent_tool_use_id: j.parent_tool_use_id || null })
+      } catch {}
+    }
+  } catch {}
+  return out.slice(-200)
+}
 app.post('/api/chat', (req, res) => {
   const { cwd, resume } = req.body
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
+  if (resume) {
+    const existing = [...chats.entries()].find(([, c]) => c.alive && c.cwd === cwd && c.resume === resume)
+    if (existing) return res.json({ id: existing[0] })
+  }
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
   if (resume) args.push('--resume', resume)
   const child = spawn('claude', args, { cwd, env: process.env })
   const id = Math.random().toString(36).slice(2, 10)
-  const chat = { child, cwd, sessionId: resume || null, alive: true, events: [], listeners: new Set() }
+  const chat = { child, cwd, resume: resume || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
   chats.set(id, chat)
   let buf = ''
   child.stdout.on('data', d => {

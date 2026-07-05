@@ -86,8 +86,9 @@ export default function ChatSection() {
   useEffect(() => { if (cwd) api.get('/api/chat/sessions?cwd=' + encodeURIComponent(cwd)).then(setSessions) }, [cwd])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events])
 
-  const attach = id => {
+  const attach = (id, chatCwd) => {
     esRef.current?.close()
+    if (chatCwd) setCwd(chatCwd)
     setEvents([]); setChatId(id)
     const es = new EventSource(`/api/chat/${id}/events`)
     es.onmessage = m => {
@@ -110,11 +111,14 @@ export default function ChatSection() {
     setInput(''); setBusy(true)
     await api.post(`/api/chat/${chatId}/message`, { text }).catch(e => { setBusy(false); alert(e.message) })
   }
-  const stop = async () => {
-    if (chatId) await api.del('/api/chat/' + chatId)
+  const detach = () => {
     esRef.current?.close()
     setChatId(null); setEvents([]); setBusy(false)
     api.get('/api/chat').then(setActive).catch(() => {})
+  }
+  const stop = async () => {
+    if (chatId) await api.del('/api/chat/' + chatId)
+    detach()
   }
 
   const blocks = buildBlocks(events)
@@ -133,7 +137,7 @@ export default function ChatSection() {
           <div className="chat-sessions">
             <h3>Live now</h3>
             {active.filter(a => a.alive).map(a => (
-              <div key={a.id} className="chat-session" onClick={() => attach(a.id)}>
+              <div key={a.id} className="chat-session" onClick={() => attach(a.id, a.cwd)}>
                 <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.events} events · {a.cwd}</span>
               </div>
             ))}
@@ -155,7 +159,10 @@ export default function ChatSection() {
   return (
     <div className="chat">
       <div className="chat-head">
-        <span><b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span></span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
+          <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
+        </span>
         <button className="mini" onClick={stop}>{ended ? 'close' : 'stop session'}</button>
       </div>
       <div className="chat-log">
