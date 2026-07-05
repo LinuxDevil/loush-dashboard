@@ -95,6 +95,121 @@ const Cap = ({ text, children }) => (
   </div>
 )
 
+const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = err; r.readAsDataURL(f) })
+
+// input bar with "/" command + "@" file autocomplete, image paste/attach, any-file upload
+function InputBar({ cwd, ended, onSend, initial }) {
+  const [input, setInput] = useState(initial || '')
+  const [atts, setAtts] = useState([]) // {kind:'image', name, media_type, data} | {kind:'file', name, path}
+  const [sug, setSug] = useState(null) // {trigger:'/'|'@', items, idx, start, end}
+  const cmdsRef = useRef(null)
+  const taRef = useRef(null)
+  const fileRef = useRef(null)
+  const debRef = useRef(null)
+  useEffect(() => { cmdsRef.current = null }, [cwd])
+  useEffect(() => { if (initial) setInput(initial) }, [initial])
+
+  const updateSug = (text, caret) => {
+    clearTimeout(debRef.current)
+    const before = text.slice(0, caret)
+    const cmd = /^\/([\w:-]*)$/.exec(before) // slash commands are message-initial
+    const file = /@([^\s@]*)$/.exec(before)
+    if (!cmd && !file) return setSug(null)
+    debRef.current = setTimeout(async () => {
+      try {
+        let items
+        if (cmd) {
+          cmdsRef.current ||= await api.get('/api/chat/complete?cwd=' + encodeURIComponent(cwd))
+          items = cmdsRef.current.filter(c => c.name.toLowerCase().includes(cmd[1].toLowerCase()))
+        } else {
+          items = await api.get(`/api/chat/complete?kind=files&cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(file[1])}`)
+        }
+        const m = cmd || file
+        setSug(items.length ? { trigger: cmd ? '/' : '@', items: items.slice(0, 12), idx: 0, start: m.index, end: caret } : null)
+      } catch { setSug(null) }
+    }, cmd && cmdsRef.current ? 0 : 150)
+  }
+  const pick = item => {
+    if (sug.trigger === '@') { // file/folder refs become tags, not inline text
+      setInput(input.slice(0, sug.start) + input.slice(sug.end))
+      setAtts(a => [...a, { kind: 'ref', name: item.name }])
+    } else {
+      setInput(input.slice(0, sug.start) + '/' + item.name + ' ' + input.slice(sug.end))
+    }
+    setSug(null)
+    taRef.current?.focus()
+  }
+  const addFiles = async files => {
+    for (const f of files) {
+      if (f.type.startsWith('image/')) setAtts(a => [...a, { kind: 'image', name: f.name || 'pasted image', media_type: f.type, data: null, _p: fileToB64(f) }])
+      else {
+        try {
+          const r = await fetch('/api/chat/upload?name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f })
+          const j = await r.json()
+          if (!r.ok) throw new Error(j.error)
+          setAtts(a => [...a, { kind: 'file', name: f.name, path: j.path }])
+        } catch (e) { alert('upload failed: ' + e.message) }
+      }
+    }
+  }
+  const send = async () => {
+    const images = []
+    for (const a of atts.filter(x => x.kind === 'image')) images.push({ media_type: a.media_type, data: a.data || await a._p })
+    const refs = atts.filter(x => x.kind === 'file' || x.kind === 'ref').map(x => `@${x.path || x.name}`).join('\n')
+    const text = [input.trim(), refs].filter(Boolean).join('\n')
+    if (!text && !images.length) return
+    setInput(''); setAtts([]); setSug(null)
+    onSend(text || 'see attached', images)
+  }
+  const key = e => {
+    if (sug) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); return setSug({ ...sug, idx: (sug.idx + 1) % sug.items.length }) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); return setSug({ ...sug, idx: (sug.idx - 1 + sug.items.length) % sug.items.length }) }
+      if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); return pick(sug.items[sug.idx]) }
+      if (e.key === 'Escape') return setSug(null)
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+  }
+  return (
+    <div className="chat-inputwrap">
+      {sug && (
+        <div className="chat-sug">
+          {sug.items.map((it, i) => (
+            <div key={it.name + i} className={'chat-sug-item' + (i === sug.idx ? ' sel' : '')} onMouseDown={e => { e.preventDefault(); pick(it) }}>
+              <b>{sug.trigger}{it.name}</b>
+              {it.scope && <span className="dim"> {it.scope}</span>}
+              {it.desc && <span className="dim"> — {it.desc.slice(0, 70)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {atts.length > 0 && (
+        <div className="chat-atts">
+          {atts.map((a, i) => (
+            <span key={i} className="chat-att">{a.kind === 'image' ? '🖼' : a.kind === 'ref' ? (a.name.endsWith('/') ? '📁' : '📄') : '📎'} {a.name.length > 42 ? '…' + a.name.slice(-40) : a.name}
+              <button onClick={() => setAtts(atts.filter((_, j) => j !== i))}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="chat-inputbar">
+        <button className="mini" style={{ marginTop: 0 }} title="attach images (sent to the model) or any file — videos, PDFs, CSVs — saved and referenced as @path" onClick={() => fileRef.current?.click()} disabled={ended}>📎</button>
+        <input ref={fileRef} type="file" multiple hidden onChange={e => { addFiles([...e.target.files]); e.target.value = '' }} />
+        <textarea
+          ref={taRef}
+          value={input} rows={2} placeholder={ended ? 'session ended' : 'Message Claude…  / commands · @ files · paste images · Enter to send'}
+          disabled={ended}
+          onChange={e => { setInput(e.target.value); updateSug(e.target.value, e.target.selectionStart) }}
+          onKeyDown={key}
+          onBlur={() => setTimeout(() => setSug(null), 150)}
+          onPaste={e => { const imgs = [...e.clipboardData.items].filter(i => i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean); if (imgs.length) { e.preventDefault(); addFiles(imgs) } }}
+        />
+        <button className="primary" disabled={ended || (!input.trim() && !atts.length)} onClick={send}>Send</button>
+      </div>
+    </div>
+  )
+}
+
 export default function ChatSection() {
   const [projects, setProjects] = useState([])
   const [cwd, setCwd] = useState('')
@@ -103,7 +218,8 @@ export default function ChatSection() {
   const [pins, setPins] = useState([])
   const [chatId, setChatId] = useState(null)
   const [events, setEvents] = useState([])
-  const [input, setInput] = useState('')
+  const [prefill, setPrefill] = useState('')
+  const [model, setModel] = useState('')
   const [busy, setBusy] = useState(false)
   const esRef = useRef(null)
   const endRef = useRef(null)
@@ -114,7 +230,7 @@ export default function ChatSection() {
     api.get('/api/chat').then(setActive).catch(() => {})
     loadPins()
     const pre = sessionStorage.getItem('ctx-bundle-prompt') // feature 22 hand-off
-    if (pre) { setInput(pre); sessionStorage.removeItem('ctx-bundle-prompt') }
+    if (pre) { setPrefill(pre); sessionStorage.removeItem('ctx-bundle-prompt') }
   }, [])
   const togglePin = (s, pinned) => {
     const label = pinned ? (prompt('Label (optional):', '') ?? '') : ''
@@ -138,15 +254,14 @@ export default function ChatSection() {
   useEffect(() => () => esRef.current?.close(), [])
 
   const start = async resume => {
-    const { id } = await api.post('/api/chat', { cwd, resume })
+    const { id } = await api.post('/api/chat', { cwd, resume, model: model || undefined })
     attach(id)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
-  const send = async () => {
-    const text = input.trim()
-    if (!text || !chatId) return
-    setInput(''); setBusy(true)
-    await api.post(`/api/chat/${chatId}/message`, { text }).catch(e => { setBusy(false); alert(e.message) })
+  const send = async (text, images) => {
+    if (!chatId) return
+    setBusy(true)
+    await api.post(`/api/chat/${chatId}/message`, { text, images }).catch(e => { setBusy(false); alert(e.message) })
   }
   const detach = () => {
     esRef.current?.close()
@@ -160,6 +275,7 @@ export default function ChatSection() {
 
   const blocks = buildBlocks(events)
   const ended = blocks.some(b => b.kind === 'closed')
+  const liveModel = events.find(e => e.type === 'system' && e.subtype === 'init')?.model
 
   if (!chatId)
     return (
@@ -168,6 +284,12 @@ export default function ChatSection() {
           <select value={cwd} onChange={e => setCwd(e.target.value)}>
             {projects.map(p => <option key={p.path} value={p.path}>{p.name} — {p.path}</option>)}
           </select>
+          <select value={model} onChange={e => setModel(e.target.value)} title="model for new & resumed sessions — pick a cheaper one when you're near a usage limit">
+            <option value="">default model</option>
+            <option value="haiku">haiku</option>
+            <option value="sonnet">sonnet</option>
+            <option value="opus">opus</option>
+          </select>
           <button className="primary" onClick={() => start()}>New session</button>
         </div>
         {active.filter(a => a.alive).length > 0 && (
@@ -175,7 +297,7 @@ export default function ChatSection() {
             <h3>Live now</h3>
             {active.filter(a => a.alive).map(a => (
               <div key={a.id} className="chat-session" onClick={() => attach(a.id, a.cwd)}>
-                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.events} events · {a.cwd}</span>
+                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.model ? a.model + ' · ' : ''}{a.events} events · {a.cwd}</span>
               </div>
             ))}
           </div>
@@ -184,7 +306,7 @@ export default function ChatSection() {
           <div className="chat-sessions">
             <h3>Pinned</h3>
             {pins.map(p => (
-              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', { cwd: p.cwd || cwd, resume: p.sessionId }).then(({ id }) => attach(id, p.cwd)) }}>
+              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', { cwd: p.cwd || cwd, resume: p.sessionId, model: model || undefined }).then(({ id }) => attach(id, p.cwd)) }}>
                 <b>★ {p.label || p.title || p.sessionId}</b>
                 <span className="dim">
                   {(p.cwd || '').split('/').pop()}{p.configVersion ? ` · cfg ${p.configVersion}` : ''}
@@ -220,6 +342,7 @@ export default function ChatSection() {
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
+          {liveModel && <span className="dim" style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
         </span>
         <button className="mini" onClick={stop}>{ended ? 'close' : 'stop session'}</button>
       </div>
@@ -228,15 +351,7 @@ export default function ChatSection() {
         {busy && <div className="chat-line dim">✦ working…</div>}
         <div ref={endRef} />
       </div>
-      <div className="chat-inputbar">
-        <textarea
-          value={input} rows={2} placeholder={ended ? 'session ended' : 'Message Claude… (Enter to send)'}
-          disabled={ended}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-        />
-        <button className="primary" disabled={ended || !input.trim()} onClick={send}>Send</button>
-      </div>
+      <InputBar cwd={cwd} ended={ended} onSend={send} initial={prefill} />
     </div>
   )
 }

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"node server.mjs\" \"vite --open\"",
+    "dev": "concurrently -k \"node --watch server.mjs\" \"vite --open\"",
     "start": "npm run dev"
   },
   "dependencies": {

@@ -350,3 +350,13 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .skel-tile { flex: 1; height: 86px; border-radius: 16px; }
 .skel-row { height: 40px; }
 @keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+
+/* ---------- chat input: autocomplete + attachments ---------- */
+.chat-inputwrap { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.chat-sug { position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 6px; max-height: 280px; overflow-y: auto; background: #1c1815; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 5px; z-index: 30; box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9); }
+.chat-sug-item { padding: 7px 10px; border-radius: 8px; cursor: pointer; font: 400 12px var(--mono); color: #c8bdb4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-sug-item b { color: var(--accent-light); font-weight: 600; }
+.chat-sug-item.sel, .chat-sug-item:hover { background: rgba(217, 119, 87, 0.14); }
+.chat-atts { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat-att { display: inline-flex; align-items: center; gap: 6px; font: 400 11px var(--mono); color: #c8bdb4; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 3px 8px; }
+.chat-att button { border: none; padding: 0 2px; font-size: 11px; color: var(--ink-3); }

@@ -628,7 +628,7 @@ function historyEvents(cwd, sessionId) {
   return out.slice(-200)
 }
 app.post('/api/chat', (req, res) => {
-  const { cwd, resume } = req.body
+  const { cwd, resume, model } = req.body
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
   if (resume) {
     const existing = [...chats.entries()].find(([, c]) => c.alive && c.cwd === cwd && c.resume === resume)
@@ -636,9 +636,10 @@ app.post('/api/chat', (req, res) => {
   }
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
   if (resume) args.push('--resume', resume)
+  if (model) args.push('--model', model)
   const child = spawn('claude', args, { cwd, env: process.env, shell: WIN }) // shell resolves claude.cmd on Windows
   const id = Math.random().toString(36).slice(2, 10)
-  const chat = { child, cwd, resume: resume || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
+  const chat = { child, cwd, resume: resume || null, model: model || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
   chats.set(id, chat)
   let buf = ''
   child.stdout.on('data', d => {
@@ -660,7 +661,7 @@ app.post('/api/chat', (req, res) => {
   res.json({ id })
 })
 app.get('/api/chat', (req, res) =>
-  res.json([...chats.entries()].map(([id, c]) => ({ id, cwd: c.cwd, sessionId: c.sessionId, alive: c.alive, events: c.events.length }))))
+  res.json([...chats.entries()].map(([id, c]) => ({ id, cwd: c.cwd, sessionId: c.sessionId, model: c.model, alive: c.alive, events: c.events.length }))))
 app.get('/api/chat/:id/events', (req, res) => {
   const chat = chats.get(req.params.id)
   if (!chat) return res.status(404).json({ error: 'no such chat' })
@@ -686,11 +687,28 @@ app.get('/api/chat/complete', (req, res) => {
   const cwd = req.query.cwd && fs.existsSync(req.query.cwd) ? req.query.cwd : HOME
   const q = String(req.query.q || '').toLowerCase()
   if (req.query.kind === 'files') {
-    let files = []
-    const r = spawnSync('git', ['-C', cwd, 'ls-files'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 })
-    if (r.status === 0) files = r.stdout.toString().split('\n')
-    else try { files = fs.readdirSync(cwd) } catch {} // not a repo — top level only
-    return res.json(files.filter(f => f && f.toLowerCase().includes(q)).slice(0, 25).map(f => ({ name: f })))
+    const qRaw = String(req.query.q || '')
+    const r = spawnSync('git', ['-C', cwd, 'ls-files', '-co', '--exclude-standard'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 }) // tracked + untracked-not-ignored
+    if (r.status === 0 && r.stdout.toString().trim()) {
+      const files = r.stdout.toString().split('\n').filter(Boolean)
+      const dirs = new Set()
+      for (const f of files) { let d = path.dirname(f); while (d && d !== '.' && d !== '/') { dirs.add(d + '/'); d = path.dirname(d) } }
+      const match = [...dirs, ...files].filter(f => f.toLowerCase().includes(q))
+      match.sort((a, b) => (b.endsWith('/') - a.endsWith('/')) || a.localeCompare(b)) // folders first
+      return res.json(match.slice(0, 25).map(f => ({ name: f })))
+    }
+    // not a repo — browse by typed path segment so folders drill down (@dashboard/src/…)
+    const slash = qRaw.lastIndexOf('/')
+    const dirPart = slash >= 0 ? qRaw.slice(0, slash + 1) : ''
+    const namePart = qRaw.slice(slash + 1).toLowerCase()
+    let out = []
+    try {
+      out = fs.readdirSync(path.join(cwd, dirPart), { withFileTypes: true })
+        .filter(d => d.name !== 'node_modules' && d.name !== '.git' && d.name.toLowerCase().includes(namePart))
+        .map(d => ({ name: dirPart + d.name + (d.isDirectory() ? '/' : '') }))
+    } catch {}
+    out.sort((a, b) => (b.name.endsWith('/') - a.name.endsWith('/')) || a.name.localeCompare(b.name))
+    return res.json(out.slice(0, 25))
   }
   const out = []
   const desc = p => { try { return (/^description:\s*["']?(.+?)["']?\s*$/m.exec(fs.readFileSync(p, 'utf8').slice(0, 2000)) || [])[1] || '' } catch { return '' } }
