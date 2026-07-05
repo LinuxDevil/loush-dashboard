@@ -13,6 +13,7 @@ import ReliabilitySection from './ReliabilitySection.jsx'
 import LibrarySection from './LibrarySection.jsx'
 import PromptStudio from './PromptStudio.jsx'
 import FlowSection from './FlowSection.jsx'
+import RunsSection from './RunsSection.jsx'
 import InsightsSection from './InsightsSection.jsx'
 import InboxSection from './InboxSection.jsx'
 import BugsSection from './BugsSection.jsx'
@@ -33,6 +34,7 @@ const SECTIONS = [
   { id: 'bugs', label: 'Bugs', icon: '⌖', kicker: 'Workflows', title: 'Bug triage', el: <BugsSection /> },
   { id: 'quality', label: 'Quality', icon: '❖', kicker: 'Workflows', title: 'Analytics events, design drift & reviews', el: <QualitySection /> },
   { id: 'board', label: 'Task Board', icon: '▦', kicker: 'Workflows', title: 'Agentic task board — dev → review → QA → release', el: <BoardSection /> },
+  { id: 'runs', label: 'Loush Runs', icon: '⟳', kicker: 'Workflows', title: 'Live loush runs — timeline, metrics & approvals', el: <RunsSection /> },
   { id: 'skills', label: 'Skills', icon: '✦', kicker: 'Capabilities', title: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
   { id: 'commands', label: 'Prompts / Commands', icon: '⌘', kicker: 'Capabilities', title: 'Prompts / Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
   { id: 'mcp', label: 'MCP Servers', icon: '⇌', kicker: 'Connections', title: 'MCP Servers', el: <McpSection /> },

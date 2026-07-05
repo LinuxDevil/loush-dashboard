@@ -3284,6 +3284,92 @@ app.get('/api/board/analytics', (req, res) => {
   })
 })
 
+// ---------- loush runs: .loush/<ticket>/ across known repos (contract §12–16) ----------
+// The orchestrators write state.json + events.jsonl into each target repo's .loush/. We scan
+// every known project repo for those and surface runs, a live event tail, and the approval gate.
+function projectDirs() {
+  const s = new Set([PROJECT])
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) s.add(path.resolve(d)) } catch {}
+  return s
+}
+function loushSafe(proj, ...rel) { // validate proj is a known repo and the path stays under its .loush
+  const P = path.resolve(String(proj || ''))
+  if (!projectDirs().has(P)) throw Object.assign(new Error('unknown project'), { status: 403 })
+  const base = path.join(P, '.loush')
+  const p = path.resolve(base, ...rel)
+  if (p !== base && !p.startsWith(base + path.sep)) throw Object.assign(new Error('path escapes .loush'), { status: 403 })
+  return p
+}
+function readEvents(file) {
+  try { return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) } catch { return [] }
+}
+function runDir(proj, ticket) { // a run lives at .loush/<ticket>/ or (legacy single-run) .loush/ itself
+  const base = loushSafe(proj)
+  const sub = loushSafe(proj, String(ticket || ''))
+  return (fs.existsSync(path.join(sub, 'events.jsonl')) || fs.existsSync(path.join(sub, 'state.json'))) ? sub : base
+}
+const asMs = v => (typeof v === 'number' ? v : Date.parse(v) || null)
+function scanRuns() {
+  const runs = []
+  for (const proj of projectDirs()) {
+    const root = path.join(proj, '.loush')
+    if (!fs.existsSync(root)) continue
+    const dirs = [root]
+    try { for (const e of fs.readdirSync(root, { withFileTypes: true })) if (e.isDirectory()) dirs.push(path.join(root, e.name)) } catch {}
+    for (const dir of dirs) {
+      const stateF = path.join(dir, 'state.json'), evF = path.join(dir, 'events.jsonl')
+      if (!fs.existsSync(stateF) && !fs.existsSync(evF)) continue
+      let state = {}
+      try { state = JSON.parse(fs.readFileSync(stateF, 'utf8')) } catch {}
+      const events = fs.existsSync(evF) ? readEvents(evF) : []
+      const term = [...events].reverse().find(e => e.type === 'run.completed' || e.type === 'run.failed')
+      const ticket = dir === root ? (state.ticket_id || '(current)') : path.basename(dir)
+      const status = term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed')
+        : state.phase_status === 'blocked' ? 'blocked' : state.phase_status === 'failed' ? 'failed'
+        : (events.length || state.phase) ? 'running' : 'unknown'
+      runs.push({
+        proj, projName: path.basename(proj), ticket, flow: state.flow || events[0]?.data?.flow || null,
+        phase: state.phase || null, phaseStatus: state.phase_status || null, retries: state.retries || null,
+        headSha: state.head_sha || null, updatedAt: asMs(state.updated_at) || (fs.existsSync(evF) ? fs.statSync(evF).mtimeMs : null),
+        events: events.length, startedAt: asMs(events[0]?.t), endedAt: asMs(term?.t), status,
+        hasReview: fs.existsSync(path.join(dir, 'review.json')),
+        awaitingApproval: state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json')),
+      })
+    }
+  }
+  return runs.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+}
+app.get('/api/runs', (req, res) => {
+  const all = scanRuns()
+  const { proj, flow, status, ticket } = req.query
+  let runs = all
+  if (proj) runs = runs.filter(r => r.projName === proj)
+  if (flow) runs = runs.filter(r => r.flow === flow)
+  if (status) runs = runs.filter(r => r.status === status)
+  if (ticket) runs = runs.filter(r => r.ticket.toLowerCase().includes(String(ticket).toLowerCase()))
+  res.json({ runs, projects: [...new Set(all.map(r => r.projName))].sort(), flows: [...new Set(all.map(r => r.flow).filter(Boolean))].sort() })
+})
+app.get('/api/runs/events', (req, res) => {
+  const events = readEvents(path.join(runDir(req.query.proj, req.query.ticket), 'events.jsonl'))
+  const after = Number(req.query.after) || 0
+  res.json({ events: events.filter(e => (e.seq || 0) > after) })
+})
+app.get('/api/runs/artifact', (req, res) => {
+  const dir = runDir(req.query.proj, req.query.ticket)
+  const name = String(req.query.name || '').replace(/[^\w./-]/g, '')
+  const p = path.resolve(dir, name)
+  if (p !== dir && !p.startsWith(dir + path.sep)) return res.status(403).json({ error: 'bad name' })
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'not found' })
+  res.json({ content: fs.readFileSync(p, 'utf8') })
+})
+app.post('/api/runs/approve', (req, res) => {
+  const { proj, ticket, decision, comments, artifact } = req.body
+  if (!['approve', 'revise'].includes(decision)) return res.status(400).json({ error: 'decision must be approve|revise' })
+  const dir = runDir(proj, ticket)
+  fs.writeFileSync(path.join(dir, 'approvals.json'), JSON.stringify({ artifact: artifact || 'test-plan', decision, comments: comments || [] }, null, 2))
+  res.json({ ok: true })
+})
+
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))
