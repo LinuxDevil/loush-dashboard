@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { api } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -53,6 +54,8 @@ function Editor() {
   const load = () => api.get('/api/hooks').then(d => { setData(d); setText(JSON.stringify(d[scope]?.settings?.hooks ?? {}, null, 2)) })
   useEffect(() => { load() }, [])
   useEffect(() => { if (data) setText(JSON.stringify(data[scope]?.settings?.hooks ?? {}, null, 2)) }, [scope])
+
+  if (!data) return <Skeleton tiles={0} rows={7} />
   const flash = m => { setStatus(m); setTimeout(() => setStatus(''), 4000) }
   const save = () => {
     let hooks
@@ -176,6 +179,7 @@ function DryRun() {
 function Health() {
   const [h, setH] = useState(null)
   useEffect(() => { api.get('/api/hooks/health').then(setH).catch(() => {}) }, [])
+  if (!h) return <Skeleton tiles={3} rows={5} />
   if (!h) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>scanning transcripts…</div>
   const rows = Object.entries(h.byEvent).sort((a, b) => b[1] - a[1])
   const max = Math.max(...rows.map(r => r[1]), 1)

@@ -17,6 +17,7 @@ export function buildBlocks(events) {
       for (const c of ev.message.content)
         if (c.type === 'tool_result' && byToolId[c.tool_use_id]) byToolId[c.tool_use_id].result = short(c.content, 400)
         else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
+        else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
@@ -41,6 +42,7 @@ export function buildBlocks(events) {
 
 export function Block({ b }) {
   if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
+  if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
   if (b.kind === 'text') return <div className="chat-msg assistant" dangerouslySetInnerHTML={{ __html: marked.parse(b.text) }} />
   if (b.kind === 'stderr') return <div className="chat-line err">{b.text}</div>
   if (b.kind === 'closed') return <div className="chat-line err">session ended{b.error ? ` — ${b.error}` : b.code ? ` (exit ${b.code})` : ''}</div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -66,7 +67,7 @@ export default function FlowSection() {
     return { cols, mid, vEdges, pos, H, lit, maxC, shown, hidden: data.nodes.length - shown.size }
   }, [data, mode, sel, q])
 
-  if (!data) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>parsing skills, agents & transcripts…</div>
+  if (!data) return <Skeleton tiles={0} rows={8} />
   const { nodes, deadEnds, cycles, trail } = data
   const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]))
   const invocations = data.observed.reduce((s, e) => s + e.count, 0)

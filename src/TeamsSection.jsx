@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { buildBlocks, Block } from './ChatSection.jsx'
 import TeamDesigner from './TeamDesigner.jsx'
 
@@ -470,7 +471,7 @@ export default function TeamsSection() {
   }, [team])
 
   if (designing) return <TeamDesigner onClose={() => setDesigning(false)} />
-  if (!data) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
+  if (!data) return <Skeleton tiles={0} rows={6} />
   if (!data.team) return <Empty teams={data.teams || []} onPick={setTeam} onDesign={() => setDesigning(true)} />
 
   const { members, tasks, messages } = data

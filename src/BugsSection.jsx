@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -75,7 +76,7 @@ export default function BugsSection() {
   const [fStatus, setFStatus] = useState('')
   const load = () => api.get('/api/bugs').then(setBugs).catch(() => {})
   useEffect(() => { load(); const t = setInterval(load, 10_000); return () => clearInterval(t) }, [])
-  if (!bugs) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
+  if (!bugs) return <Skeleton tiles={0} rows={6} />
 
   const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => alert(e.message))
   const launchSession = async (bug, regressionOnly) => {

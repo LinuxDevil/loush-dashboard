@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -161,7 +162,7 @@ function Evals() {
   const [cmp, setCmp] = useState([])
   const load = () => api.get('/api/gov/evals').then(setD)
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [])
-  if (!d) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
+  if (!d) return <Skeleton tiles={4} rows={6} />
   const runs = d.runs
   const pick = id => setCmp(c => c.includes(id) ? c.filter(x => x !== id) : [...c.slice(-1), id])
   const [ra, rb] = cmp.map(id => runs.find(r => r.id === id)).filter(Boolean)

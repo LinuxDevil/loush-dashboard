@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
 
 const PROJ_COLORS = ['#5eb3f6', '#3fb96a', '#8b7cf6', '#e8a06a', '#d97757', '#c98bf6']
@@ -111,7 +112,7 @@ export default function ProjectsSection() {
     return () => { clearInterval(t); window.removeEventListener('open-scaffolder', open) }
   }, [])
 
-  if (!projects) return <p className="muted center">scanning projects & transcripts…</p>
+  if (!projects) return <Skeleton tiles={3} rows={6} />
   const active = projects.filter(p => p.running + p.runningAgents > 0)
   const totOut = projects.reduce((s, p) => s + (p.usage?.out || 0), 0)
   const totAdd = projects.reduce((s, p) => s + (p.usage?.linesAdd || 0), 0)

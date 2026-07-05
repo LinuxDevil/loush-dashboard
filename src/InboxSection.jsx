@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -27,7 +28,7 @@ function Inbox({ onNav }) {
   const load = () => api.get('/api/inbox').then(setItems).catch(() => {})
   useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t) }, [])
   const mark = async (it, done) => { await api.post('/api/inbox/done', { key: it.key, done }); load() }
-  if (!items) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>collecting…</div>
+  if (!items) return <Skeleton tiles={0} rows={6} />
   const open = items.filter(i => !i.done)
   const shown = showDone ? items : open
   return (

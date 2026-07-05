@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
 
 const A = '#d97757'
@@ -169,6 +170,8 @@ export default function Overview() {
   const levelDist = LEVELS.map(l => ({ label: l, value: scored.filter(i => i.level === l).length, color: LEVEL_COLOR[l], glow: true }))
   const top = projects.filter(p => p.usage).slice(0, 4)
   const inv = usePager(filtered, 15)
+
+  if (!data) return <Skeleton tiles={4} rows={8} />
 
   return (
     <div className="overview">

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -76,7 +77,7 @@ function Stats() {
     setS(null)
     api.get(`/api/chatstats?days=${days}&project=${encodeURIComponent(project)}`).then(setS).catch(() => {})
   }, [project, days])
-  if (!s) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>computing from transcripts…</div>
+  if (!s) return <Skeleton tiles={4} rows={6} />
   const heatMax = Math.max(...s.heat.flat(), 1)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -153,6 +154,8 @@ function Dupes() {
     const t = setTimeout(() => api.get(`/api/dupes?days=${days}&project=${encodeURIComponent(project)}&sim=${sim}`).then(setData).catch(() => {}), 200)
     return () => clearTimeout(t)
   }, [project, days, sim])
+
+  if (!data) return <Skeleton tiles={0} rows={8} />
 
   const saveAsCommand = async c => {
     const name = prompt('Command name (creates ~/.claude/commands/<name>.md):', '')

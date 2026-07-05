@@ -17,6 +17,28 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 
+// ---------- response cache for heavy aggregate GETs ----------
+// Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
+// TTL memo per URL; x-cached-at header drives the staleness chip in the UI; ?fresh=1 bypasses.
+const HEAVY_TTL = {
+  '/api/overview': 300_000, '/api/usage': 120_000, '/api/projects': 300_000, '/api/harness': 60_000,
+  '/api/chatstats': 600_000, '/api/dupes': 600_000, '/api/flow': 600_000, '/api/search': 600_000,
+  '/api/hub': 300_000, '/api/reviews': 600_000, '/api/hooks/health': 600_000, '/api/gov/failures': 600_000,
+  '/api/gov/costs': 120_000, '/api/digest': 300_000, '/api/board/analytics': 120_000,
+}
+const respCache = new Map() // url -> {at, body}
+app.use((req, res, next) => {
+  if (req.method !== 'GET') { respCache.clear(); return next() } // any write invalidates everything — cheap and always correct
+  const ttl = HEAVY_TTL[req.path]
+  if (!ttl) return next()
+  const key = req.originalUrl.replace(/[?&]fresh=1/, '')
+  const hit = respCache.get(key)
+  if (hit && req.query.fresh !== '1' && Date.now() - hit.at < ttl) { res.set('x-cached-at', String(hit.at)); return res.json(hit.body) }
+  const orig = res.json.bind(res)
+  res.json = body => { if (res.statusCode === 200) respCache.set(key, { at: Date.now(), body }); res.set('x-cached-at', String(Date.now())); return orig(body) }
+  next()
+})
+
 // ---------- safety + backups ----------
 const ALLOWED_ROOTS = [CLAUDE, path.join(PROJECT, '.claude'), CLAUDE_JSON]
 function safe(p) {
@@ -652,10 +674,41 @@ app.post('/api/chat/:id/message', (req, res) => {
   const chat = chats.get(req.params.id)
   if (!chat) return res.status(404).json({ error: 'no such chat' })
   if (!chat.alive) return res.status(410).json({ error: 'session ended' })
-  const msg = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: req.body.text }] } }
+  const content = (req.body.images || []).slice(0, 20).map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))
+  content.push({ type: 'text', text: req.body.text })
+  const msg = { type: 'user', message: { role: 'user', content } }
   chatBroadcast(chat, msg) // echo so all viewers see it
   chat.child.stdin.write(JSON.stringify(msg) + '\n')
   res.json({ ok: true })
+})
+// autocomplete for the chat input: "/" = slash commands+skills (global + chat project), "@" = project files
+app.get('/api/chat/complete', (req, res) => {
+  const cwd = req.query.cwd && fs.existsSync(req.query.cwd) ? req.query.cwd : HOME
+  const q = String(req.query.q || '').toLowerCase()
+  if (req.query.kind === 'files') {
+    let files = []
+    const r = spawnSync('git', ['-C', cwd, 'ls-files'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 })
+    if (r.status === 0) files = r.stdout.toString().split('\n')
+    else try { files = fs.readdirSync(cwd) } catch {} // not a repo — top level only
+    return res.json(files.filter(f => f && f.toLowerCase().includes(q)).slice(0, 25).map(f => ({ name: f })))
+  }
+  const out = []
+  const desc = p => { try { return (/^description:\s*["']?(.+?)["']?\s*$/m.exec(fs.readFileSync(p, 'utf8').slice(0, 2000)) || [])[1] || '' } catch { return '' } }
+  const scanCmds = (dir, scope) => { try { for (const f of fs.readdirSync(dir)) if (f.endsWith('.md')) out.push({ name: f.replace(/\.md$/, ''), scope, desc: desc(path.join(dir, f)) }) } catch {} }
+  const scanSkills = (dir, scope) => { try { for (const d of fs.readdirSync(dir)) { const p = path.join(dir, d, 'SKILL.md'); if (fs.existsSync(p)) out.push({ name: d, scope: scope + ' skill', desc: desc(p) }) } } catch {} }
+  scanCmds(path.join(CLAUDE, 'commands'), 'user'); scanCmds(path.join(cwd, '.claude', 'commands'), 'project')
+  scanSkills(path.join(CLAUDE, 'skills'), 'user'); scanSkills(path.join(cwd, '.claude', 'skills'), 'project')
+  res.json(out.filter(c => c.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 25))
+})
+// non-image attachments (video, pdf, csv, …): saved to disk, referenced in the message as @path
+app.post('/api/chat/upload', express.raw({ type: '*/*', limit: '300mb' }), (req, res) => {
+  const name = path.basename(String(req.query.name || 'file')).replace(/[^\w.-]/g, '_')
+  if (!req.body?.length) return res.status(400).json({ error: 'empty upload' })
+  const dir = path.join(CLAUDE, 'chat-uploads')
+  fs.mkdirSync(dir, { recursive: true })
+  const p = path.join(dir, Date.now().toString(36) + '-' + name)
+  fs.writeFileSync(p, req.body)
+  res.json({ path: p })
 })
 app.delete('/api/chat/:id', (req, res) => {
   const chat = chats.get(req.params.id)

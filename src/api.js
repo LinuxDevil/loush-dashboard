@@ -1,5 +1,13 @@
+// staleness tracking: heavy aggregate endpoints are TTL-cached server-side and answer with x-cached-at.
+// The oldest timestamp seen per render cycle drives the topbar chip; api.refresh() forces ?fresh=1 briefly.
+let freshUntil = 0
+export const forceFresh = () => { freshUntil = Date.now() + 3000 }
+
 async function req(url, opts) {
+  if (!opts && Date.now() < freshUntil) url += (url.includes('?') ? '&' : '?') + 'fresh=1'
   const r = await fetch(url, opts && { ...opts, headers: { 'content-type': 'application/json' }, body: opts.body && JSON.stringify(opts.body) })
+  const cachedAt = Number(r.headers.get('x-cached-at'))
+  if (cachedAt) window.dispatchEvent(new CustomEvent('api-cache', { detail: { url, at: cachedAt } }))
   const j = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(j.error || r.statusText)
   return j

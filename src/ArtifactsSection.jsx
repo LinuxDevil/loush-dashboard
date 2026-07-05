@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtDate, fmtSize } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Viewer, typeIcon } from './viewers.jsx'
 import { usePager } from './Pager.jsx'
 
@@ -13,7 +14,8 @@ export default function ArtifactsSection() {
   const [raw, setRaw] = useState(false)
   const [status, setStatus] = useState('')
 
-  const load = () => api.get('/api/artifacts').then(setItems)
+  const [loaded, setLoaded] = useState(false)
+  const load = () => api.get('/api/artifacts').then(d => { setItems(d); setLoaded(true) })
   useEffect(() => { load() }, [])
   const flash = m => { setStatus(m); setTimeout(() => setStatus(''), 4000) }
 
@@ -27,6 +29,8 @@ export default function ArtifactsSection() {
     return r
   }, [items, q, type, group, sort])
   const { slice, pager } = usePager(filtered, 60)
+
+  if (!loaded) return <Skeleton tiles={0} rows={8} />
 
   const act = {
     reveal: () => api.post('/api/artifacts/reveal', { path: sel.path }),

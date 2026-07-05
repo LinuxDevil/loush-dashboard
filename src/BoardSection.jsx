@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -213,7 +214,7 @@ function Analytics({ project }) {
   const [days, setDays] = useState(30)
   const [a, setA] = useState(null)
   useEffect(() => { api.get(`/api/board/analytics?days=${days}${project ? '&project=' + encodeURIComponent(project) : ''}`).then(setA).catch(() => {}) }, [project, days])
-  if (!a) return <Meta>loading…</Meta>
+  if (!a) return <Skeleton tiles={5} rows={5} />
   const kpi = (label, val, sub) => (
     <div style={{ ...PANEL, padding: '14px 18px', flex: 1, minWidth: 150 }}>
       <div style={{ font: `400 10px ${MONO}`, color: '#7a716a', textTransform: 'uppercase' }}>{label}</div>
@@ -401,7 +402,7 @@ export default function BoardSection() {
         )}
       </div>
       {!project ? <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#7a716a' }}>open a project in Claude Code first — the board is scoped per project</div>
-        : !board ? <Meta>loading…</Meta>
+        : !board ? <Skeleton tiles={0} rows={6} />
         : tab === 'analytics' ? <Analytics project={project} />
         : tab === 'setup' ? <Setup project={project} board={board} onRefresh={load} />
         : (

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { api, tildify } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import ProjectHub from './ProjectHub.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -61,7 +62,7 @@ export default function HarnessSection() {
   const [view, setView] = useState('hub') // for project scopes: 'hub' (drill-down) | 'config'
   const load = s => api.get('/api/harness?scope=' + encodeURIComponent(s ?? scope)).then(setData).catch(() => {})
   useEffect(() => { load(scope) }, [scope])
-  if (!data) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>loading…</div>
+  if (!data) return <Skeleton tiles={3} rows={6} />
 
   const { resolved: r, overridden, meta, health, valid, verification, scopes } = data
   const ov = p => overridden.some(x => x === p || x.startsWith(p + '.'))

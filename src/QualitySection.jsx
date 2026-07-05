@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from './api.js'
+import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -44,6 +45,7 @@ function Analytics() {
   const bootstrap = () => api.post('/api/analytics/taxonomy', { project })
     .then(r => { alert(`taxonomy written: ${r.path} (${r.events} events) — edit it to add required properties`); load() }).catch(e => alert(e.message))
   if (!project) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>no projects</div>
+  if (!reg) return <Skeleton tiles={0} rows={6} />
   const bad = reg?.events.filter(e => !e.ok) || []
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -101,6 +103,7 @@ function Design() {
   const bootstrap = () => api.post('/api/design/manifest', { project })
     .then(r => { alert(`manifest written: ${r.path} (${r.components} components) — let a Figma MCP session enrich it with node ids & variants`); load() }).catch(e => alert(e.message))
   if (!project) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>no projects</div>
+  if (!d) return <Skeleton tiles={0} rows={6} />
   const TYPE = { 'missing-in-code': '#e5484d', 'prop-drift': '#e8a06a', undocumented: '#8b7cf6' }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -148,6 +151,7 @@ function Reviews() {
   const [d, setD] = useState(null)
   useEffect(() => { setD(null); api.get('/api/reviews' + (all ? '' : '?project=' + encodeURIComponent(project))).then(setD).catch(() => {}) }, [project, all])
   const SEVC = { fixed: '#3fb96a', skipped: '#e5a03a', no_change_needed: '#8a807a' }
+  if (!d) return <Skeleton tiles={0} rows={6} />
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>

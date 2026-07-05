@@ -19,7 +19,7 @@ import BugsSection from './BugsSection.jsx'
 import QualitySection from './QualitySection.jsx'
 import BoardSection from './BoardSection.jsx'
 import Palette from './Palette.jsx'
-import { api } from './api.js'
+import { api, forceFresh } from './api.js'
 
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
 const xpLevel = msgs => Math.floor(Math.sqrt(msgs / 50))
@@ -76,6 +76,18 @@ export default function App() {
   const [section, setSection] = useState('overview')
   const [chip, setChip] = useState(null)
   const [inboxCount, setInboxCount] = useState(0)
+  const [stale, setStale] = useState(null) // oldest x-cached-at seen for the current section's data
+  const [tick, setTick] = useState(0)
+  const [visited, setVisited] = useState({ overview: true }) // keep-alive: sections stay mounted (hidden) once opened, so their state survives switching
+  useEffect(() => {
+    const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
+    window.addEventListener('api-cache', onCache)
+    return () => window.removeEventListener('api-cache', onCache)
+  }, [])
+  useEffect(() => setStale(null), [section, tick])
+  const refresh = () => { forceFresh(); setStale(null); setVisited({ [section]: true }); setTick(t => t + 1) } // remounts current section with fresh=1; others refetch on next visit
+  const nav = id => { setVisited(v => (v[id] ? v : { ...v, [id]: true })); setSection(id) }
+  const staleMin = stale ? Math.floor((Date.now() - stale) / 60000) : 0
   useEffect(() => {
     api.get('/api/usage').then(u => {
       const ab = u.activeBlock
@@ -85,7 +97,7 @@ export default function App() {
         resets: ab ? Math.round((ab.end - Date.now()) / 60000) : null,
       })
     }).catch(() => {})
-    const navChat = () => setSection('chat') // context bundles hand-off
+    const navChat = () => nav('chat') // context bundles hand-off
     window.addEventListener('nav-chat', navChat)
     // inbox badge + desktop notifications for new error/warning items
     const seen = new Set()
@@ -113,7 +125,7 @@ export default function App() {
       <nav className="sidebar">
         <div className="brand"><div className="brand-mark">C</div><div className="brand-name">Claude Code</div></div>
         {SECTIONS.map(s => (
-          <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => setSection(s.id)}>
+          <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => nav(s.id)}>
             <span className="nav-icon">{s.icon}</span> {s.label}
             {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
@@ -127,6 +139,10 @@ export default function App() {
             <h1>{cur.title}</h1>
           </div>
           <div className="topbar-right">
+            <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
+              style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
+              ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}
+            </button>
             {chip && (
               <div className="top-chip">
                 <span className="flame">✦</span>
@@ -141,9 +157,13 @@ export default function App() {
             <div className="avatar">AM</div>
           </div>
         </header>
-        <div key={section}>{section === 'inbox' ? <InboxSection onNav={setSection} /> : cur.el}</div>
+        {SECTIONS.filter(s => visited[s.id]).map(s => (
+          <div key={s.id + ':' + tick} style={s.id === section ? undefined : { display: 'none' }}>
+            {s.id === 'inbox' ? <InboxSection onNav={nav} /> : s.el}
+          </div>
+        ))}
       </main>
-      <Palette sections={SECTIONS} onNav={setSection} />
+      <Palette sections={SECTIONS} onNav={nav} />
     </div>
   )
 }

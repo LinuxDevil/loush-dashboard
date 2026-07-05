@@ -341,3 +341,12 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .hx button:focus-visible, .hx [tabindex]:focus-visible { outline: 2px solid rgba(217, 119, 87, 0.7); outline-offset: 2px; }
 .hx-ed { cursor: pointer; border-bottom: 1px dashed rgba(255, 255, 255, 0.18); }
 .hx-ed:hover { border-bottom-color: var(--accent); color: #fff; }
+
+/* ---------- loading skeletons ---------- */
+.skel-wrap { display: flex; flex-direction: column; gap: 12px; }
+.skel-tiles { display: flex; gap: 12px; }
+.skel { position: relative; overflow: hidden; border-radius: 12px; background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.04); }
+.skel::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent); animation: skel-shimmer 1.4s infinite; }
+.skel-tile { flex: 1; height: 86px; border-radius: 16px; }
+.skel-row { height: 40px; }
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
