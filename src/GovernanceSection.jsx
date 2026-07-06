@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useDebounced } from './hooks.js'
 import { api, tildify, fmtDate } from './api.js'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -69,8 +70,9 @@ function Versions() {
   const [sel, setSel] = useState([]) // up to 2 version ids for diff
   const [diff, setDiff] = useState(null)
   const scopes = useScopes()
-  const load = () => api.get(`/api/gov/versions?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}`).then(setList)
-  useEffect(() => { load() }, [q, scope])
+  const dq = useDebounced(q)
+  const load = () => api.get(`/api/gov/versions?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {})
+  useEffect(() => { api.get(`/api/gov/versions?q=${encodeURIComponent(dq)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {}) }, [dq, scope]) // debounced search
   const pick = async id => {
     const next = sel.includes(id) ? sel.filter(x => x !== id) : [...sel.slice(-1), id]
     setSel(next)
@@ -185,13 +187,18 @@ function Approvals() {
 function Audit() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
-  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(q)).then(setList) }, [q])
+  const dq = useDebounced(q)
+  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq]) // debounced
   return (
     <div style={{ ...PANEL }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 12 }}>
         <div style={{ font: `600 15px ${HEAD}` }}>Immutable audit log</div>
         <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>append-only · {tildify('~/.claude/dashboard-versions.jsonl')}</span>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="search…" style={{ marginLeft: 'auto', width: 220 }} />
+        <button className="mini" style={{ marginTop: 0 }} disabled={!list.length} onClick={() => {
+          const blob = new Blob([list.map(v => JSON.stringify(v)).join('\n')], { type: 'application/x-ndjson' })
+          const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'audit-log.jsonl'; a.click(); URL.revokeObjectURL(a.href)
+        }}>export</button>
       </div>
       <div style={{ maxHeight: 520, overflowY: 'auto' }}>
         {list.map(v => (

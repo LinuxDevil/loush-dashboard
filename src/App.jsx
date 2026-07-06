@@ -99,17 +99,22 @@ export default function App() {
   useEffect(() => {
     const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
     let lastAt = 0, lastUrl = ''
+    const push = detail => {
+      const id = Date.now() + Math.random()
+      setToasts(t => [...t.slice(-3), { id, ...detail }])
+      setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 7000)
+    }
     const onErr = e => {
       const now = Date.now()
       if (e.detail.url === lastUrl && now - lastAt < 4000) return // dedupe a polling endpoint that keeps failing
       lastAt = now; lastUrl = e.detail.url
-      const id = now + Math.random()
-      setToasts(t => [...t.slice(-3), { id, ...e.detail }])
-      setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 7000)
+      push({ ...e.detail, kind: 'error' })
     }
+    const onToast = e => push(e.detail)
     window.addEventListener('api-cache', onCache)
     window.addEventListener('api-error', onErr)
-    return () => { window.removeEventListener('api-cache', onCache); window.removeEventListener('api-error', onErr) }
+    window.addEventListener('app-toast', onToast)
+    return () => { window.removeEventListener('api-cache', onCache); window.removeEventListener('api-error', onErr); window.removeEventListener('app-toast', onToast) }
   }, [])
   useEffect(() => setStale(null), [section, tick])
   const refresh = () => { forceFresh(); setStale(null); setVisited({ [section]: true }); setTick(t => t + 1) } // remounts current section with fresh=1; others refetch on next visit
@@ -193,13 +198,16 @@ export default function App() {
       <Palette sections={SECTIONS} onNav={nav} />
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
-          {toasts.map(t => (
-            <div key={t.id} onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}
-              style={{ cursor: 'pointer', background: 'rgba(40,20,20,0.95)', border: '1px solid rgba(229,72,77,0.4)', borderRadius: 10, padding: '10px 14px', font: "400 11px 'IBM Plex Mono', monospace", color: '#f0d0d0', boxShadow: '0 6px 24px rgba(0,0,0,0.4)' }}>
-              <div style={{ color: '#e5484d', fontWeight: 600 }}>request failed · click to dismiss</div>
-              <div style={{ color: '#b0a69e', marginTop: 3 }}>{t.message} <span style={{ color: '#7a716a' }}>({String(t.url).split('?')[0]})</span></div>
-            </div>
-          ))}
+          {toasts.map(t => {
+            const c = t.kind === 'error' ? '#e5484d' : t.kind === 'success' ? '#3fb96a' : '#7cc4f7'
+            return (
+              <div key={t.id} onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}
+                style={{ cursor: 'pointer', background: 'rgba(24,20,18,0.96)', border: `1px solid ${c}66`, borderRadius: 10, padding: '10px 14px', font: "400 11px 'IBM Plex Mono', monospace", color: '#e5dbd2', boxShadow: '0 6px 24px rgba(0,0,0,0.4)' }}>
+                <div style={{ color: c, fontWeight: 600 }}>{t.kind === 'error' ? (t.url ? 'request failed' : 'error') : t.kind === 'success' ? 'done' : 'note'} · click to dismiss</div>
+                <div style={{ color: '#b0a69e', marginTop: 3 }}>{t.message}{t.url ? <span style={{ color: '#7a716a' }}> ({String(t.url).split('?')[0]})</span> : ''}</div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

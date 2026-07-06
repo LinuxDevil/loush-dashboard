@@ -26,6 +26,8 @@ export const api = {
   post: (url, body) => req(url, { method: 'POST', body }),
   del: url => req(url, { method: 'DELETE' }),
 }
+// Non-blocking toast in place of alert(). kind: 'info' | 'success' | 'error'. App renders it.
+export const toast = (message, kind = 'info') => window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, kind } }))
 export const fmtDate = ms => new Date(ms).toLocaleString()
 export const fmtSize = b => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b > 1024 ? (b / 1024).toFixed(1) + ' KB' : b + ' B')
 export const tildify = p => String(p || '').replace(/^([A-Za-z]:)?[\\/](Users|home)[\\/][^\\/]+/, '~')

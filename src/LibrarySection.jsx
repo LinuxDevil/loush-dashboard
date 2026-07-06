@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
-import { api, fmtDate } from './api.js'
+import { api, fmtDate, toast } from './api.js'
 import { Tabs } from './GovernanceSection.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -35,9 +35,9 @@ function Profiles() {
   const [applyScope, setApplyScope] = useState('global')
   const load = () => api.get('/api/gov/profiles').then(setProfiles)
   useEffect(() => { load() }, [])
-  const save = async next => { await api.put('/api/gov/profiles', { profiles: next }).catch(e => alert(e.message)); load() }
+  const save = async next => { await api.put('/api/gov/profiles', { profiles: next }).catch(e => toast(e.message, 'error')); load() }
   const apply = async name => {
-    const r = await api.post('/api/gov/profiles/apply', { name, scope: applyScope }).catch(e => alert(e.message))
+    const r = await api.post('/api/gov/profiles/apply', { name, scope: applyScope }).catch(e => toast(e.message, 'error'))
     if (r?.proposed) alert('Global change proposed — approve it in Governance → Approvals')
     else if (r?.ok) alert(`Profile "${name}" applied to ${applyScope === 'global' ? 'global' : applyScope.split('/').pop()}`)
   }
@@ -104,13 +104,13 @@ function Bundles() {
   useEffect(() => { load() }, [])
   useEffect(() => { if (scopes.length > 1 && !project) setProject(scopes[1].id) }, [scopes])
   const exportB = async () => {
-    const r = await api.post('/api/gov/bundle/export', { project, name: name || undefined, description: desc }).catch(e => alert(e.message))
+    const r = await api.post('/api/gov/bundle/export', { project, name: name || undefined, description: desc }).catch(e => toast(e.message, 'error'))
     if (r?.ok) { setName(''); setDesc(''); load() }
   }
   const importB = async file => {
     const target = scopes.filter(s => s.id !== 'global').find(s => s.id === prompt('Import into which project path?', project))?.id || project
     if (!confirm(`Import bundle into ${target}? Existing files are overwritten (versioned, reversible).`)) return
-    const r = await api.post('/api/gov/bundle/import', { file, project: target }).catch(e => alert(e.message))
+    const r = await api.post('/api/gov/bundle/import', { file, project: target }).catch(e => toast(e.message, 'error'))
     if (r?.ok) alert('Imported: ' + r.written.join(', '))
   }
   const download = async b => {
@@ -164,7 +164,7 @@ function CtxBundles() {
   const [edit, setEdit] = useState(null) // {index|-1, name, description, refs (textarea), notes}
   const load = () => api.get('/api/ctxbundles').then(setBundles)
   useEffect(() => { load() }, [])
-  const save = async list => { await api.put('/api/ctxbundles', { bundles: list }).catch(e => alert(e.message)); load() }
+  const save = async list => { await api.put('/api/ctxbundles', { bundles: list }).catch(e => toast(e.message, 'error')); load() }
   const copy = b => navigator.clipboard.writeText(bundlePrompt(b)).then(() => alert('load-prompt copied — paste it into any session (Chat section or the CLI)'))
   const toChat = b => { sessionStorage.setItem('ctx-bundle-prompt', bundlePrompt(b)); window.dispatchEvent(new Event('nav-chat')) }
   return (

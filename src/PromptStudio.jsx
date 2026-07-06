@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useDebounced } from './hooks.js'
 import { api, fmtDate } from './api.js'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -16,8 +17,9 @@ export default function PromptStudio() {
   const [val, setVal] = useState('')
   const [busy, setBusy] = useState(false)
   const [scopes, setScopes] = useState([])
-  const loadList = () => api.get('/api/prompts?q=' + encodeURIComponent(q)).then(setList)
-  useEffect(() => { loadList() }, [q])
+  const dq = useDebounced(q)
+  const loadList = () => api.get('/api/prompts?q=' + encodeURIComponent(q)).then(setList).catch(() => {})
+  useEffect(() => { api.get('/api/prompts?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq]) // debounced: one fetch per pause, not per keystroke
   useEffect(() => { api.get('/api/harness').then(d => setScopes(d.scopes)).catch(() => {}) }, [])
 
   const addInput = async () => {

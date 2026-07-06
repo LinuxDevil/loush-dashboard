@@ -326,7 +326,7 @@ function AgentDetail({ team, member, members, messages, tasks, onClose }) {
     let live = true
     const load = () => api.get(`/api/team/agent?team=${encodeURIComponent(team)}&name=${encodeURIComponent(member.name)}`).then(d => live && setDetail(d)).catch(() => {})
     load()
-    const t = setInterval(load, 2000)
+    const t = setInterval(() => { if (!document.hidden) load() }, 2000) // pause while tab hidden
     return () => { live = false; clearInterval(t) }
   }, [team, member.name])
   useEffect(() => { endRef.current?.scrollIntoView() }, [detail?.events?.length])
@@ -466,7 +466,7 @@ export default function TeamsSection() {
     let live = true
     const load = () => api.get('/api/team' + (team ? '?team=' + encodeURIComponent(team) : '')).then(d => live && setData(d)).catch(() => {})
     load()
-    const t = setInterval(load, 2000)
+    const t = setInterval(() => { if (!document.hidden) load() }, 2000) // pause while tab hidden
     return () => { live = false; clearInterval(t) }
   }, [team])
 

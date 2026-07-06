@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
@@ -26,6 +26,13 @@ export default function FlowSection() {
   const [mode, setMode] = useState('Observed flow')
   const [sel, setSel] = useState(null)
   const [q, setQ] = useState('')
+  const svgRef = useRef(null)
+  const exportSvg = () => {
+    if (!svgRef.current) return
+    const s = new XMLSerializer().serializeToString(svgRef.current)
+    const blob = new Blob(['<?xml version="1.0"?>\n' + s], { type: 'image/svg+xml' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'flow-graph.svg'; a.click(); URL.revokeObjectURL(a.href)
+  }
   useEffect(() => { api.get('/api/harness').then(d => setScopes(d.scopes)).catch(() => {}) }, [])
   useEffect(() => {
     setData(null); setSel(null)
@@ -106,6 +113,7 @@ export default function FlowSection() {
           {scopes.filter(s => s.id !== 'global').map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="filter nodes…" style={{ width: 180 }} />
+        <button className="mini" style={{ marginTop: 0 }} onClick={exportSvg}>export SVG</button>
         <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginLeft: 'auto' }}>
           {nodes.length} nodes · {invocations} observed invocations{view.hidden > 0 ? ` · showing top ${COL_CAP}/type (${view.hidden} hidden — filter to find them)` : ''}
         </span>
@@ -121,7 +129,7 @@ export default function FlowSection() {
             <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: '#e5484d' }} />dead end</span>
           </div>
         </div>
-        <svg viewBox={`0 0 900 ${view.H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+        <svg ref={svgRef} viewBox={`0 0 900 ${view.H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
           {view.vEdges.map((e, i) => {
             const p = view.pos[e.from], t = view.pos[e.to]
             if (!p || !t) return null

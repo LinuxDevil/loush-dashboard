@@ -159,7 +159,7 @@ function Reviews() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px ${MONO}`, color: '#8a807a', cursor: 'pointer' }}>
           <input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} style={{ width: 13 }} />all projects
         </label>
-        {d && <span style={{ font: `400 11px ${MONO}`, color: '#7a716a', marginLeft: 'auto' }}>{d.sessions.length} review passes · {d.totalFindings} findings · parsed from /review &amp; /security-review runs in transcripts</span>}
+        {d && <span style={{ font: `400 11px ${MONO}`, color: '#7a716a', marginLeft: 'auto' }}>{d.sessions.length} transcript passes · {d.totalFindings} findings{d.runReviews?.length ? ` · ${d.runReviews.length} loush review.json` : ''}</span>}
       </div>
       {d?.recurring.length > 0 && (
         <div style={{ ...PANEL, borderColor: 'rgba(232,160,106,0.35)' }}>
@@ -168,6 +168,27 @@ function Reviews() {
             <div key={r.category} style={{ padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               <div style={{ font: `500 12px ${MONO}`, color: '#eee3da' }}>{r.category} <span style={{ color: '#7a716a' }}>· {r.count} findings across {r.passes} review passes</span></div>
               <div style={{ font: "400 11.5px 'IBM Plex Sans'", color: '#9a9089', marginTop: 2 }}>e.g. {r.examples[0]} — consider a PreToolUse hook (Hooks → Library) or a CLAUDE.md rule to block this class automatically</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {d?.runReviews?.length > 0 && (
+        <div style={{ ...PANEL, borderColor: 'rgba(124,196,247,0.3)' }}>
+          <div style={{ font: `600 14px ${HEAD}`, color: '#7cc4f7', marginBottom: 8 }}>Loush code-reviewer · review.json</div>
+          {d.runReviews.map((r, i) => (
+            <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
+                <span style={{ font: `600 11px ${MONO}`, color: r.decision === 'APPROVE' ? '#3fb96a' : r.decision === 'REQUEST_CHANGES' ? '#e5484d' : '#e5a03a' }}>{r.decision}</span>
+                <span style={{ font: "400 12px 'IBM Plex Sans'", color: '#c8bdb4', flex: 1 }}>{r.summary}</span>
+                <span style={{ font: `400 10px ${MONO}`, color: '#7a716a' }}>{r.proj} · {r.findings.length} findings</span>
+              </div>
+              {r.findings.slice(0, 8).map((f, j) => (
+                <div key={j} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '2px 0 2px 12px', font: `400 10.5px ${MONO}` }}>
+                  <span style={{ color: f.severity === 'Critical' || f.severity === 'Required' ? '#e5484d' : '#8a807a', flexShrink: 0 }}>{f.severity}</span>
+                  <span style={{ color: '#c8bdb4', flex: 1 }}>{f.body}</span>
+                  <span style={{ color: '#7a716a', flexShrink: 0 }}>{f.file || (f.files || []).join(', ')}{f.line ? ':' + f.line : ''}</span>
+                </div>
+              ))}
             </div>
           ))}
         </div>

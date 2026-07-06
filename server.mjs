@@ -524,7 +524,7 @@ app.get('/api/usage', (req, res) => {
   const projNames = {}
   try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
   const recentSessions = files.filter(f => !f.isAgent && f.msgs > 0).sort((a, b) => b.mtime - a.mtime).slice(0, 6)
-    .map(f => ({ proj: projNames[f.proj] || f.proj.split('-').pop(), mtime: f.mtime, out: f.out, msgs: f.msgs, toolCalls: f.toolCalls }))
+    .map(f => ({ sessionId: path.basename(f.path, '.jsonl'), proj: projNames[f.proj] || f.proj.split('-').pop(), mtime: f.mtime, out: f.out, msgs: f.msgs, toolCalls: f.toolCalls }))
   const tools = Object.entries(toolTotals).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([name, count]) => ({ name, count }))
   res.json({
     perModel, activeBlock: active, totalMsgs: entries.length, since: entries[0]?.t || null,
@@ -2806,7 +2806,15 @@ function reviewData(project) {
   for (const r of rel) for (const f of r.findings) { const c = byCat[f.category] ||= { category: f.category, count: 0, passes: new Set(), examples: [] }; c.count++; c.passes.add(r.sessionId); if (c.examples.length < 3) c.examples.push(f.summary) }
   const recurring = Object.values(byCat).filter(c => c.passes.size >= 3).map(c => ({ category: c.category, count: c.count, passes: c.passes.size, examples: c.examples }))
     .sort((a, b) => b.count - a.count)
-  return { sessions, recurring, totalFindings: rel.reduce((s, r) => s + r.findings.length, 0) }
+  // fold in Loush code-reviewer output (review.json, contract §14) so run reviews sit beside transcript-scraped ones
+  const runReviews = []
+  for (const proj of (project ? [path.resolve(project)] : [...projectDirs()])) {
+    try {
+      const rj = JSON.parse(fs.readFileSync(path.join(proj, '.loush', 'review.json'), 'utf8'))
+      runReviews.push({ proj: path.basename(proj), decision: rj.decision, summary: rj.summary, headSha: rj.head_sha, findings: rj.findings || [] })
+    } catch {}
+  }
+  return { sessions, recurring, totalFindings: rel.reduce((s, r) => s + r.findings.length, 0), runReviews }
 }
 app.get('/api/reviews', (req, res) => res.json(reviewData(req.query.project)))
 
@@ -2827,7 +2835,7 @@ const readBoard = () => { const b = readJson(BOARD_FILE, {}); return { ...DEFAUL
 const writeBoard = b => track(BOARD_FILE, JSON.stringify(b, null, 2), { summary: 'update task board' })
 const projCfg = (board, project) => ({ pipeline: 'default', base: 'main', branchPrefix: 'ticket/', mergeMethod: 'merge', requirePr: false, defaultModel: '', previewCmd: '', previewStopCmd: '', previewIdleMin: 240, qaSeesFindings: false, ...(board.projects[project] || {}) })
 const tkt = (board, id) => board.tickets.find(t => t.id === id)
-const stamp = (t, to, note) => { (t.history ||= []).push({ at: Date.now(), from: t.stage, to, note: note || '' }); t.stage = to }
+const stamp = (t, to, note) => { (t.history ||= []).push({ at: Date.now(), from: t.stage, to, note: note || '' }); t.stage = to; if (to === 'released') { loushRunEmit(t.project, t.id, 'run.completed', { status: 'completed' }); loushRunState(t.project, t.id, 'released', 'passed') } }
 const blockT = (t, by, category, reason, needed) => { t.blocked = { at: Date.now(), by, category, reason: String(reason).slice(0, 1500), needed: needed || '' }; (t.history ||= []).push({ at: Date.now(), from: t.stage, to: 'blocked:' + category, note: String(reason).slice(0, 200) }) }
 const pct = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))] }
 const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { const m = re.exec(s || ''); if (m) try { return JSON.parse(m[0]) } catch {} } return null }
@@ -2855,8 +2863,32 @@ function runAgent({ cwd, prompt, model, timeoutMs = 1800_000, resume }) {
     })
   })
 }
+// Unify board runs into the Loush Runs model: each ticket becomes a .loush/<id>/ run in its repo.
+function loushRunEmit(project, ticket, type, data) {
+  if (!project || !fs.existsSync(project)) return
+  try {
+    const dir = path.join(project, '.loush', ticket)
+    fs.mkdirSync(dir, { recursive: true })
+    const f = path.join(dir, 'events.jsonl')
+    const n = fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).length : 0
+    const rows = []
+    if (n === 0) rows.push({ seq: 1, t: new Date().toISOString(), type: 'run.started', data: { flow: 'board' } })
+    rows.push({ seq: n + rows.length + 1, t: new Date().toISOString(), type, data })
+    fs.appendFileSync(f, rows.map(x => JSON.stringify(x)).join('\n') + '\n')
+  } catch {}
+}
+function loushRunState(project, ticket, phase, phase_status) {
+  if (!project || !fs.existsSync(project)) return
+  try {
+    const dir = path.join(project, '.loush', ticket)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ ticket_id: ticket, flow: 'board', phase, phase_status, updated_at: new Date().toISOString() }, null, 2))
+  } catch {}
+}
 function recordRun(t, kind, model, r, handoff) {
   (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff }) // handoff = feature 36 audit: what was passed vs deliberately excluded
+  loushRunEmit(t.project, t.id, 'step.completed', { label: kind, agent: 'board:' + kind, status: r.error ? 'failed' : r.blocked ? 'blocked' : 'passed' })
+  loushRunState(t.project, t.id, kind, 'running')
 }
 const teamStage = (board, t, stageKind) => { const team = board.teams.find(x => x.id === t.team); const s = team?.stages?.[stageKind] || {}; return { model: t.model || s.model || projCfg(board, t.project).defaultModel || undefined, instructions: s.instructions || '' } }
 const gitB = (project, args, timeout = 60_000) => spawnSync('git', ['-C', project, ...args], { timeout, maxBuffer: 8 * 1024 * 1024 })
@@ -3374,8 +3406,22 @@ function scanRuns() {
   }
   return runs.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 }
+// estimate a run's $ from transcript entries in its time window (same estimator Reliability uses).
+// ponytail: time-window join — no sessionId plumbing needed. Exact only if one run per repo at a time.
+function joinRunCost(runs) {
+  let entries = []
+  try { entries = collectUsage().entries } catch { return }
+  const byProj = {}
+  for (const e of entries) (byProj[e.proj] ||= []).push(e)
+  for (const r of runs) {
+    if (!r.startedAt) { r.cost = null; continue }
+    const end = r.endedAt || Date.now()
+    r.cost = (byProj[mangle(r.proj)] || []).filter(e => e.t >= r.startedAt && e.t <= end).reduce((s, e) => s + entryCost(e), 0)
+  }
+}
 app.get('/api/runs', (req, res) => {
   const all = scanRuns()
+  joinRunCost(all)
   const { proj, flow, status, ticket } = req.query
   let runs = all
   if (proj) runs = runs.filter(r => r.projName === proj)

@@ -60,6 +60,7 @@ export default function ArtifactsSection() {
           <select value={sort} onChange={e => setSort(e.target.value)}><option value="date">by date</option><option value="type">by type</option><option value="name">by name</option></select>
         </div>
         <div className="grid">
+          {filtered.length === 0 && <p className="muted center" style={{ padding: 20, gridColumn: '1 / -1' }}>{items.length ? 'no artifacts match your filter' : 'no artifacts yet'}</p>}
           {slice.map(i => (
             <div key={i.path} className={'card' + (sel?.path === i.path ? ' selected' : '')} onClick={() => { setSel(i); setRaw(false) }} title={i.path}>
               <div className="card-icon">{typeIcon(i.ext)}</div>

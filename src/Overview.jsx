@@ -166,7 +166,7 @@ export default function Overview() {
   const xpPct = usage ? Math.round(((usage.totalMsgs - lvl ** 2 * 50) / (xpNext(lvl) - lvl ** 2 * 50)) * 100) : 0
   const d = usage?.daily || []
   const last10 = key => d.slice(-10).map(x => x[key])
-  const models = usage ? Object.entries(usage.perModel).map(([m, v]) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: '#8b7cf6' })).sort((a, b) => b.value - a.value).slice(0, 5) : []
+  const models = usage ? Object.entries(usage.perModel).map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5) : []
   const levelDist = LEVELS.map(l => ({ label: l, value: scored.filter(i => i.level === l).length, color: LEVEL_COLOR[l], glow: true }))
   const top = projects.filter(p => p.usage).slice(0, 4)
   const inv = usePager(filtered, 15)
@@ -274,8 +274,8 @@ export default function Overview() {
               </div>
             </div>
           ))}
-          {usage?.recentSessions.map((s, i) => (
-            <div className="sess-row" key={i}>
+          {usage?.recentSessions.filter(s => !pins.some(p => p.sessionId === s.sessionId)).map((s, i) => (
+            <div className="sess-row" key={s.sessionId || i}>
               <span className="sess-dot" style={{ background: PROJ_COLORS[i % 6] }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="mini-name">{s.proj}</div>

@@ -21,7 +21,9 @@ export default function McpSection() {
   const test = async s => {
     setTests(t => ({ ...t, [key(s)]: { state: 'testing' } }))
     const r = await api.post(`/api/mcp/${encodeURIComponent(s.name)}/test`, { config: s.config }).catch(e => ({ ok: false, error: e.message }))
-    setTests(t => ({ ...t, [key(s)]: { state: r.ok ? 'ok' : 'fail', ...r } }))
+    // 401/403 = reachable but needs OAuth — not a healthy "connected"; show it distinctly, not green.
+    const state = r.ok ? (r.status === 401 || r.status === 403 ? 'auth' : 'ok') : 'fail'
+    setTests(t => ({ ...t, [key(s)]: { state, ...r } }))
   }
   const save = () => {
     let config
@@ -29,12 +31,21 @@ export default function McpSection() {
     api.put(`/api/mcp/${encodeURIComponent(sel.name)}`, { config, project: sel.project })
       .then(r => { flash('saved, backup made'); load() }).catch(e => flash('error: ' + e.message))
   }
-  const drawerSave = values => {
+  const drawerSave = async values => {
     const config = mcpConfigFrom(values)
     if (drawer.mode === 'create')
-      return api.post('/api/mcp', { name: values.name, config }).then(() => { setDrawer(null); load() })
+      return api.post('/api/mcp', { name: values.name, config }).then(() => { setDrawer(null); load() }).catch(e => flash('error: ' + e.message))
+    if (values.name && values.name !== sel.name) { // rename: server keys off :name, so recreate + delete old (user scope)
+      if (sel.project) return flash('rename not supported for project-scoped servers')
+      try {
+        await api.post('/api/mcp', { name: values.name, config })
+        await api.del(`/api/mcp/${encodeURIComponent(sel.name)}`)
+        setDrawer(null); flash('renamed, backup made'); setSel(null); load()
+      } catch (e) { flash('error: ' + e.message) }
+      return
+    }
     return api.put(`/api/mcp/${encodeURIComponent(sel.name)}`, { config, project: sel.project })
-      .then(() => { setDrawer(null); flash('saved, backup made'); setSel({ ...sel, config }); setText(JSON.stringify(config, null, 2)); load() })
+      .then(() => { setDrawer(null); flash('saved, backup made'); setSel({ ...sel, config }); setText(JSON.stringify(config, null, 2)); load() }).catch(e => flash('error: ' + e.message))
   }
   const remove = s => {
     if (!confirm(`Remove MCP server "${s.name}"? ~/.claude.json is backed up first.`)) return
@@ -47,6 +58,7 @@ export default function McpSection() {
       <div className="list-pane">
         <div className="list-head"><h2>MCP Servers <span className="muted">({servers.length})</span></h2><button className="primary" onClick={() => setDrawer({ mode: 'create' })}>+ New</button></div>
         <div className="rows">
+          {servers.length === 0 && <p className="muted center" style={{ padding: 20 }}>no MCP servers configured — click “+ New” to add one</p>}
           {servers.map(s => {
             const t = tests[key(s)]
             return (
@@ -58,7 +70,7 @@ export default function McpSection() {
                 <div className="row-desc">{s.config.url || [s.config.command, ...(s.config.args || [])].join(' ')}</div>
                 {s.project && <div className="row-meta">{s.project}</div>}
                 {t && t.state !== 'testing' && (
-                  <div className="row-meta">{t.state === 'ok' ? `connected ${t.ms}ms${t.serverInfo ? ' — ' + t.serverInfo.name + ' ' + (t.serverInfo.version || '') : ''}${t.status ? ' (HTTP ' + t.status + ')' : ''}` : `failed: ${t.error || 'HTTP ' + t.status}`}</div>
+                  <div className="row-meta" style={t.state === 'auth' ? { color: '#e5a03a' } : undefined}>{t.state === 'ok' ? `connected ${t.ms}ms${t.serverInfo ? ' — ' + t.serverInfo.name + ' ' + (t.serverInfo.version || '') : ''}${t.status ? ' (HTTP ' + t.status + ')' : ''}` : t.state === 'auth' ? `reachable — needs auth (HTTP ${t.status})` : `failed: ${t.error || 'HTTP ' + t.status}`}</div>
                 )}
                 <button className="mini" onClick={e => { e.stopPropagation(); test(s) }} disabled={t?.state === 'testing'}>
                   {t?.state === 'testing' ? 'testing…' : 'Test connection'}

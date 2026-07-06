@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { api, fmtDate } from './api.js'
+import { api, fmtDate, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -378,8 +378,10 @@ export default function BoardSection() {
   const [board, setBoard] = useState(null)
   const [open, setOpen] = useState(null)
   const [fAttention, setFAttention] = useState(false)
+  const [dragOver, setDragOver] = useState(null)
   const load = () => project && api.get('/api/board?project=' + encodeURIComponent(project)).then(setBoard).catch(() => {})
-  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [project])
+  const move = (id, stage) => { const t = board?.tickets.find(x => x.id === id); if (t && t.stage !== stage) api.patch('/api/board/tickets/' + id, { stage }).then(load).catch(e => toast(e.message, 'error')) }
+  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project]) // pause while tab hidden
   useEffect(() => { if (!project && projects.length) setProject(projects[0].id) }, [projects])
 
   const stages = useMemo(() => {
@@ -413,9 +415,17 @@ export default function BoardSection() {
             {stages.map(s => {
               const col = board.tickets.filter(t => t.stage === s && (!fAttention || t.blocked || (!t.running && ['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage))))
               return (
-                <div key={s} style={{ minWidth: 200, flex: '1 0 200px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div key={s}
+                  onDragOver={e => { e.preventDefault(); if (dragOver !== s) setDragOver(s) }}
+                  onDragLeave={() => setDragOver(o => (o === s ? null : o))}
+                  onDrop={e => { e.preventDefault(); setDragOver(null); const id = e.dataTransfer.getData('text/plain'); if (id) move(id, s) }}
+                  style={{ minWidth: 200, flex: '1 0 200px', display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 10, outline: dragOver === s ? '1px dashed rgba(124,196,247,0.6)' : 'none', outlineOffset: 4 }}>
                   <div style={{ font: `600 10px ${MONO}`, color: STAGE_C[s] || '#c792ea', textTransform: 'uppercase', letterSpacing: 0.5 }}>{lbl(s)} <span style={{ color: '#7a716a' }}>{col.length}</span></div>
-                  {col.map(t => <Card key={t.id} t={t} all={board.tickets} onOpen={id => setOpen(id === open ? null : id)} selected={open === t.id} />)}
+                  {col.map(t => (
+                    <div key={t.id} draggable onDragStart={e => e.dataTransfer.setData('text/plain', t.id)} style={{ cursor: 'grab' }}>
+                      <Card t={t} all={board.tickets} onOpen={id => setOpen(id === open ? null : id)} selected={open === t.id} />
+                    </div>
+                  ))}
                 </div>
               )
             })}

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { api } from './api.js'
+import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { deriveRunMetrics, fmtDur, relTime } from './runMetrics.js'
+import { useVisiblePoll } from './hooks.js'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -32,6 +33,7 @@ function Kpis({ runs }) {
     </div>
   )
   const n = s => runs.filter(r => r.status === s).length
+  const totalCost = runs.reduce((s, r) => s + (r.cost || 0), 0)
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
       {k('total runs', runs.length)}
@@ -39,6 +41,7 @@ function Kpis({ runs }) {
       {k('failed', n('failed'), STATUS.failed)}
       {k('blocked', n('blocked'), STATUS.blocked)}
       {k('avg duration', fmtDur(avg))}
+      {k('est. cost', totalCost ? '$' + totalCost.toFixed(2) : '—')}
     </div>
   )
 }
@@ -91,11 +94,15 @@ function Detail({ run, onDone }) {
         <span>duration <b style={{ color: '#e5dbd2' }}>{fmtDur(m.durationMs)}</b></span>
         <span>steps <b style={{ color: '#e5dbd2' }}>{m.steps.length}</b></span>
         <span>tool calls <b style={{ color: '#e5dbd2' }}>{m.toolCalls}</b></span>
+        {run.cost != null && <span title="estimated from transcript token usage in this run's time window">est. cost <b style={{ color: '#3fb96a' }}>${run.cost.toFixed(3)}</b></span>}
         {run.retries && <span>retries <b style={{ color: '#e8a06a' }}>{Object.entries(run.retries).map(([k, v]) => `${k}:${v}`).join(' ')}</b></span>}
       </div>
       {run.awaitingApproval && <Approval run={run} onDone={onDone} />}
       <div>
-        <div style={{ font: `600 12px ${HEAD}`, marginBottom: 6 }}>Timeline</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <div style={{ font: `600 12px ${HEAD}` }}>Timeline</div>
+          {events?.length > 0 && <button className="mini" style={{ marginTop: 0 }} onClick={() => navigator.clipboard.writeText(events.map(e => JSON.stringify(e)).join('\n')).then(() => toast('events.jsonl copied', 'success'))}>copy events</button>}
+        </div>
         {events === null && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>loading events…</div>}
         {events && !m.steps.length && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>no step events yet</div>}
         {m.steps.map((s, i) => (
@@ -119,7 +126,8 @@ export default function RunsSection() {
     const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, v])).toString()
     api.get('/api/runs' + (q ? '?' + q : '')).then(setData).catch(() => {})
   }
-  useEffect(() => { writeFilters(f); load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [f]) // poll every 5s (feature 5)
+  useEffect(() => { writeFilters(f) }, [f])
+  useVisiblePoll(load, 5000, [f]) // poll every 5s, paused while tab hidden
   if (!data) return <Skeleton tiles={0} rows={6} />
 
   const runs = data.runs

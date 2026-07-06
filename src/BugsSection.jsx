@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api, fmtDate } from './api.js'
+import { api, fmtDate, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
@@ -21,7 +21,7 @@ function Intake({ projects, onDone }) {
   const [severity, setSeverity] = useState('medium')
   const [intake, setIntake] = useState('')
   const submit = () => api.post('/api/bugs', { title, project, severity, intake })
-    .then(() => { setTitle(''); setIntake(''); onDone() }).catch(e => alert(e.message))
+    .then(() => { setTitle(''); setIntake(''); onDone() }).catch(e => toast(e.message, 'error'))
   return (
     <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ font: `600 15px ${HEAD}` }}>New bug</div>
@@ -43,7 +43,7 @@ function Bisect({ bug, onRefresh }) {
   const [good, setGood] = useState('')
   const [cmd, setCmd] = useState('npm test')
   const b = bug.bisect
-  const start = () => api.post(`/api/bugs/${bug.id}/bisect`, { good, cmd }).then(onRefresh).catch(e => alert(e.message))
+  const start = () => api.post(`/api/bugs/${bug.id}/bisect`, { good, cmd }).then(onRefresh).catch(e => toast(e.message, 'error'))
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ font: `600 12px ${HEAD}` }}>Auto-bisect</div>
@@ -75,12 +75,12 @@ export default function BugsSection() {
   const [fProj, setFProj] = useState('')
   const [fStatus, setFStatus] = useState('')
   const load = () => api.get('/api/bugs').then(setBugs).catch(() => {})
-  useEffect(() => { load(); const t = setInterval(load, 10_000); return () => clearInterval(t) }, [])
+  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, []) // pause while tab hidden
   if (!bugs) return <Skeleton tiles={0} rows={6} />
 
-  const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => alert(e.message))
+  const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => toast(e.message, 'error'))
   const launchSession = async (bug, regressionOnly) => {
-    const { prompt } = await api.get(`/api/bugs/${bug.id}/context`).catch(e => { alert(e.message); return {} })
+    const { prompt } = await api.get(`/api/bugs/${bug.id}/context`).catch(e => { toast(e.message, 'error'); return {} })
     if (!prompt) return
     const text = regressionOnly ? prompt + '\n\nThe fix is already in place — ONLY write the regression test now.' : prompt
     sessionStorage.setItem('ctx-bundle-prompt', text)
