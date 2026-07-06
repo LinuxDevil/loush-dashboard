@@ -347,6 +347,7 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     created: f.created, closedAt: f.resolutiondate || (seg.liveAt ? new Date(seg.liveAt).toISOString() : null),
     curSince: new Date(seg.curSince).toISOString(),
     rec: live ? null : recFor(status, pts, seg.curSince),
+    parent: f.parent ? { key: f.parent.key, summary: f.parent.fields?.summary || '' } : null,
     prNums: prs.map(p => p.num), stale, staleNote,
   }
 }
@@ -400,7 +401,7 @@ function ghAvailable() { try { return spawnSync('gh', ['auth', 'status'], { time
 function fetchPRs(cfg) {
   const [owner, name] = cfg.githubRepo.split('/')
   if (!owner || !name) return []
-  const q = `query($cur:String){repository(owner:"${owner}",name:"${name}"){pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}}}}}}`
+  const q = `query($cur:String){repository(owner:"${owner}",name:"${name}"){pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}}}}}}`
   const prs = []; let cur = ''
   for (let page = 0; page < 6; page++) { // ponytail: 300 most-recent PRs; bump the cap if history matters
     const args = ['api', 'graphql', '-f', `query=${q}`]
@@ -431,7 +432,7 @@ function fetchPRs(cfg) {
         firstReviewDays: firstReview ? +workDays(created, firstReview).toFixed(2) : null,
         mergeDays: p.mergedAt ? +workDays(created, Date.parse(p.mergedAt)).toFixed(2) : null,
         openDays: +workDays(created, p.mergedAt ? Date.parse(p.mergedAt) : Date.now()).toFixed(1),
-        cycles: 1 + changesReq, reviewers,
+        cycles: 1 + changesReq, reviewers, assignees: (p.assignees?.nodes || []).map(a => a.login).filter(Boolean),
         files: (p.files.nodes || []).map(f => ({ path: f.path, add: f.additions, del: f.deletions })),
         reviewEvents: realReviews.map(r => ({ state: r.state, login: r.login, at: r.at })),
       })

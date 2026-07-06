@@ -17,7 +17,7 @@ const fdate = s => s ? new Date(s).toLocaleDateString([], { month: 'short', day:
 const accColor = a => (a >= 85 ? GREEN : a >= 75 ? GOLD : RED)
 const initials = n => (n || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 const AVATARS = [BB, PURPLE, GREEN, GOLD, '#f2a2c4', '#7c9bd6']
-const BOARD_ORDER = ['PM Backlog', 'In Progress', 'In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'Ready for Release', 'Reopen', 'Re Open', 'Reopened', 'Live', 'QA Blocked', 'Closed', 'To Do', 'Backlog']
+const BOARD_ORDER = ['PM Backlog', 'Backlog', 'To Do', 'In Progress', 'In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'Reopen', 'Re Open', 'Reopened', 'Ready for Release', 'Live', 'QA Blocked', 'Closed']
 
 function smoothPath(pts) {
   if (!pts.length) return ''
@@ -599,20 +599,33 @@ function Members({ S, issues, prs, members, member, setMember, prsFor }) {
 }
 
 function memberRadar(mine, prsFor) {
-  const half = Math.ceil(mine.length / 2)
+  const clamp = v => Math.max(5, Math.min(100, v))
   const calc = set => {
     if (!set.length) return [50, 50, 50, 50, 50]
+    // Grooming: share of tickets that carry a story-point estimate
     const withEst = set.filter(i => i.pts > 0).length / set.length
+    // Estimation: story-point estimate vs actual (real accuracy)
     const accSet = set.filter(i => i.estAcc != null)
     const acc = accSet.length ? avg(accSet.map(i => i.estAcc)) : 60
+    // Planning: share of elapsed time spent in active work vs waiting (JIRA changelog)
+    const activeSum = set.reduce((a, i) => a + (i.activeDays || 0), 0)
+    const waitSum = set.reduce((a, i) => a + (i.waitDays || 0), 0)
+    const planEff = activeSum + waitSum > 0 ? (activeSum / (activeSum + waitSum)) * 100 : 60
+    // Dev Quality: drops with change-requested PRs, code-review rounds, and ticket rework
     const reworkRate = avg(set.map(i => Math.min(1, i.rework / 3)))
     const prs = set.flatMap(prsFor)
-    const crRate = prs.length ? prs.filter(p => p.state === 'Changes requested' || p.cycles > 1).length / prs.length : 0.2
+    const crFrac = prs.length ? prs.filter(p => p.state === 'Changes requested' || (p.cycles || 1) > 1).length / prs.length : 0.2
+    const crRounds = prs.length ? avg(prs.map(p => Math.max(0, (p.cycles || 1) - 1))) : 0.2
+    const devQ = 100 - (crFrac * 35 + Math.min(1, crRounds / 2) * 35 + reworkRate * 30)
+    // Release: fewer QA re-test loops = cleaner release
     const qa = avg(set.map(i => i.qaCycles))
-    const clamp = v => Math.max(5, Math.min(100, v))
-    return [clamp(withEst * 100), clamp(acc), clamp(acc), clamp(100 - (crRate * 50 + reworkRate * 50)), clamp(100 - qa * 25)]
+    return [clamp(withEst * 100), clamp(planEff), clamp(acc), clamp(devQ), clamp(100 - qa * 25)]
   }
-  return { cur: calc(mine), prev: calc(mine.slice(half)) }
+  // real trend: split the member's tickets chronologically — older half (prev) vs newer half (cur)
+  const sorted = [...mine].sort((a, b) => (a.created || '').localeCompare(b.created || ''))
+  const half = Math.ceil(sorted.length / 2)
+  const older = sorted.slice(0, half), recent = sorted.slice(half)
+  return { cur: calc(recent.length ? recent : sorted), prev: calc(older.length ? older : sorted) }
 }
 
 function Radar({ cur, prev, axes }) {
@@ -696,6 +709,11 @@ function BoardCard({ i }) {
         <span style={{ marginLeft: 'auto', font: `500 9px ${MONO}`, color: '#647285' }}>{fx(i.inCurrent)}d</span>
         {i.rec?.atRisk && <span style={{ font: `600 9px ${MONO}`, color: RED }}>⚠</span>}
       </div>
+      {i.parent && <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+        <span style={{ font: `600 8px ${MONO}`, color: '#647285', flexShrink: 0 }}>↳</span>
+        <TicketLink i={{ key: i.parent.key, host: i.host }} color="#93a6bb" style={{ font: `500 9px ${MONO}`, borderBottom: 'none' }}>{i.parent.key}</TicketLink>
+        <span style={{ font: `400 9px ${BODY}`, color: '#647285', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.parent.summary}</span>
+      </div>}
       <div style={{ font: `500 11.5px ${BODY}`, color: '#dbe4ef', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{i.summary}</div>
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         <RoleChip label="Dev" name={first(i.devAssignee?.name)} c={BB} />
@@ -910,6 +928,12 @@ function PrDrawer({ pr, onClose }) {
         {[['Days open', fx(pr.openDays, 0), '#e7eef6'], ['1st review', pr.firstReviewDays == null ? '—' : fx(pr.firstReviewDays) + 'd', PURPLE], ['Comments', String(pr.comments), BB], ['Cycles', String(pr.cycles), GOLD], ['Files', String(pr.changedFiles), '#7c9bd6']].map((s, i) =>
           <div key={i}><div style={{ font: `700 18px ${HEAD}`, color: s[2] }}>{s[1]}</div><div style={{ font: `400 8.5px ${MONO}`, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#647285' }}>{s[0]}</div></div>)}
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(10,15,22,0.5)', border: '1px solid rgba(142,200,255,0.06)' }}>
+        <PeopleRow label="Review cycles" c={GOLD}>{pr.cycles} {pr.cycles === 1 ? 'round' : 'rounds'}</PeopleRow>
+        <PeopleRow label="Assigned to" c={BB}>{(pr.assignees?.length ? pr.assignees : pr.author ? [pr.author + ' (author)'] : []).join(', ') || '—'}</PeopleRow>
+        <PeopleRow label="Approved by" c={GREEN}>{[...new Set((pr.reviewEvents || []).filter(e => e.state === 'APPROVED').map(e => e.login))].join(', ') || 'not yet'}</PeopleRow>
+        <PeopleRow label="Changes requested by" c={RED}>{[...new Set((pr.reviewEvents || []).filter(e => e.state === 'CHANGES_REQUESTED').map(e => e.login))].join(', ') || 'none'}</PeopleRow>
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 16, flexWrap: 'wrap' }}>
         <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#7f8ea1' }}>Reviewers</span>
         {pr.reviewers.length === 0 && <span style={{ font: `400 11px ${MONO}`, color: '#647285' }}>none yet</span>}
@@ -940,6 +964,9 @@ function PrDrawer({ pr, onClose }) {
     </div>
   </div>
 }
+const PeopleRow = ({ label, c, children }) => <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+  <span style={{ flexShrink: 0, width: 148, font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7f8ea1' }}>{label}</span>
+  <span style={{ font: `500 12px ${BODY}`, color: c }}>{children}</span></div>
 function prTimeline(p) {
   const fx1 = n => Number(n).toFixed(1)
   const tl = [{ icon: '○', color: BB, title: 'PR opened', meta: `#${p.num} · ${p.author} · +${p.additions} −${p.deletions}` }]
