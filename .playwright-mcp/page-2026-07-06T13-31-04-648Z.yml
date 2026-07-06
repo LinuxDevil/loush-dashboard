@@ -1,0 +1,229 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: C
+      - generic [ref=e7]: Claude Code
+    - button "◧ Overview" [ref=e8] [cursor=pointer]:
+      - generic [ref=e9]: ◧
+      - text: Overview
+    - button "◎ Inbox 1" [ref=e58] [cursor=pointer]:
+      - generic [ref=e11]: ◎
+      - text: Inbox
+      - generic [ref=e59]: "1"
+    - button "⊞ Projects" [ref=e12] [cursor=pointer]:
+      - generic [ref=e13]: ⊞
+      - text: Projects
+    - button "⌨ Chat" [ref=e14] [cursor=pointer]:
+      - generic [ref=e15]: ⌨
+      - text: Chat
+    - button "▦ Workflows" [ref=e16] [cursor=pointer]:
+      - generic [ref=e17]: ▦
+      - text: Workflows
+    - button "✦ Capabilities" [ref=e18] [cursor=pointer]:
+      - generic [ref=e19]: ✦
+      - text: Capabilities
+    - button "⚙ Harness" [ref=e20] [cursor=pointer]:
+      - generic [ref=e21]: ⚙
+      - text: Harness
+    - button "⚖ Constitution" [ref=e22] [cursor=pointer]:
+      - generic [ref=e23]: ⚖
+      - text: Constitution
+    - button "⧉ Agent Teams" [ref=e24] [cursor=pointer]:
+      - generic [ref=e25]: ⧉
+      - text: Agent Teams
+    - button "✍ Authoring" [ref=e26] [cursor=pointer]:
+      - generic [ref=e27]: ✍
+      - text: Authoring
+    - button "⑂ Hooks" [ref=e28] [cursor=pointer]:
+      - generic [ref=e29]: ⑂
+      - text: Hooks
+    - button "⬡ Artifacts" [ref=e30] [cursor=pointer]:
+      - generic [ref=e31]: ⬡
+      - text: Artifacts
+    - generic [ref=e32]:
+      - generic [ref=e33]: harness valid
+      - text: settings schema · backups synced
+  - main [ref=e34]:
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - generic [ref=e37]: Knowledge
+        - heading "Constitution — verified repo knowledge base" [level=1] [ref=e97]
+      - generic [ref=e39]:
+        - button "⇄ Cursor" [ref=e40] [cursor=pointer]
+        - button "↻ cached · 2m old" [ref=e1122] [cursor=pointer]
+        - generic [ref=e62]:
+          - generic [ref=e63]: ✦
+          - generic [ref=e64]: Lv 32
+          - generic [ref=e66]:
+            - text: 971.6k
+            - generic [ref=e67]: out · 2h31m
+            - generic [ref=e68]: · 🔥2d
+        - generic [ref=e42]: AM
+    - generic [ref=e70]:
+      - generic [ref=e71]:
+        - combobox [ref=e72] [cursor=pointer]:
+          - option "~/workspace/clonez/ct-web-flights" [selected]
+          - option "~/workspace/cr-web-myaccount"
+          - option "~/workspace/ct-web-hotels"
+        - textbox "…or paste a repo path" [ref=e73]
+      - generic [ref=e1123]:
+        - generic [ref=e1124]:
+          - generic [ref=e1125]: "83"
+          - generic [ref=e1126]: artifacts
+        - generic [ref=e1127]:
+          - generic [ref=e1128]: "1642"
+          - generic [ref=e1129]: verified atoms
+        - generic [ref=e1130]:
+          - generic [ref=e1131]: "345"
+          - generic [ref=e1132]: code files cited
+        - generic [ref=e1133]:
+          - generic [ref=e1134]: "76"
+          - generic [ref=e1135]: debt / migration atoms
+        - generic [ref=e1136]:
+          - generic [ref=e1137]: "27"
+          - generic [ref=e1138]: workflow overlaps
+      - generic [ref=e1139]:
+        - button "graph" [ref=e1140] [cursor=pointer]
+        - button "workflows" [ref=e1141] [cursor=pointer]
+        - button "rules" [ref=e1142] [cursor=pointer]
+        - button "skills" [ref=e1143] [cursor=pointer]
+        - button "hot files" [ref=e1144] [cursor=pointer]
+        - button "coverage" [ref=e1145] [cursor=pointer]
+        - button "debt" [ref=e1146] [cursor=pointer]
+      - generic [ref=e1147]:
+        - generic [ref=e1148]:
+          - button "← workflows" [ref=e1149] [cursor=pointer]
+          - generic [ref=e1150]: search-flights
+          - generic [ref=e1151]: 32 atoms
+        - generic [ref=e1152]:
+          - generic [ref=e1153]: User fills in origin, destination, dates, and passengers in the search box (home page or search results page) and presses Search. useSearchBox.handleSearch validates all fields, writes the search query to RecentSearchCache and sessionStorage, clears AB-testing flags, pushes GTM events, then performs a hard navigation to the flights results URL. On validation failure it marks fields dirty and shows inline errors without navigating.
+          - generic [ref=e1154]: "when to use: Use when the user asks to search for flights, modify a flight search, or mentions the search box, origin/destination fields, date picker, or passenger selector on the flights home or results page."
+        - generic [ref=e1155]:
+          - generic [ref=e1156]: Governed paths — loads when working on
+          - generic [ref=e1157]: packages/app/app-common/components/SearchBox/hooks/useSearchBox.tsx
+          - generic [ref=e1158]: packages/app/app-mweb/containers/FlightsSearchBox/FlightsSearchBox.tsx
+          - generic [ref=e1159]: packages/app/app-desktop/containers/FlightSearchBox/FlightSearchBox.tsx
+          - generic [ref=e1160]: packages/app/pages/mweb/flights-home/index.page.tsx
+          - generic [ref=e1161]: packages/app/app-common/components/SearchBox/utils/cache.utils.ts
+          - generic [ref=e1162]: packages/app/utils/cache.utils.ts
+          - generic [ref=e1163]: packages/app/utils/avoGtm.utils.ts
+          - generic [ref=e1164]: packages/sdk/src/stores/flights-search-box.store.ts
+          - generic [ref=e1165]: packages/sdk/src/utils/flights-search-box.utils.ts
+        - generic [ref=e1166]:
+          - generic [ref=e1167]: Cited code files (8)
+          - generic [ref=e1168]:
+            - generic [ref=e1169]: packages/app/app-common/components/SearchBox/hooks/useSearchBox.tsx
+            - generic [ref=e1170]: 22 cites
+            - generic [ref=e1171]: 1 others cite it
+          - generic [ref=e1172]:
+            - generic [ref=e1173]: packages/app/app-common/components/SearchBox/utils/cache.utils.ts
+            - generic [ref=e1174]: 3 cites
+            - generic [ref=e1175]: 0 others cite it
+          - generic [ref=e1176]:
+            - generic [ref=e1177]: packages/app/app-mweb/containers/FlightsSearchBox/FlightsSearchBox.tsx
+            - generic [ref=e1178]: 2 cites
+            - generic [ref=e1179]: 0 others cite it
+          - generic [ref=e1180]:
+            - generic [ref=e1181]: packages/app/utils/avoGtm.utils.ts
+            - generic [ref=e1182]: 1 cite
+            - generic [ref=e1183]: 13 others cite it
+          - generic [ref=e1184]:
+            - generic [ref=e1185]: packages/app/app-desktop/containers/FlightSearchBox/FlightSearchBox.tsx
+            - generic [ref=e1186]: 1 cite
+            - generic [ref=e1187]: 2 others cite it
+          - generic [ref=e1188]:
+            - generic [ref=e1189]: packages/app/utils/cache.utils.ts
+            - generic [ref=e1190]: 1 cite
+            - generic [ref=e1191]: 2 others cite it
+          - generic [ref=e1192]:
+            - generic [ref=e1193]: packages/sdk/src/stores/flights-search-box.store.ts
+            - generic [ref=e1194]: 1 cite
+            - generic [ref=e1195]: 0 others cite it
+          - generic [ref=e1196]:
+            - generic [ref=e1197]: packages/app/app-common/components/SearchBox/utils/computed.utils.ts
+            - generic [ref=e1198]: 1 cite
+            - generic [ref=e1199]: 0 others cite it
+        - generic [ref=e1200]:
+          - generic [ref=e1201]: Connected artifacts — share cited files
+          - generic [ref=e1202]:
+            - generic [ref=e1203]:
+              - generic [ref=e1204] [cursor=pointer]: skill:add-flightsearchbox
+              - generic [ref=e1205]: 2 shared files
+            - generic [ref=e1206]: useSearchBox.tsx · FlightSearchBox.tsx
+          - generic [ref=e1207]:
+            - generic [ref=e1208]:
+              - generic [ref=e1209] [cursor=pointer]: constitution:constitution
+              - generic [ref=e1210]: 2 shared files
+            - generic [ref=e1211]: FlightSearchBox.tsx · cache.utils.ts
+          - generic [ref=e1212]:
+            - generic [ref=e1213]:
+              - generic [ref=e1214] [cursor=pointer]: skill:add-push-data-layer-with-params
+              - generic [ref=e1215]: 1 shared file
+            - generic [ref=e1216]: avoGtm.utils.ts
+          - generic [ref=e1217]:
+            - generic [ref=e1218]:
+              - generic [ref=e1219] [cursor=pointer]: rule:analytics-via-avo-gtm-utils
+              - generic [ref=e1220]: 1 shared file
+            - generic [ref=e1221]: avoGtm.utils.ts
+          - generic [ref=e1222]:
+            - generic [ref=e1223]:
+              - generic [ref=e1224] [cursor=pointer]: rule:analytics-via-avo-gtm
+              - generic [ref=e1225]: 1 shared file
+            - generic [ref=e1226]: avoGtm.utils.ts
+          - generic [ref=e1227]:
+            - generic [ref=e1228]:
+              - generic [ref=e1229] [cursor=pointer]: rule:analytics-via-avogmt-utils
+              - generic [ref=e1230]: 1 shared file
+            - generic [ref=e1231]: avoGtm.utils.ts
+          - generic [ref=e1232]:
+            - generic [ref=e1233]:
+              - generic [ref=e1234] [cursor=pointer]: rule:events-via-avogmt
+              - generic [ref=e1235]: 1 shared file
+            - generic [ref=e1236]: avoGtm.utils.ts
+          - generic [ref=e1237]:
+            - generic [ref=e1238]:
+              - generic [ref=e1239] [cursor=pointer]: skill:push-avo-gtm-event
+              - generic [ref=e1240]: 1 shared file
+            - generic [ref=e1241]: avoGtm.utils.ts
+          - generic [ref=e1242]:
+            - generic [ref=e1243]:
+              - generic [ref=e1244] [cursor=pointer]: skill:add-app-mweb-containers-meta-fare-families
+              - generic [ref=e1245]: 1 shared file
+            - generic [ref=e1246]: avoGtm.utils.ts
+          - generic [ref=e1247]:
+            - generic [ref=e1248]:
+              - generic [ref=e1249] [cursor=pointer]: workflow:remove-addon-from-sale
+              - generic [ref=e1250]: 1 shared file
+            - generic [ref=e1251]: avoGtm.utils.ts
+          - generic [ref=e1252]:
+            - generic [ref=e1253]:
+              - generic [ref=e1254] [cursor=pointer]: workflow:update-addon-on-sale
+              - generic [ref=e1255]: 1 shared file
+            - generic [ref=e1256]: avoGtm.utils.ts
+          - generic [ref=e1257]:
+            - generic [ref=e1258]:
+              - generic [ref=e1259] [cursor=pointer]: rule:containers-baggage-section
+              - generic [ref=e1260]: 1 shared file
+            - generic [ref=e1261]: avoGtm.utils.ts
+          - generic [ref=e1262]:
+            - generic [ref=e1263]:
+              - generic [ref=e1264] [cursor=pointer]: rule:containers-booking-summary
+              - generic [ref=e1265]: 1 shared file
+            - generic [ref=e1266]: avoGtm.utils.ts
+          - generic [ref=e1267]:
+            - generic [ref=e1268]:
+              - generic [ref=e1269] [cursor=pointer]: skill:add-flights-search-box
+              - generic [ref=e1270]: 1 shared file
+            - generic [ref=e1271]: avoGtm.utils.ts
+          - generic [ref=e1272]:
+            - generic [ref=e1273]:
+              - generic [ref=e1274] [cursor=pointer]: workflow:add-addon-to-sale
+              - generic [ref=e1275]: 1 shared file
+            - generic [ref=e1276]: avoGtm.utils.ts
+          - generic [ref=e1277]:
+            - generic [ref=e1278]:
+              - generic [ref=e1279] [cursor=pointer]: rule:containers-contact-form
+              - generic [ref=e1280]: 1 shared file
+            - generic [ref=e1281]: cache.utils.ts
+        - group [ref=e1282]:
+          - generic "Markdown source" [ref=e1283] [cursor=pointer]

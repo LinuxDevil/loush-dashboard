@@ -1,0 +1,42 @@
+- generic [ref=f1e3]:
+  - navigation [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]: ▮
+      - generic [ref=f1e7]: Cursor
+    - button "◧ Overview" [ref=f1e8] [cursor=pointer]:
+      - generic [ref=f1e9]: ◧
+      - text: Overview
+    - button "⊞ Projects" [ref=f1e10] [cursor=pointer]:
+      - generic [ref=f1e11]: ⊞
+      - text: Projects
+    - button "⌨ Sessions" [ref=f1e12] [cursor=pointer]:
+      - generic [ref=f1e13]: ⌨
+      - text: Sessions
+    - button "✎ Capabilities" [ref=f1e14] [cursor=pointer]:
+      - generic [ref=f1e15]: ✎
+      - text: Capabilities
+    - button "⋈ MCP" [ref=f1e16] [cursor=pointer]:
+      - generic [ref=f1e17]: ⋈
+      - text: MCP
+    - button "◔ Context" [ref=f1e18] [cursor=pointer]:
+      - generic [ref=f1e19]: ◔
+      - text: Context
+    - button "▶ Quick Actions" [ref=f1e20] [cursor=pointer]:
+      - generic [ref=f1e21]: ▶
+      - text: Quick Actions
+    - button "⚖ Constitution" [ref=f1e22] [cursor=pointer]:
+      - generic [ref=f1e23]: ⚖
+      - text: Constitution
+    - button "✦ Insights" [ref=f1e24] [cursor=pointer]:
+      - generic [ref=f1e25]: ✦
+      - text: Insights
+    - button "⇄ Claude dashboard" [ref=f1e27] [cursor=pointer]
+  - main [ref=f1e28]:
+    - generic [ref=f1e29]:
+      - generic [ref=f1e30]:
+        - generic [ref=f1e31]: Cursor
+        - heading "Your Cursor usage, at a glance" [level=1] [ref=f1e32]
+      - generic [ref=f1e33]:
+        - button "⇄ Claude" [ref=f1e34] [cursor=pointer]
+        - generic [ref=f1e35]: Cu
+    - generic [ref=f1e36]: parsing Cursor's database… (first load reads a 2 GB sqlite file)

@@ -1,0 +1,258 @@
+- generic [ref=f1e3]:
+  - navigation [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]: C
+      - generic [ref=f1e7]: Claude Code
+    - button "◧ Overview" [ref=f1e8] [cursor=pointer]:
+      - generic [ref=f1e9]: ◧
+      - text: Overview
+    - button "◎ Inbox 1" [ref=f1e10] [cursor=pointer]:
+      - generic [ref=f1e11]: ◎
+      - text: Inbox
+      - generic [ref=f1e12]: "1"
+    - button "⊞ Projects" [ref=f1e13] [cursor=pointer]:
+      - generic [ref=f1e14]: ⊞
+      - text: Projects
+    - button "⌨ Chat" [ref=f1e15] [cursor=pointer]:
+      - generic [ref=f1e16]: ⌨
+      - text: Chat
+    - button "▦ Workflows" [ref=f1e17] [cursor=pointer]:
+      - generic [ref=f1e18]: ▦
+      - text: Workflows
+    - button "✦ Capabilities" [ref=f1e19] [cursor=pointer]:
+      - generic [ref=f1e20]: ✦
+      - text: Capabilities
+    - button "⚙ Harness" [ref=f1e21] [cursor=pointer]:
+      - generic [ref=f1e22]: ⚙
+      - text: Harness
+    - button "⚖ Constitution" [ref=f1e23] [cursor=pointer]:
+      - generic [ref=f1e24]: ⚖
+      - text: Constitution
+    - button "⧉ Agent Teams" [ref=f1e25] [cursor=pointer]:
+      - generic [ref=f1e26]: ⧉
+      - text: Agent Teams
+    - button "✍ Authoring" [ref=f1e27] [cursor=pointer]:
+      - generic [ref=f1e28]: ✍
+      - text: Authoring
+    - button "⑂ Hooks" [ref=f1e29] [cursor=pointer]:
+      - generic [ref=f1e30]: ⑂
+      - text: Hooks
+    - button "⬡ Artifacts" [ref=f1e31] [cursor=pointer]:
+      - generic [ref=f1e32]: ⬡
+      - text: Artifacts
+    - generic [ref=f1e33]:
+      - generic [ref=f1e34]: harness valid
+      - text: settings schema · backups synced
+  - main [ref=f1e35]:
+    - generic [ref=f1e36]:
+      - generic [ref=f1e37]:
+        - generic [ref=f1e38]: Knowledge
+        - heading "Constitution — verified repo knowledge base" [level=1] [ref=f1e39]
+      - generic [ref=f1e40]:
+        - button "⇄ Cursor" [ref=f1e41] [cursor=pointer]
+        - button "↻ cached · 3m old" [ref=f1e57] [cursor=pointer]
+        - generic [ref=f1e43]:
+          - generic [ref=f1e44]: ✦
+          - generic [ref=f1e45]: Lv 32
+          - generic [ref=f1e47]:
+            - text: 985.0k
+            - generic [ref=f1e48]: out · 2h28m
+            - generic [ref=f1e49]: · 🔥2d
+        - generic [ref=f1e50]: AM
+    - generic [ref=f1e52]:
+      - generic [ref=f1e53]:
+        - combobox [ref=f1e54] [cursor=pointer]:
+          - option "~/workspace/clonez/ct-web-flights" [selected]
+          - option "~/workspace/cr-web-myaccount"
+          - option "~/workspace/ct-web-hotels"
+        - textbox "…or paste a repo path" [ref=f1e55]
+      - generic [ref=f1e58]:
+        - generic [ref=f1e59]:
+          - generic [ref=f1e60]: "83"
+          - generic [ref=f1e61]: artifacts
+        - generic [ref=f1e62]:
+          - generic [ref=f1e63]: "1642"
+          - generic [ref=f1e64]: verified atoms
+        - generic [ref=f1e65]:
+          - generic [ref=f1e66]: "345"
+          - generic [ref=f1e67]: code files cited
+        - generic [ref=f1e68]:
+          - generic [ref=f1e69]: "76"
+          - generic [ref=f1e70]: debt / migration atoms
+        - generic [ref=f1e71]:
+          - generic [ref=f1e72]: "27"
+          - generic [ref=f1e73]: workflow overlaps
+      - generic [ref=f1e74]:
+        - button "graph" [ref=f1e75] [cursor=pointer]
+        - button "workflows" [ref=f1e76] [cursor=pointer]
+        - button "rules" [active] [ref=f1e77] [cursor=pointer]
+        - button "skills" [ref=f1e78] [cursor=pointer]
+        - button "hot files" [ref=f1e79] [cursor=pointer]
+        - button "coverage" [ref=f1e80] [cursor=pointer]
+        - button "debt" [ref=f1e81] [cursor=pointer]
+      - generic [ref=f1e83]:
+        - generic [ref=f1e84] [cursor=pointer]:
+          - generic [ref=f1e85]: analytics-events-via-avogm-utils
+          - generic [ref=f1e86]: "All analytics/GTM events fired from hooks in packages/app/hooks MUST go through named `pushXxxEvent` helpers exported from `@/utils/avoGtm.utils`. Direct calls to the underlying GTM primitive or raw data-layer pushes are prohibited in hook files."
+          - generic [ref=f1e87]: 15 atoms
+          - generic [ref=f1e88]: 1 paths · 7 files
+        - generic [ref=f1e89] [cursor=pointer]:
+          - generic [ref=f1e90]: analytics-via-avo-gtm-utils
+          - generic [ref=f1e91]: Rules for correctly firing analytics/GTM events through the project-specific avoGtm.utils wrapper in files under TripInfoWrapper and across the 30+ consumer files in app-desktop and app-mweb.
+          - generic [ref=f1e92]: 18 atoms
+          - generic [ref=f1e93]: 1 paths · 7 files
+        - generic [ref=f1e94] [cursor=pointer]:
+          - generic [ref=f1e95]: analytics-via-avo-gtm
+          - generic [ref=f1e96]: "All analytics/GTM events fired from AddOn components and their siblings MUST go through named wrapper functions exported from `@/utils/avoGtm.utils`. The wrappers inject shared `avoParams` (pos, platform, currency, user state) automatically via the module-level singleton initialized by `AnalyticsProvider`. Calling `pushDataLayer` or the underlying GTM SDK directly from component code is forbidden."
+          - generic [ref=f1e97]: 13 atoms
+          - generic [ref=f1e98]: 1 paths · 5 files
+        - generic [ref=f1e99] [cursor=pointer]:
+          - generic [ref=f1e100]: analytics-via-avogmt-utils
+          - generic [ref=f1e101]: Every analytics/GTM event fired from container or component code MUST go through named push* functions exported from @/utils/avoGtm.utils. Direct dataLayer.push() or raw GTM calls are prohibited.
+          - generic [ref=f1e102]: 13 atoms
+          - generic [ref=f1e103]: 1 paths · 5 files
+        - generic [ref=f1e104] [cursor=pointer]:
+          - generic [ref=f1e105]: app-common-components
+          - generic [ref=f1e106]: Local conventions for editing form-field and utility components in packages/app/app-common/components — specifically the react-final-form → formik migration boundary and the invariants that keep both generations working correctly.
+          - generic [ref=f1e107]: 15 atoms
+          - generic [ref=f1e108]: 1 paths · 12 files
+        - generic [ref=f1e109] [cursor=pointer]:
+          - generic [ref=f1e110]: app-pages
+          - generic [ref=f1e111]: Conventions and invariants for editing page files in packages/app/pages — the .page.tsx suffix requirement, mandatory getServerSideProps SSR helper wiring, and the three approved SSR helper patterns.
+          - generic [ref=f1e112]: 15 atoms
+          - generic [ref=f1e113]: 1 paths · 10 files
+        - generic [ref=f1e114] [cursor=pointer]:
+          - generic [ref=f1e115]: constants-no-types-import
+          - generic [ref=f1e116]: "Edit-time rules for packages/sdk/src/constants — specifically the invariant that base.constants.ts MUST NOT import from @/types, and the re-export and `as const` conventions across the constants layer."
+          - generic [ref=f1e117]: 13 atoms
+          - generic [ref=f1e118]: 1 paths · 5 files
+        - generic [ref=f1e119] [cursor=pointer]:
+          - generic [ref=f1e120]: containers-add-on-section
+          - generic [ref=f1e121]: Conventions and invariants for editing AddOnSection and its sub-components — store access, state-mapping hooks, analytics wrappers, lazy-loading, and dialog close-animation patterns.
+          - generic [ref=f1e122]: 16 atoms
+          - generic [ref=f1e123]: 1 paths · 6 files
+        - generic [ref=f1e124] [cursor=pointer]:
+          - generic [ref=f1e125]: containers-baggage-section
+          - generic [ref=f1e126]: "Edit-time conventions for BaggageSection and its sub-components: store access, state mapping, analytics, and dynamic-import rules that are invisible from any single file."
+          - generic [ref=f1e127]: 15 atoms
+          - generic [ref=f1e128]: 1 paths · 5 files
+        - generic [ref=f1e129] [cursor=pointer]:
+          - generic [ref=f1e130]: containers-booking-summary
+          - generic [ref=f1e131]: "Edit-time conventions for the BookingSummary container and its LegDetails sub-component: store access, state-mapping hooks, and analytics event wiring that are invisible from the files alone."
+          - generic [ref=f1e132]: 15 atoms
+          - generic [ref=f1e133]: 1 paths · 4 files
+        - generic [ref=f1e134] [cursor=pointer]:
+          - generic [ref=f1e135]: containers-contact-form
+          - generic [ref=f1e136]: Local conventions for editing the desktop ContactForm container and its sub-components. Covers the react-final-form / store-access invariants that are invisible from any single file and the active formik migration boundary that must not be crossed here.
+          - generic [ref=f1e137]: 15 atoms
+          - generic [ref=f1e138]: 1 paths · 6 files
+        - generic [ref=f1e139] [cursor=pointer]:
+          - generic [ref=f1e140]: containers-fare-calendar
+          - generic [ref=f1e141]: Edit-time conventions for the FareCalendar container and its sub-components in app-desktop. Covers the store-access contract, analytics call shape, URL navigation invariant, and the Observable side-channel that syncs the search box after a cell selection.
+          - generic [ref=f1e142]: 20 atoms
+          - generic [ref=f1e143]: 1 paths · 6 files
+        - generic [ref=f1e144] [cursor=pointer]:
+          - generic [ref=f1e145]: containers-fare-families
+          - generic [ref=f1e146]: "Edit-time conventions for the FareFamilies container: store access, state mapping, analytics firing, lazy-loading, and local hook placement."
+          - generic [ref=f1e147]: 13 atoms
+          - generic [ref=f1e148]: 1 paths · 6 files
+        - generic [ref=f1e149] [cursor=pointer]:
+          - generic [ref=f1e150]: containers-filters
+          - generic [ref=f1e151]: Edit-time conventions for packages/app/app-desktop/containers/Filters — the desktop filter panel and its sub-components. Covers invariants around loading guards, analytics helpers, store access, and the AI-filter event channel that are invisible from any single file.
+          - generic [ref=f1e152]: 17 atoms
+          - generic [ref=f1e153]: 1 paths · 4 files
+        - generic [ref=f1e154] [cursor=pointer]:
+          - generic [ref=f1e155]: drawer-close-via-use-go-back
+          - generic [ref=f1e156]: "Every drawer or modal close handler in the mweb app must be wired through `useGoBack` rather than passing `onClose` directly to the DS component. `useGoBack` appends a query-param to the URL when the drawer opens and intercepts the browser back-button to close it, maintaining correct browser history. Bypassing it breaks native back-button behavior on mobile."
+          - generic [ref=f1e157]: 16 atoms
+          - generic [ref=f1e158]: 1 paths · 6 files
+        - generic [ref=f1e159] [cursor=pointer]:
+          - generic [ref=f1e160]: endpoints-via-constants
+          - generic [ref=f1e161]: "All API endpoint strings must be referenced through the `ENDPOINTS` constant imported from `@/constants`; inline URL strings in client or store code are prohibited."
+          - generic [ref=f1e162]: 18 atoms
+          - generic [ref=f1e163]: 1 paths · 10 files
+        - generic [ref=f1e164] [cursor=pointer]:
+          - generic [ref=f1e165]: events-via-avogmt
+          - generic [ref=f1e166]: All analytics/GTM events fired from MetaFareFamilies and sibling containers MUST go through named push-functions exported from @/utils/avoGtm.utils. Direct window.dataLayer writes, raw pushDataLayer calls, or ad-hoc event objects are prohibited.
+          - generic [ref=f1e167]: 12 atoms
+          - generic [ref=f1e168]: 1 paths · 3 files
+        - generic [ref=f1e169] [cursor=pointer]:
+          - generic [ref=f1e170]: form-fields-via-formik
+          - generic [ref=f1e171]: Conventions for editing form-field components in the app-common scope, covering the active migration from react-final-form to formik and the invariants that keep both patterns from corrupting each other.
+          - generic [ref=f1e172]: 12 atoms
+          - generic [ref=f1e173]: 1 paths · 8 files
+        - generic [ref=f1e174] [cursor=pointer]:
+          - generic [ref=f1e175]: http-via-core-sdk
+          - generic [ref=f1e176]: Invariants and traps for editing HTTP client files in packages/sdk/src/clients. Every client MUST route all HTTP calls through $http from @tajawal/web-core-sdk-v2; direct fetch/axios use is prohibited. Covers the requestId convention, endpoint sourcing, response unwrapping, header mutation side-effects, and active migration zones.
+          - generic [ref=f1e177]: 22 atoms
+          - generic [ref=f1e178]: 1 paths · 10 files
+        - generic [ref=f1e179] [cursor=pointer]:
+          - generic [ref=f1e180]: server-middleware
+          - generic [ref=f1e181]: Conventions for editing middleware files in packages/app/server/middleware — composition order, registration invariants, cross-file state, and known anti-patterns.
+          - generic [ref=f1e182]: 18 atoms
+          - generic [ref=f1e183]: 1 paths · 7 files
+        - generic [ref=f1e184] [cursor=pointer]:
+          - generic [ref=f1e185]: shared-component-global-config-mutation
+          - generic [ref=f1e186]: Rules for editing mweb shared components that must synchronise global.config.language from a configStore before rendering, so the SDK operates with the correct language.
+          - generic [ref=f1e187]: 17 atoms
+          - generic [ref=f1e188]: 1 paths · 7 files
+        - generic [ref=f1e189] [cursor=pointer]:
+          - generic [ref=f1e190]: shared-component-provider-wrapping
+          - generic [ref=f1e191]: Invariants and traps for editing components in packages/app/app-shared/mweb/* — every component in this scope must wrap its render output in SharedProvider and StaticContentProvider, and must call useFetchLookup before rendering.
+          - generic [ref=f1e192]: 12 atoms
+          - generic [ref=f1e193]: 1 paths · 4 files
+        - generic [ref=f1e194] [cursor=pointer]:
+          - generic [ref=f1e195]: src-clients
+          - generic [ref=f1e196]: Conventions and invariants for editing HTTP client modules in packages/sdk/src/clients. Covers the $http wrapper requirement, ENDPOINTS constant usage, plain-object export shape, requestId naming, and the $http.addHeaders side-effect pattern.
+          - generic [ref=f1e197]: 20 atoms
+          - generic [ref=f1e198]: 1 paths · 10 files
+        - generic [ref=f1e199] [cursor=pointer]:
+          - generic [ref=f1e200]: src-constants
+          - generic [ref=f1e201]: Rules for editing constant files in packages/sdk/src/constants. Covers the circular-dependency firewall in base.constants.ts, the re-export contract between base/main/filters, and the as-const invariant required for type derivation.
+          - generic [ref=f1e202]: 15 atoms
+          - generic [ref=f1e203]: 1 paths · 6 files
+        - generic [ref=f1e204] [cursor=pointer]:
+          - generic [ref=f1e205]: src-stores
+          - generic [ref=f1e206]: Conventions and invariants for editing stores in packages/sdk/src/stores and its sub-directories (api/, filter/, filter/base/, page/, static/).
+          - generic [ref=f1e207]: 21 atoms
+          - generic [ref=f1e208]: 1 paths · 14 files
+        - generic [ref=f1e209] [cursor=pointer]:
+          - generic [ref=f1e210]: store-access-via-use-map-store-state
+          - generic [ref=f1e211]: Rules for editing container hooks that read from the MobX store in the FareCalendar/hooks scope. Covers invariants, anti-patterns, and gotchas specific to useMapStoreStateToClientState usage.
+          - generic [ref=f1e212]: 11 atoms
+          - generic [ref=f1e213]: 1 paths · 5 files
+        - generic [ref=f1e214] [cursor=pointer]:
+          - generic [ref=f1e215]: store-initial-state-via-map-util
+          - generic [ref=f1e216]: "Every MobX store in packages/sdk/src/stores/api must implement an `updateInitialState` action that delegates to `mapInitialStateToStoreState(this, initialState)` from `@tajawal/web-core-sdk-v2`, and must call `this.updateInitialState(initialState)` in its constructor. Stores that skip this pattern will not correctly hydrate from SSR-serialized state."
+          - generic [ref=f1e217]: 13 atoms
+          - generic [ref=f1e218]: 1 paths · 9 files
+        - generic [ref=f1e219] [cursor=pointer]:
+          - generic [ref=f1e220]: store-state-via-use-map-store-state
+          - generic [ref=f1e221]: Edit-time rules for hooks in packages/app/hooks that read MobX store state into React components via useMapStoreStateToClientState or the autorun/useState/useEffect pattern.
+          - generic [ref=f1e222]: 18 atoms
+          - generic [ref=f1e223]: 1 paths · 13 files
+        - generic [ref=f1e224] [cursor=pointer]:
+          - generic [ref=f1e225]: store-state-via-use-state-of-hook
+          - generic [ref=f1e226]: Container components in AddOnSection MUST never read from store internals inline. All store-state access is delegated to a dedicated useStateOf* hook (e.g. useStateOfAddOns, useAddonSectionSetup) which internally uses useMapStoreStateToClientState. The store reference is obtained via useStore() and passed into the hook.
+          - generic [ref=f1e227]: 14 atoms
+          - generic [ref=f1e228]: 1 paths · 6 files
+        - generic [ref=f1e229] [cursor=pointer]:
+          - generic [ref=f1e230]: store-state-via-use-state-of
+          - generic [ref=f1e231]: Conventions for editing useStateOf* hooks that map MobX store state to component-consumable client state via useMapStoreStateToClientState.
+          - generic [ref=f1e232]: 12 atoms
+          - generic [ref=f1e233]: 5 paths · 5 files
+        - generic [ref=f1e234] [cursor=pointer]:
+          - generic [ref=f1e235]: test-ids-via-build-test-id
+          - generic [ref=f1e236]: Every component test ID in FlightBookingFlow (and the broader flights funnel) MUST be constructed using buildTestId from @/utils/helpers.utils. Raw string literals MUST NOT be passed directly to testId or data-testid props.
+          - generic [ref=f1e237]: 15 atoms
+          - generic [ref=f1e238]: 1 paths · 9 files
+        - generic [ref=f1e239] [cursor=pointer]:
+          - generic [ref=f1e240]: translation-via-helper
+          - generic [ref=f1e241]: "All user-visible strings in the mweb app must be obtained through the `useTranslation()` hook from `react-i18next` and accessed via the returned `t()` function. Raw string literals for user-facing text are prohibited."
+          - generic [ref=f1e242]: 10 atoms
+          - generic [ref=f1e243]: 1 paths · 4 files
+        - generic [ref=f1e244] [cursor=pointer]:
+          - generic [ref=f1e245]: translation-via-use-translation
+          - generic [ref=f1e246]: "All user-visible strings in components under AddOn (and the broader app-common/components and app-desktop/containers scope) MUST be obtained through the `useTranslation` hook from `react-i18next` and accessed via the `t()` function with a dot-namespaced translation key. Raw string literals for user-visible text are forbidden."
+          - generic [ref=f1e247]: 10 atoms
+          - generic [ref=f1e248]: 1 paths · 4 files

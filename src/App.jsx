@@ -20,6 +20,9 @@ import InboxSection from './InboxSection.jsx'
 import BugsSection from './BugsSection.jsx'
 import QualitySection from './QualitySection.jsx'
 import BoardSection from './BoardSection.jsx'
+import QuickActions from './QuickActions.jsx'
+import CursorDashboard from './CursorDashboard.jsx'
+import ConstitutionSection from './ConstitutionSection.jsx'
 import Palette from './Palette.jsx'
 import { api, forceFresh } from './api.js'
 
@@ -35,6 +38,7 @@ const SECTIONS = [
   ) },
   { id: 'workflows', label: 'Workflows', icon: '▦', kicker: 'Workflows', title: 'Agent work — board, runs, quality & bugs', el: (
     <Hub items={[
+      { label: 'Quick Actions', el: <QuickActions /> },
       { label: 'Task Board', el: <BoardSection /> },
       { label: 'Loush Runs', el: <RunsSection /> },
       { label: 'Quality', el: <QualitySection /> },
@@ -58,6 +62,7 @@ const SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
+  { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
@@ -89,6 +94,15 @@ function SidebarFoot() {
 }
 
 export default function App() {
+  // two dashboards, one toggle, zero mixing: ?dash=cursor renders the Cursor shell instead
+  const [dash, setDash] = useState(() => new URLSearchParams(window.location.search).get('dash') || 'claude')
+  const switchDash = () => {
+    const next = dash === 'cursor' ? 'claude' : 'cursor'
+    const q = new URLSearchParams(window.location.search)
+    next === 'cursor' ? q.set('dash', 'cursor') : q.delete('dash')
+    history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
+    setDash(next)
+  }
   const [section, setSection] = useState('overview')
   const [chip, setChip] = useState(null)
   const [inboxCount, setInboxCount] = useState(0)
@@ -152,6 +166,7 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener('nav-chat', navChat) }
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
+  if (dash === 'cursor') return <CursorDashboard onSwitch={switchDash} />
   return (
     <div className="app">
       <nav className="sidebar">
@@ -171,6 +186,7 @@ export default function App() {
             <h1>{cur.title}</h1>
           </div>
           <div className="topbar-right">
+            <button className="top-chip" onClick={switchDash} style={{ cursor: 'pointer' }} title="switch to the Cursor dashboard (read-only view of your Cursor usage)">⇄ Cursor</button>
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
               style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}

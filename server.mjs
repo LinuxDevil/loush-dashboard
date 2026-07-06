@@ -5,6 +5,8 @@ import os from 'node:os'
 import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
+import mountCursor from './server-cursor.mjs'
+import mountConstitution from './server-constitution.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -16,6 +18,8 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(express.json({ limit: '10mb' }))
+mountCursor(app, { testMcp: (...a) => mcpTest(...a) }) // /api/cursor/* — fully separate Cursor dashboard
+mountConstitution(app) // /api/constitution/* — .wakeel/constitution insights, shared by both dashboards
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
@@ -195,8 +199,8 @@ app.delete('/api/mcp/:name', (req, res) => {
 })
 
 const INIT_MSG = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claude-dashboard', version: '1.0.0' } } }
-app.post('/api/mcp/:name/test', async (req, res) => {
-  const cfg = req.body.config
+// generic JSON-RPC initialize probe — shared by the Claude and Cursor MCP sections
+async function mcpTest(cfg) {
   const t0 = Date.now()
   try {
     if (cfg.url) {
@@ -208,9 +212,9 @@ app.post('/api/mcp/:name/test', async (req, res) => {
       })
       const body = (await r.text()).slice(0, 300)
       // 401 means reachable but needs OAuth — still a live server
-      return res.json({ ok: r.status < 500, status: r.status, ms: Date.now() - t0, detail: body })
+      return { ok: r.status < 500, status: r.status, ms: Date.now() - t0, detail: body }
     }
-    const result = await new Promise(resolve => {
+    return await new Promise(resolve => {
       const child = spawn(cfg.command, cfg.args || [], { env: { ...process.env, ...(cfg.env || {}) }, shell: WIN })
       let out = '', err = '', settled = false
       const done = r => { if (settled) return; settled = true; try { child.kill() } catch {}; resolve(r) }
@@ -229,11 +233,11 @@ app.post('/api/mcp/:name/test', async (req, res) => {
       child.on('exit', c => { if (c) { clearTimeout(timer); done({ ok: false, error: `exited with code ${c}`, stderr: err.slice(-300) }) } })
       child.stdin.write(JSON.stringify(INIT_MSG) + '\n')
     })
-    res.json(result)
   } catch (e) {
-    res.json({ ok: false, error: e.message, ms: Date.now() - t0 })
+    return { ok: false, error: e.message, ms: Date.now() - t0 }
   }
-})
+}
+app.post('/api/mcp/:name/test', async (req, res) => res.json(await mcpTest(req.body.config)))
 
 // ---------- hooks + settings ----------
 const SETTINGS_FILES = {
@@ -733,6 +737,70 @@ app.delete('/api/chat/:id', (req, res) => {
   if (chat) { try { chat.child.kill() } catch {}; chats.delete(req.params.id) }
   res.json({ ok: true })
 })
+
+// ---------- quick actions: one-shot `claude -p "/cmd"` runs against a chosen project ----------
+// Reuses the chats map + /api/chat/:id/events SSE for streaming; a run is just a chat that
+// exits after one result. Analysis is derived from the run's own stream-json events.
+function analyzeRun(events) {
+  const a = { tools: {}, files: new Set(), skills: new Set(), mcp: new Set(), agents: new Set(), cost: null, durationMs: null, turns: null, tokens: null }
+  for (const ev of events) {
+    if (ev.type === 'result') { a.cost = ev.total_cost_usd ?? a.cost; a.durationMs = ev.duration_ms ?? a.durationMs; a.turns = ev.num_turns ?? a.turns; a.tokens = ev.usage || a.tokens }
+    if (ev.type !== 'assistant' || !Array.isArray(ev.message?.content)) continue
+    for (const c of ev.message.content) {
+      if (c.type !== 'tool_use') continue
+      a.tools[c.name] = (a.tools[c.name] || 0) + 1
+      if (c.name.startsWith('mcp__')) a.mcp.add(c.name.split('__')[1])
+      if (c.name === 'Skill' && c.input?.skill) a.skills.add(c.input.skill)
+      if ((c.name === 'Task' || c.name === 'Agent') && c.input?.subagent_type) a.agents.add(c.input.subagent_type)
+      if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(c.name) && c.input?.file_path) a.files.add(c.input.file_path)
+    }
+  }
+  return { ...a, files: [...a.files], skills: [...a.skills], mcp: [...a.mcp], agents: [...a.agents] }
+}
+app.post('/api/actions/run', (req, res) => {
+  const { cmd, cwd, args, runner } = req.body
+  const isCursor = runner === 'cursor'
+  if (!cmd || (!isCursor && !String(cmd).startsWith('/'))) return res.status(400).json({ error: isCursor ? 'prompt required' : 'cmd must be a /slash-command' })
+  if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
+  if ([...chats.values()].filter(c => c.alive && c.action).length >= 3) return res.status(429).json({ error: 'max 3 concurrent action runs' }) // ponytail: global cap
+  const prompt = args ? `${cmd} ${args}` : cmd
+  const child = isCursor
+    ? spawn('cursor-agent', ['-p', prompt, '--output-format', 'stream-json', '-f'], { cwd, env: process.env, shell: WIN })
+    : spawn('claude', ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'], { cwd, env: process.env, shell: WIN })
+  const id = Math.random().toString(36).slice(2, 10)
+  const chat = { child, cwd, sessionId: null, alive: true, events: [], listeners: new Set(), action: { cmd, args: args || '', runner: runner || 'claude', startedAt: Date.now() } }
+  chats.set(id, chat)
+  let buf = ''
+  child.stdout.on('data', d => {
+    buf += d
+    const lines = buf.split('\n')
+    buf = lines.pop()
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        const ev = JSON.parse(line)
+        if (ev.type === 'system' && ev.subtype === 'init') chat.sessionId = ev.session_id
+        chatBroadcast(chat, ev)
+      } catch {}
+    }
+  })
+  child.stderr.on('data', d => chatBroadcast(chat, { type: 'stderr', text: String(d).slice(0, 2000) }))
+  const finish = code => {
+    if (!chat.alive) return
+    chat.alive = false
+    chat.action.endedAt = Date.now()
+    chat.action.exitCode = code
+    chat.analysis = analyzeRun(chat.events)
+    chatBroadcast(chat, { type: 'closed', code })
+  }
+  child.on('error', e => { chatBroadcast(chat, { type: 'stderr', text: e.message }); finish(-1) })
+  child.on('exit', finish)
+  res.json({ id })
+})
+app.get('/api/actions', (req, res) =>
+  res.json([...chats.entries()].filter(([, c]) => c.action).map(([id, c]) => ({
+    id, cwd: c.cwd, alive: c.alive, sessionId: c.sessionId, ...c.action, analysis: c.analysis || null,
+  })).sort((a, b) => b.startedAt - a.startedAt)))
 // past sessions on disk for a project (for --resume)
 app.get('/api/chat/sessions', (req, res) => {
   const dir = path.join(CLAUDE, 'projects', String(req.query.cwd || '').replace(/[\\/:._]/g, '-'))
@@ -2107,6 +2175,10 @@ function inboxItems() {
   for (const a of alerts) items.push({ key: 'cost:' + a.text.slice(0, 40), kind: 'budget', severity: a.level, text: a.text, ts: Date.now(), section: 'reliability' })
   for (const r of evalRuns().slice(-10)) if (r.passRate < 1) items.push({ key: 'eval:' + r.id, kind: 'eval', severity: r.passRate === 0 ? 'error' : 'warning', text: `eval run at ${Math.round(r.passRate * 100)}% pass (${r.scope === 'global' ? 'global' : path.basename(r.scope)})`, ts: r.ts, section: 'reliability' })
   for (const [id, c] of chats) {
+    if (c.action) { // quick-action runs: completed = info, failed = error
+      if (!c.alive) items.push({ key: 'action:' + id, kind: 'action', severity: c.action.exitCode === 0 ? 'info' : 'error', text: `${c.action.cmd} in ${path.basename(c.cwd)} ${c.action.exitCode === 0 ? 'finished' : `failed (exit ${c.action.exitCode})`}${c.analysis?.cost ? ` · $${c.analysis.cost.toFixed(3)}` : ''}`, ts: c.action.endedAt, section: 'workflows' })
+      continue
+    }
     if (!c.alive) continue
     const lastEv = c.events[c.events.length - 1]
     if (lastEv && lastEv.type === 'result') items.push({ key: 'chat:' + id, kind: 'session', severity: 'info', text: `session in ${path.basename(c.cwd)} is waiting for your input`, ts: Date.now(), section: 'chat' })
