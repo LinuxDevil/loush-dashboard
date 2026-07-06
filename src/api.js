@@ -5,12 +5,19 @@ export const forceFresh = () => { freshUntil = Date.now() + 3000 }
 
 async function req(url, opts) {
   if (!opts && Date.now() < freshUntil) url += (url.includes('?') ? '&' : '?') + 'fresh=1'
-  const r = await fetch(url, opts && { ...opts, headers: { 'content-type': 'application/json' }, body: opts.body && JSON.stringify(opts.body) })
-  const cachedAt = Number(r.headers.get('x-cached-at'))
-  if (cachedAt) window.dispatchEvent(new CustomEvent('api-cache', { detail: { url, at: cachedAt } }))
-  const j = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(j.error || r.statusText)
-  return j
+  try {
+    const r = await fetch(url, opts && { ...opts, headers: { 'content-type': 'application/json' }, body: opts.body && JSON.stringify(opts.body) })
+    const cachedAt = Number(r.headers.get('x-cached-at'))
+    if (cachedAt) window.dispatchEvent(new CustomEvent('api-cache', { detail: { url, at: cachedAt } }))
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(j.error || r.statusText)
+    return j
+  } catch (e) {
+    // Most GET callers swallow errors (.catch(()=>{})) and get stuck on a skeleton. Surface one
+    // global toast so a failed read is at least visible. Mutations alert() themselves — skip those.
+    if (!opts) window.dispatchEvent(new CustomEvent('api-error', { detail: { url, message: e.message } }))
+    throw e
+  }
 }
 export const api = {
   get: url => req(url),

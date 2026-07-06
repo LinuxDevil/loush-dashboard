@@ -2129,6 +2129,13 @@ function inboxItems() {
       }
     }
   } catch {}
+  try { // loush runs: failed = error, blocked/awaiting-approval = warning (section: runs)
+    for (const r of scanRuns()) {
+      if (r.status === 'failed') items.push({ key: 'run:fail:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'error', text: `loush ${r.flow || 'run'} for ${r.ticket} failed (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
+      else if (r.awaitingApproval) items.push({ key: 'run:appr:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} awaits approval (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
+      else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
+    }
+  } catch {}
   const done = readMeta().inboxDone || {}
   const sev = { error: 0, warning: 1, info: 2 }
   return items.map(i => ({ ...i, done: !!done[i.key] })).sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
@@ -3300,8 +3307,19 @@ function loushSafe(proj, ...rel) { // validate proj is a known repo and the path
   if (p !== base && !p.startsWith(base + path.sep)) throw Object.assign(new Error('path escapes .loush'), { status: 403 })
   return p
 }
+const eventsCache = new Map() // file -> {mtime, size, events} — the runs list polls every 5s; skip re-parsing unchanged files
 function readEvents(file) {
-  try { return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) } catch { return [] }
+  let st; try { st = fs.statSync(file) } catch { return [] }
+  const c = eventsCache.get(file)
+  if (c && c.mtime === st.mtimeMs && c.size === st.size) return c.events
+  let events = []
+  try {
+    events = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)
+      .map((l, i) => { try { const e = JSON.parse(l); if (e.seq == null) e.seq = i + 1; return e } catch { return null } }) // fallback seq so a missing-seq file still tails
+      .filter(Boolean)
+  } catch { return [] }
+  eventsCache.set(file, { mtime: st.mtimeMs, size: st.size, events })
+  return events
 }
 function runDir(proj, ticket) { // a run lives at .loush/<ticket>/ or (legacy single-run) .loush/ itself
   const base = loushSafe(proj)

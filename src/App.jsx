@@ -59,7 +59,7 @@ const SECTIONS = [
     ]} />
   ) },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
-  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Prompt Studio', el: <PromptStudio /> },
+  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
 ]
@@ -95,10 +95,21 @@ export default function App() {
   const [stale, setStale] = useState(null) // oldest x-cached-at seen for the current section's data
   const [tick, setTick] = useState(0)
   const [visited, setVisited] = useState({ overview: true }) // keep-alive: sections stay mounted (hidden) once opened, so their state survives switching
+  const [toasts, setToasts] = useState([]) // failed GET surfacing — sections swallow errors, this makes them visible
   useEffect(() => {
     const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
+    let lastAt = 0, lastUrl = ''
+    const onErr = e => {
+      const now = Date.now()
+      if (e.detail.url === lastUrl && now - lastAt < 4000) return // dedupe a polling endpoint that keeps failing
+      lastAt = now; lastUrl = e.detail.url
+      const id = now + Math.random()
+      setToasts(t => [...t.slice(-3), { id, ...e.detail }])
+      setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 7000)
+    }
     window.addEventListener('api-cache', onCache)
-    return () => window.removeEventListener('api-cache', onCache)
+    window.addEventListener('api-error', onErr)
+    return () => { window.removeEventListener('api-cache', onCache); window.removeEventListener('api-error', onErr) }
   }, [])
   useEffect(() => setStale(null), [section, tick])
   const refresh = () => { forceFresh(); setStale(null); setVisited({ [section]: true }); setTick(t => t + 1) } // remounts current section with fresh=1; others refetch on next visit
@@ -180,6 +191,17 @@ export default function App() {
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
+          {toasts.map(t => (
+            <div key={t.id} onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}
+              style={{ cursor: 'pointer', background: 'rgba(40,20,20,0.95)', border: '1px solid rgba(229,72,77,0.4)', borderRadius: 10, padding: '10px 14px', font: "400 11px 'IBM Plex Mono', monospace", color: '#f0d0d0', boxShadow: '0 6px 24px rgba(0,0,0,0.4)' }}>
+              <div style={{ color: '#e5484d', fontWeight: 600 }}>request failed · click to dismiss</div>
+              <div style={{ color: '#b0a69e', marginTop: 3 }}>{t.message} <span style={{ color: '#7a716a' }}>({String(t.url).split('?')[0]})</span></div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

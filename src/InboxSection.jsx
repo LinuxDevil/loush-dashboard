@@ -7,7 +7,7 @@ const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
 const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
 const SEV = { error: '#e5484d', warning: '#e5a03a', info: '#8a807a' }
-const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒' }
+const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒', board: '▦', run: '⟳' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 
 export default function InboxSection({ onNav }) {

@@ -7,19 +7,18 @@ export function deriveRunMetrics(events) {
   const term = [...events].reverse().find(e => e.type === 'run.completed' || e.type === 'run.failed')
   const t0 = at(events[0])
   const tEnd = term ? at(term) : at(events[events.length - 1])
-  const openByLabel = {}
+  const openByLabel = {} // label -> queue of open step.started (handles repeated labels without orphaning)
   const steps = []
   let toolCalls = 0
   for (const e of events) {
     if (e.type === 'tool.call') toolCalls++
-    else if (e.type === 'step.started') openByLabel[e.data?.label] = e
+    else if (e.type === 'step.started') (openByLabel[e.data?.label] ||= []).push(e)
     else if (e.type === 'step.completed') {
-      const s = openByLabel[e.data?.label]
+      const s = openByLabel[e.data?.label]?.shift()
       steps.push({ label: e.data?.label || 'step', agent: e.data?.agent || s?.data?.agent || null, ms: s ? at(e) - at(s) : null, status: e.data?.status || 'passed', at: at(e), decision: e.data?.decision, findings: e.data?.findings })
-      delete openByLabel[e.data?.label]
     }
   }
-  for (const label of Object.keys(openByLabel)) steps.push({ label, agent: openByLabel[label].data?.agent || null, ms: null, status: 'running', at: at(openByLabel[label]) })
+  for (const q of Object.values(openByLabel)) for (const s of q) steps.push({ label: s.data?.label || 'step', agent: s.data?.agent || null, ms: null, status: 'running', at: at(s) })
   steps.sort((a, b) => a.at - b.at)
   const status = term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed') : 'running'
   return { status, startedAt: t0, endedAt: term ? tEnd : null, durationMs: tEnd - t0, steps, toolCalls }

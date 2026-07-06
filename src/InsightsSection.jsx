@@ -165,7 +165,7 @@ function Dupes() {
   }
   const toPromptStudio = async c => {
     await api.post('/api/prompts', { title: c.canonical.slice(0, 60), tags: ['from-dupes'], inputs: [{ type: 'text', value: c.canonical }] })
-      .then(() => alert('sent to Prompt Studio')).catch(e => alert(e.message))
+      .then(() => alert('sent to Authoring')).catch(e => alert(e.message))
   }
 
   return (
