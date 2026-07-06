@@ -1,0 +1,38 @@
+- generic [ref=f1e5]:
+  - generic [ref=f1e6]:
+    - img [ref=f1e8]
+    - generic [ref=f1e10]:
+      - generic [ref=f1e11]: Engineering Metrics
+      - generic [ref=f1e12]: —
+  - navigation [ref=f1e13]:
+    - button "▦ Overview" [ref=f1e14] [cursor=pointer]:
+      - generic [ref=f1e15]: ▦
+      - text: Overview
+    - button "◍ Members" [ref=f1e16] [cursor=pointer]:
+      - generic [ref=f1e17]: ◍
+      - text: Members
+    - button "⟨⟩ Review" [ref=f1e18] [cursor=pointer]:
+      - generic [ref=f1e19]: ⟨⟩
+      - text: Review
+    - button "◎ OKRs" [ref=f1e20] [cursor=pointer]:
+      - generic [ref=f1e21]: ◎
+      - text: OKRs
+  - generic [ref=f1e22]:
+    - generic "back to Claude Code dashboard" [ref=f1e23] [cursor=pointer]: ⇄
+    - button "…" [ref=f1e24] [cursor=pointer]
+    - combobox [ref=f1e25] [cursor=pointer]:
+      - option "January"
+      - option "February"
+      - option "March"
+      - option "April"
+      - option "May"
+      - option "June"
+      - option "July" [selected]
+      - option "August"
+      - option "September"
+      - option "October"
+      - option "November"
+      - option "December"
+    - combobox [ref=f1e26] [cursor=pointer]:
+      - option "2026" [selected]
+      - option "2025"

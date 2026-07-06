@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import mountCursor from './server-cursor.mjs'
 import mountConstitution from './server-constitution.mjs'
+import mountAtoms from './server-atoms.mjs'
+import mountEng from './server-eng.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -20,6 +22,8 @@ const app = express()
 app.use(express.json({ limit: '10mb' }))
 mountCursor(app, { testMcp: (...a) => mcpTest(...a) }) // /api/cursor/* — fully separate Cursor dashboard
 mountConstitution(app) // /api/constitution/* — .wakeel/constitution insights, shared by both dashboards
+mountAtoms(app) // /api/atoms/* — feature catalog + grounded ask-the-project search, shared by both dashboards
+mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.

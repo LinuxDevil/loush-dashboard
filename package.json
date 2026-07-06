@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node --watch server.mjs\" \"vite --open\"",
+    "atoms:index": "node atoms/ingest.mjs",
     "start": "npm run dev"
   },
   "dependencies": {

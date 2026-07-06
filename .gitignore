@@ -1,1 +1,9 @@
 node_modules
+atoms/index.json
+atoms/reviewed.json
+
+# Engineering Metrics dashboard JIRA creds (never commit)
+.eng.local.json
+config.json
+projects.json
+bug-ownership.json

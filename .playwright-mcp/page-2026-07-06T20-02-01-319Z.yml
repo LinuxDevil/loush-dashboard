@@ -1,0 +1,188 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e5]:
+    - generic [ref=f1e6]:
+      - img [ref=f1e8]
+      - generic [ref=f1e10]:
+        - generic [ref=f1e11]: Engineering Metrics
+        - generic [ref=f1e12]: Flight Web
+    - navigation [ref=f1e13]:
+      - button "▦ Overview" [ref=f1e14] [cursor=pointer]:
+        - generic [ref=f1e15]: ▦
+        - text: Overview
+      - button "◍ Members" [ref=f1e16] [cursor=pointer]:
+        - generic [ref=f1e17]: ◍
+        - text: Members
+      - button "⟨⟩ Review" [ref=f1e18] [cursor=pointer]:
+        - generic [ref=f1e19]: ⟨⟩
+        - text: Review
+      - button "◎ OKRs" [active] [ref=f1e20] [cursor=pointer]:
+        - generic [ref=f1e21]: ◎
+        - text: OKRs
+    - generic [ref=f1e22]:
+      - generic "back to Claude Code dashboard" [ref=f1e23] [cursor=pointer]: AIR ↔ ct-web-flights
+      - button "↻" [ref=f1e32] [cursor=pointer]
+      - combobox [ref=f1e25] [cursor=pointer]:
+        - option "January"
+        - option "February"
+        - option "March"
+        - option "April"
+        - option "May"
+        - option "June"
+        - option "July" [selected]
+        - option "August"
+        - option "September"
+        - option "October"
+        - option "November"
+        - option "December"
+      - combobox [ref=f1e26] [cursor=pointer]:
+        - option "2026" [selected]
+        - option "2025"
+  - generic [ref=f1e3904]:
+    - generic [ref=f1e3905]:
+      - generic [ref=f1e3906]:
+        - generic [ref=f1e3907]: Flight Web · Web Engineering
+        - heading "Objectives & Key Results" [level=1] [ref=f1e3908]
+      - generic [ref=f1e3909]:
+        - button "Q3 2026" [ref=f1e3910] [cursor=pointer]
+        - button "Q4 2026" [ref=f1e3911] [cursor=pointer]
+    - generic [ref=f1e3912]:
+      - generic [ref=f1e3913]:
+        - generic [ref=f1e3914]:
+          - generic [ref=f1e3915]:
+            - generic [ref=f1e3916]: ◎
+            - generic [ref=f1e3917]: Cut engineering effort per feature
+          - generic [ref=f1e3918]: Reduce hands-on development effort to ship a feature, without sacrificing quality.
+          - generic [ref=f1e3920]: Flight Web
+        - generic [ref=f1e3921]:
+          - generic [ref=f1e3922]:
+            - generic [ref=f1e3923]: 66%
+            - generic [ref=f1e3924]: objective
+          - img [ref=f1e3925]
+      - generic [ref=f1e3928]:
+        - generic [ref=f1e3929]:
+          - generic [ref=f1e3930]:
+            - generic [ref=f1e3931]:
+              - generic [ref=f1e3932]:
+                - generic [ref=f1e3933]: Reduce Avg Development Time 40% vs baseline
+                - generic [ref=f1e3934]: AUTO
+              - generic [ref=f1e3935]: Days in In Progress · vs earliest-month baseline (1.1d)
+            - generic [ref=f1e3936]:
+              - text: 0.7d
+              - generic [ref=f1e3937]: / 0.7d
+          - generic [ref=f1e3941]: 98%
+        - generic [ref=f1e3942]:
+          - generic [ref=f1e3943]:
+            - generic [ref=f1e3944]:
+              - generic [ref=f1e3945]:
+                - generic [ref=f1e3946]: Estimation accuracy above 85%
+                - generic [ref=f1e3947]: AUTO
+              - generic [ref=f1e3948]: Changelog est vs actual · no data yet
+            - generic [ref=f1e3949]:
+              - text: —
+              - generic [ref=f1e3950]: / 85%
+          - generic [ref=f1e3953]: 0%
+        - generic [ref=f1e3954]:
+          - generic [ref=f1e3955]:
+            - generic [ref=f1e3956]:
+              - generic [ref=f1e3957]:
+                - generic [ref=f1e3958]: Code review time under 1 day
+                - generic [ref=f1e3959]: AUTO
+              - generic [ref=f1e3960]: Days in In Code Review
+            - generic [ref=f1e3961]:
+              - text: 0.0d
+              - generic [ref=f1e3962]: / 1.0d
+          - generic [ref=f1e3966]: 100%
+    - generic [ref=f1e3967]:
+      - generic [ref=f1e3968]:
+        - generic [ref=f1e3969]:
+          - generic [ref=f1e3970]:
+            - generic [ref=f1e3971]: ◎
+            - generic [ref=f1e3972]: Ship faster with fewer QA loops
+          - generic [ref=f1e3973]: Tighten the QA feedback loop so tickets spend less time bouncing between QA states.
+          - generic [ref=f1e3975]: Flight Web
+        - generic [ref=f1e3976]:
+          - generic [ref=f1e3977]:
+            - generic [ref=f1e3978]: 78%
+            - generic [ref=f1e3979]: objective
+          - img [ref=f1e3980]
+      - generic [ref=f1e3983]:
+        - generic [ref=f1e3984]:
+          - generic [ref=f1e3985]:
+            - generic [ref=f1e3986]:
+              - generic [ref=f1e3987]:
+                - generic [ref=f1e3988]: Avg QA Cycles under 1.0
+                - generic [ref=f1e3989]: AUTO
+              - generic [ref=f1e3990]: In QA (Dev) / QA Blocked loops
+            - generic [ref=f1e3991]:
+              - text: "0.3"
+              - generic [ref=f1e3992]: / 1.0
+          - generic [ref=f1e3996]: 100%
+        - generic [ref=f1e3997]:
+          - generic [ref=f1e3998]:
+            - generic [ref=f1e3999]:
+              - generic [ref=f1e4000]:
+                - generic [ref=f1e4001]: Zero stale statuses
+                - generic [ref=f1e4002]: AUTO
+              - generic [ref=f1e4003]: JIRA status vs merged-PR cross-check
+            - generic [ref=f1e4004]:
+              - text: "2"
+              - generic [ref=f1e4005]: / 0
+          - generic [ref=f1e4009]: 34%
+        - generic [ref=f1e4010]:
+          - generic [ref=f1e4011]:
+            - generic [ref=f1e4012]:
+              - generic [ref=f1e4013]:
+                - generic [ref=f1e4014]: Cycle time under 4 days
+                - generic [ref=f1e4015]: AUTO
+              - generic [ref=f1e4016]: In Progress → Live, avg shipped
+            - generic [ref=f1e4017]:
+              - text: 1.5d
+              - generic [ref=f1e4018]: / 4.0d
+          - generic [ref=f1e4022]: 100%
+    - generic [ref=f1e4023]:
+      - generic [ref=f1e4024]:
+        - generic [ref=f1e4025]:
+          - generic [ref=f1e4026]:
+            - generic [ref=f1e4027]: ◎
+            - generic [ref=f1e4028]: Tighten the PR feedback loop
+          - generic [ref=f1e4029]: Get PRs reviewed and merged faster, with fewer rework rounds.
+          - generic [ref=f1e4031]: Flight Web
+        - generic [ref=f1e4032]:
+          - generic [ref=f1e4033]:
+            - generic [ref=f1e4034]: 53%
+            - generic [ref=f1e4035]: objective
+          - img [ref=f1e4036]
+      - generic [ref=f1e4039]:
+        - generic [ref=f1e4040]:
+          - generic [ref=f1e4041]:
+            - generic [ref=f1e4042]:
+              - generic [ref=f1e4043]:
+                - generic [ref=f1e4044]: Time to first review under 1 day
+                - generic [ref=f1e4045]: AUTO
+              - generic [ref=f1e4046]: GitHub · opened → first review
+            - generic [ref=f1e4047]:
+              - text: 2.8d
+              - generic [ref=f1e4048]: / 1.0d
+          - generic [ref=f1e4052]: 36%
+        - generic [ref=f1e4053]:
+          - generic [ref=f1e4054]:
+            - generic [ref=f1e4055]:
+              - generic [ref=f1e4056]:
+                - generic [ref=f1e4057]: PR merge time under 3 days
+                - generic [ref=f1e4058]: AUTO
+              - generic [ref=f1e4059]: GitHub · opened → merged
+            - generic [ref=f1e4060]:
+              - text: 12.9d
+              - generic [ref=f1e4061]: / 3.0d
+          - generic [ref=f1e4065]: 23%
+        - generic [ref=f1e4066]:
+          - generic [ref=f1e4067]:
+            - generic [ref=f1e4068]:
+              - generic [ref=f1e4069]:
+                - generic [ref=f1e4070]: Rework rate under 15%
+                - generic [ref=f1e4071]: AUTO
+              - generic [ref=f1e4072]: Issues re-entering In Progress / Reopen
+            - generic [ref=f1e4073]:
+              - text: 15%
+              - generic [ref=f1e4074]: / 15%
+          - generic [ref=f1e4078]: 100%

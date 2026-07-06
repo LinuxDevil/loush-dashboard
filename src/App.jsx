@@ -22,6 +22,7 @@ import QualitySection from './QualitySection.jsx'
 import BoardSection from './BoardSection.jsx'
 import QuickActions from './QuickActions.jsx'
 import CursorDashboard from './CursorDashboard.jsx'
+import EngDashboard from './EngDashboard.jsx'
 import ConstitutionSection from './ConstitutionSection.jsx'
 import Palette from './Palette.jsx'
 import { api, forceFresh } from './api.js'
@@ -96,13 +97,13 @@ function SidebarFoot() {
 export default function App() {
   // two dashboards, one toggle, zero mixing: ?dash=cursor renders the Cursor shell instead
   const [dash, setDash] = useState(() => new URLSearchParams(window.location.search).get('dash') || 'claude')
-  const switchDash = () => {
-    const next = dash === 'cursor' ? 'claude' : 'cursor'
+  const goDash = (name) => {
     const q = new URLSearchParams(window.location.search)
-    next === 'cursor' ? q.set('dash', 'cursor') : q.delete('dash')
+    name === 'claude' ? q.delete('dash') : q.set('dash', name)
     history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
-    setDash(next)
+    setDash(name)
   }
+  const switchDash = () => goDash(dash === 'cursor' ? 'claude' : 'cursor')
   const [section, setSection] = useState('overview')
   const [chip, setChip] = useState(null)
   const [inboxCount, setInboxCount] = useState(0)
@@ -167,6 +168,7 @@ export default function App() {
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
   if (dash === 'cursor') return <CursorDashboard onSwitch={switchDash} />
+  if (dash === 'eng') return <EngDashboard onExit={() => goDash('claude')} />
   return (
     <div className="app">
       <nav className="sidebar">
@@ -187,6 +189,7 @@ export default function App() {
           </div>
           <div className="topbar-right">
             <button className="top-chip" onClick={switchDash} style={{ cursor: 'pointer' }} title="switch to the Cursor dashboard (read-only view of your Cursor usage)">⇄ Cursor</button>
+            <button className="top-chip" onClick={() => goDash('eng')} style={{ cursor: 'pointer' }} title="Engineering Metrics — JIRA changelog + GitHub PRs for the Flight team">⇄ Eng Metrics</button>
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
               style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}

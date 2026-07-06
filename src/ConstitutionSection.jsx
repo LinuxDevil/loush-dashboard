@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
 import { api, tildify } from './api.js'
+import AtomsSection from './AtomsSection.jsx'
+import { StackedBar, Bars, DataTable, Facts } from './charts.jsx'
 
 // Constitution — .wakeel/constitution knowledge-base explorer. Shared by both dashboards;
 // pass accent to match the shell (claude amber vs cursor blue).
@@ -167,41 +169,37 @@ function ArtifactBrowser({ kind, data, accent, repo }) {
           <span style={{ font: `600 15px ${HEAD}`, color: KIND_COLOR[a.kind] }}>{a.name}</span>
           <Chip text={`${a.atoms} atoms`} color={accent} />
         </div>
-        {(a.description || a.whenToUse) && (
-          <div style={{ ...PANEL, display: 'grid', gap: 6 }}>
-            {a.description && <div style={{ font: `400 12.5px "IBM Plex Sans", sans-serif`, color: '#d8cfc7' }}>{a.description}</div>}
-            {a.whenToUse && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}><span style={{ color: accent }}>when to use:</span> {a.whenToUse}</div>}
-          </div>
-        )}
-        {a.paths.length > 0 && (
-          <div style={PANEL}>
-            <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 6 }}>Governed paths — loads when working on</div>
-            {a.paths.map(p => <div key={p} style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', padding: '2px 0', overflowWrap: 'anywhere' }}>{p}</div>)}
-          </div>
-        )}
-        <div style={PANEL}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 6 }}>Cited code files ({files.length})</div>
-          {files.map(({ file, n }) => (
-            <div key={file} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-              <span style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', flex: 1, overflowWrap: 'anywhere' }}>{file}</span>
-              <span style={{ font: `400 10.5px ${MONO}`, color: accent }}>{n} cite{n > 1 ? 's' : ''}</span>
-              <span style={{ font: `400 10px ${MONO}`, color: '#5c554f' }}>{(artsOf.get(file) || []).length - 1} others cite it</span>
+        <div style={{ ...PANEL, display: 'grid', gap: 10 }}>
+          {a.description && <div style={{ font: `400 12.5px "IBM Plex Sans", sans-serif`, color: '#d8cfc7' }}>{a.description}</div>}
+          <Facts items={[
+            { label: 'atoms', value: a.atoms, color: accent },
+            { label: 'governed paths', value: a.paths.length },
+            { label: 'cited files', value: files.length },
+            { label: 'connected artifacts', value: conns.length },
+          ]} />
+          {a.whenToUse && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}><span style={{ color: accent }}>when to use:</span> {a.whenToUse}</div>}
+          {a.paths.length > 0 && (
+            <div>
+              <div style={{ font: `600 11px ${HEAD}`, color: '#e5dbd2', marginBottom: 5 }}>Governed paths — loads when working on</div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{a.paths.map(p => <Chip key={p} text={p} color="#8a817a" />)}</div>
             </div>
-          ))}
-          {files.length === 0 && <div style={{ font: `400 11.5px ${MONO}`, color: '#7a716a' }}>no code citations</div>}
+          )}
         </div>
         <div style={PANEL}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 6 }}>Connected artifacts — share cited files</div>
-          {conns.map(({ other, files: shared }) => (
-            <div key={other} style={{ padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                <span onClick={() => openArtifact(other)} style={{ font: `500 11.5px ${MONO}`, color: KIND_COLOR[other.split(':')[0]], cursor: 'pointer', textDecoration: 'underline dotted' }}>{other}</span>
-                <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginLeft: 'auto' }}>{shared.length} shared file{shared.length > 1 ? 's' : ''}</span>
-              </div>
-              <div style={{ font: `400 10px ${MONO}`, color: '#5c554f', overflowWrap: 'anywhere' }}>{shared.slice(0, 4).map(f => f.split('/').pop()).join(' · ')}{shared.length > 4 ? ` · +${shared.length - 4}` : ''}</div>
-            </div>
-          ))}
-          {conns.length === 0 && <div style={{ font: `400 11.5px ${MONO}`, color: '#7a716a' }}>no shared files with other artifacts</div>}
+          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Cited code files ({files.length})</div>
+          <DataTable maxHeight="45vh" sort={{ key: 'n', dir: -1 }} columns={[
+            { key: 'file', label: 'file', render: r => <span style={{ overflowWrap: 'anywhere' }}>{r.file}</span> },
+            { key: 'n', label: 'cites', width: 70, align: 'right', render: r => <span style={{ color: accent, font: `600 11px ${MONO}` }}>{r.n}</span> },
+            { key: 'others', label: 'others citing it', width: 120, align: 'right', sortValue: r => r.others, render: r => <span style={{ color: '#7a716a' }}>{r.others}</span> },
+          ]} rows={files.map(({ file, n }) => ({ file, n, others: (artsOf.get(file) || []).length - 1, __key: file }))} />
+        </div>
+        <div style={PANEL}>
+          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Connected artifacts — share cited files (click to open)</div>
+          <DataTable maxHeight="40vh" sort={{ key: 'shared', dir: -1 }} onRowClick={r => openArtifact(r.other)} columns={[
+            { key: 'other', label: 'artifact', width: 240, render: r => <span style={{ color: KIND_COLOR[r.other.split(':')[0]], textDecoration: 'underline dotted' }}>{r.other}</span> },
+            { key: 'shared', label: 'shared', width: 70, align: 'right', sortValue: r => r.files.length, render: r => <span style={{ color: accent, font: `600 11px ${MONO}` }}>{r.files.length}</span> },
+            { key: 'files', label: 'shared files', render: r => <span style={{ color: '#5c554f', font: `400 10px ${MONO}`, overflowWrap: 'anywhere' }}>{r.files.slice(0, 5).map(f => f.split('/').pop()).join(' · ')}{r.files.length > 5 ? ` · +${r.files.length - 5}` : ''}</span> },
+          ]} rows={conns.map(({ other, files: shared }) => ({ other, files: shared, __key: other }))} />
         </div>
         <details style={PANEL}>
           <summary style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', cursor: 'pointer' }}>Markdown source</summary>
@@ -214,37 +212,37 @@ function ArtifactBrowser({ kind, data, accent, repo }) {
   return (
     <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
       <div style={PANEL}>
-        {rows.map(a => (
-          <div key={a.label} onClick={() => openArtifact(a.label)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '7px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-            <span style={{ font: `500 12.5px ${MONO}`, color: KIND_COLOR[kind], whiteSpace: 'nowrap' }}>{a.name}</span>
-            <span style={{ font: `400 11px "IBM Plex Sans", sans-serif`, color: '#7a716a', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.description}</span>
-            <span style={{ font: `400 10.5px ${MONO}`, color: accent }}>{a.atoms} atoms</span>
-            <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{a.paths.length} paths · {(filesOf.get(a.label) || []).length} files</span>
-          </div>
-        ))}
-        {rows.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>none</div>}
+        <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Atoms per {kind} — click a bar to open</div>
+        <Bars color={KIND_COLOR[kind]} onClick={it => openArtifact(`${kind}:${it.label}`)}
+          items={[...rows].sort((x, y) => y.atoms - x.atoms).slice(0, 15).map(a => ({ label: a.name, value: a.atoms, hint: a.description }))} />
+        {rows.length > 15 && <div style={{ font: `400 10px ${MONO}`, color: '#7a716a', marginTop: 6 }}>top 15 of {rows.length} — full list below</div>}
+      </div>
+      <div style={PANEL}>
+        <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>All {KIND_LABEL[kind]} ({rows.length}) — click to open</div>
+        <DataTable maxHeight="55vh" onRowClick={r => openArtifact(r.label)} columns={[
+          { key: 'name', label: 'name', width: 210, render: r => <span style={{ color: KIND_COLOR[kind], font: `500 11.5px ${MONO}` }}>{r.name}</span> },
+          { key: 'description', label: 'what it covers', render: r => <span style={{ font: `400 11px "IBM Plex Sans", sans-serif`, color: '#9a8f86' }}>{r.description}</span> },
+          { key: 'atoms', label: 'atoms', width: 64, align: 'right', render: r => <span style={{ color: accent, font: `600 11px ${MONO}` }}>{r.atoms}</span> },
+          { key: 'paths', label: 'paths', width: 60, align: 'right', sortValue: r => r.paths.length, render: r => r.paths.length },
+          { key: 'files', label: 'files', width: 60, align: 'right', sortValue: r => (filesOf.get(r.label) || []).length, render: r => (filesOf.get(r.label) || []).length },
+        ]} rows={rows.map(r => ({ ...r, __key: r.label }))} />
       </div>
       {kind === 'workflow' && data.workflowOverlaps.length > 0 && (
         <div style={PANEL}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 6 }}>Overlaps — workflows sharing implementation files</div>
-          {data.workflowOverlaps.map((o, i) => (
-            <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                <span onClick={() => openArtifact('workflow:' + o.a)} style={{ cursor: 'pointer' }}><Chip text={o.a} color={KIND_COLOR.workflow} /></span>
-                <span style={{ color: '#7a716a' }}>↔</span>
-                <span onClick={() => openArtifact('workflow:' + o.b)} style={{ cursor: 'pointer' }}><Chip text={o.b} color={KIND_COLOR.workflow} /></span>
-                <span style={{ font: `700 11px ${MONO}`, color: accent, marginLeft: 'auto' }}>{o.shared.length} shared</span>
-              </div>
-              <div style={{ font: `400 10.5px ${MONO}`, color: '#9a8f86', marginTop: 3 }}>{o.shared.join('  ·  ')}</div>
-            </div>
-          ))}
+          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Overlaps — workflows sharing implementation files</div>
+          <DataTable maxHeight="40vh" sort={{ key: 'n', dir: -1 }} columns={[
+            { key: 'a', label: 'workflow', width: 200, render: o => <span onClick={() => openArtifact('workflow:' + o.a)} style={{ cursor: 'pointer' }}><Chip text={o.a} color={KIND_COLOR.workflow} /></span> },
+            { key: 'b', label: '↔ workflow', width: 200, render: o => <span onClick={() => openArtifact('workflow:' + o.b)} style={{ cursor: 'pointer' }}><Chip text={o.b} color={KIND_COLOR.workflow} /></span> },
+            { key: 'n', label: 'shared', width: 64, align: 'right', sortValue: o => o.shared.length, render: o => <span style={{ color: accent, font: `700 11px ${MONO}` }}>{o.shared.length}</span> },
+            { key: 'shared', label: 'shared files', render: o => <span style={{ color: '#9a8f86', font: `400 10px ${MONO}`, overflowWrap: 'anywhere' }}>{o.shared.map(f => f.split('/').pop()).join(' · ')}</span> },
+          ]} rows={data.workflowOverlaps.map((o, i) => ({ ...o, __key: i }))} />
         </div>
       )}
     </div>
   )
 }
 
-const TABS = ['graph', 'workflows', 'rules', 'skills', 'hot files', 'coverage', 'debt']
+const TABS = ['graph', 'catalog', 'ask', 'triage', 'workflows', 'rules', 'skills', 'hot files', 'coverage', 'debt']
 export default function ConstitutionSection({ accent = '#e5a03a' }) {
   const [repos, setRepos] = useState(null)
   const [repo, setRepo] = useState('')
@@ -304,7 +302,21 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
             {TABS.map(x => <button key={x} className={tab === x ? 'active' : ''} onClick={() => setTab(x)}>{x}</button>)}
           </div>
 
-          {tab === 'graph' && <ForceGraph graph={data.graph} accent={accent} />}
+          {tab === 'graph' && (
+            <>
+              <div style={{ ...PANEL, display: 'grid', gap: 8 }}>
+                <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2' }}>Knowledge base composition — atoms per artifact kind</div>
+                <StackedBar height={12} segments={['workflow', 'rule', 'skill', 'constitution'].map(k => ({
+                  label: k, color: KIND_COLOR[k],
+                  value: data.artifacts.filter(a => a.kind === k).reduce((s, a) => s + a.atoms, 0),
+                }))} />
+              </div>
+              <ForceGraph graph={data.graph} accent={accent} />
+            </>
+          )}
+          {tab === 'catalog' && <AtomsSection view="catalog" repo={repo} accent={accent} />}
+          {tab === 'ask' && <AtomsSection view="ask" repo={repo} accent={accent} />}
+          {tab === 'triage' && <AtomsSection view="triage" repo={repo} accent={accent} />}
           {tab === 'workflows' && <ArtifactBrowser kind="workflow" data={data} accent={accent} repo={repo} />}
           {tab === 'rules' && <ArtifactBrowser kind="rule" data={data} accent={accent} repo={repo} />}
           {tab === 'skills' && <ArtifactBrowser kind="skill" data={data} accent={accent} repo={repo} />}
@@ -312,46 +324,57 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
           {tab === 'hot files' && (
             <div style={PANEL}>
               <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginBottom: 8 }}>files cited by the most artifacts — editing one touches every listed rule/skill/workflow</div>
-              {data.hotFiles.map(f => (
-                <div key={f.file} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', borderBottom: '1px solid rgba(255,255,255,0.04)', flexWrap: 'wrap' }}>
-                  <span style={{ font: `400 11.5px ${MONO}`, color: '#e5dbd2', flex: 1, minWidth: 220, overflowWrap: 'anywhere' }}>{f.file}</span>
-                  <span style={{ font: `700 11px ${MONO}`, color: accent }}>{f.artifacts} artifacts</span>
-                  <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{f.citations} cites</span>
-                  <div style={{ flexBasis: '100%', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {f.citedBy.slice(0, 8).map(a => <Chip key={a} text={a} color={KIND_COLOR[a.split(':')[0]]} />)}
-                    {f.citedBy.length > 8 && <Chip text={`+${f.citedBy.length - 8} more`} />}
-                  </div>
-                </div>
-              ))}
+              <div style={{ marginBottom: 16 }}>
+                <Bars color={accent} height={13}
+                  items={data.hotFiles.slice(0, 12).map(f => ({ label: f.file.split('/').pop(), value: f.artifacts, hint: f.file }))}
+                  valueLabel={v => v + ' art.'} />
+              </div>
+              <DataTable maxHeight="60vh" sort={{ key: 'artifacts', dir: -1 }} columns={[
+                { key: 'file', label: 'file', width: 320, render: f => <span style={{ color: '#e5dbd2', overflowWrap: 'anywhere' }}>{f.file}</span> },
+                { key: 'artifacts', label: 'artifacts', width: 78, align: 'right', render: f => <span style={{ color: accent, font: `700 11px ${MONO}` }}>{f.artifacts}</span> },
+                { key: 'citations', label: 'cites', width: 60, align: 'right', render: f => <span style={{ color: '#7a716a' }}>{f.citations}</span> },
+                {
+                  key: 'citedBy', label: 'cited by', sortValue: f => f.citedBy.length,
+                  render: f => (
+                    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                      {f.citedBy.slice(0, 6).map(a => <Chip key={a} text={a} color={KIND_COLOR[a.split(':')[0]]} />)}
+                      {f.citedBy.length > 6 && <Chip text={`+${f.citedBy.length - 6}`} />}
+                    </span>
+                  ),
+                },
+              ]} rows={data.hotFiles.map(f => ({ ...f, __key: f.file }))} />
             </div>
           )}
 
+          {tab === 'coverage' && <AtomsSection view="gaps" repo={repo} accent={accent} />}
           {tab === 'coverage' && (
             <div style={PANEL}>
               <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginBottom: 8 }}>which governed path is watched by which artifacts — a source dir absent here has no path-scoped guidance</div>
-              {data.coverage.map(c => (
-                <div key={c.path} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '5px 4px', borderBottom: '1px solid rgba(255,255,255,0.03)', flexWrap: 'wrap' }}>
-                  <span style={{ font: `400 11.5px ${MONO}`, color: '#e5dbd2', minWidth: 280, flex: 1, overflowWrap: 'anywhere' }}>{c.path}</span>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {c.artifacts.map(a => <Chip key={a} text={a} color={KIND_COLOR[a.split(':')[0]]} />)}
-                  </div>
-                </div>
-              ))}
+              <DataTable maxHeight="60vh" columns={[
+                { key: 'path', label: 'governed path', width: 380, render: c => <span style={{ color: '#e5dbd2', overflowWrap: 'anywhere' }}>{c.path}</span> },
+                { key: 'n', label: 'artifacts', width: 78, align: 'right', sortValue: c => c.artifacts.length, render: c => <span style={{ color: accent, font: `600 11px ${MONO}` }}>{c.artifacts.length}</span> },
+                {
+                  key: 'artifacts', label: 'watched by', sortValue: c => c.artifacts.join(','),
+                  render: c => <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>{c.artifacts.map(a => <Chip key={a} text={a} color={KIND_COLOR[a.split(':')[0]]} />)}</span>,
+                },
+              ]} rows={data.coverage.map(c => ({ ...c, __key: c.path }))} />
             </div>
           )}
-
           {tab === 'debt' && (
             <div style={PANEL}>
               <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginBottom: 8 }}>atoms mentioning @ts-nocheck / @ts-ignore / v1 / legacy / migration — the burn-down list</div>
-              {data.debt.map((x, i) => (
-                <div key={i} style={{ padding: '6px 4px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                    <Chip text={x.artifact} color={KIND_COLOR[x.artifact.split(':')[0]]} />
-                    {x.cite && <span style={{ font: `400 10px ${MONO}`, color: '#5c554f', marginLeft: 'auto', overflowWrap: 'anywhere' }}>{x.cite}</span>}
-                  </div>
-                  <div style={{ font: `400 11.5px "IBM Plex Sans", sans-serif`, color: '#d8cfc7', marginTop: 3 }}>{x.claim}</div>
-                </div>
-              ))}
+              <div style={{ marginBottom: 16 }}>
+                <Bars color="#e5764d" height={13}
+                  items={[...data.debt.reduce((m, x) => m.set(x.artifact, (m.get(x.artifact) || 0) + 1), new Map())]
+                    .map(([label, value]) => ({ label: label.replace(/^[a-z]+:/, ''), value, color: KIND_COLOR[label.split(':')[0]], hint: label }))
+                    .sort((x, y) => y.value - x.value).slice(0, 12)} />
+              </div>
+              <DataTable maxHeight="60vh" columns={[
+                { key: 'artifact', label: 'artifact', width: 190, render: x => <Chip text={x.artifact} color={KIND_COLOR[x.artifact.split(':')[0]]} /> },
+                { key: 'tone', label: 'tone', width: 70, render: x => x.tone ? <Chip text={x.tone} color={x.tone === 'must-not' ? '#e5484d' : '#e5a03a'} /> : null },
+                { key: 'claim', label: 'debt claim', render: x => <span style={{ font: `400 11.5px "IBM Plex Sans", sans-serif`, color: '#d8cfc7' }}>{x.claim}</span> },
+                { key: 'cite', label: 'citation', width: 210, render: x => <span style={{ font: `400 10px ${MONO}`, color: '#5c554f', overflowWrap: 'anywhere' }}>{x.cite}</span> },
+              ]} rows={data.debt.map((x, i) => ({ ...x, __key: i }))} />
             </div>
           )}
         </>
