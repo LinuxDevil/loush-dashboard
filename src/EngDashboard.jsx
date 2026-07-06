@@ -13,10 +13,11 @@ const PANEL = { background: 'linear-gradient(160deg,rgba(19,27,38,0.92),rgba(11,
 const avg = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0)
 const fx = (n, d = 1) => Number(n || 0).toFixed(d)
 const lc = s => (s || '').toLowerCase()
+const fdate = s => s ? new Date(s).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '—'
 const accColor = a => (a >= 85 ? GREEN : a >= 75 ? GOLD : RED)
 const initials = n => (n || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 const AVATARS = [BB, PURPLE, GREEN, GOLD, '#f2a2c4', '#7c9bd6']
-const BOARD_ORDER = ['To Do', 'In Progress', 'In Code Review', 'Design QA', 'Ready for QA', 'In QA (Dev)', 'In QA', 'QA Blocked', 'Ready for Release', 'Live', 'Closed']
+const BOARD_ORDER = ['PM Backlog', 'In Progress', 'In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'Ready for Release', 'Reopen', 'Re Open', 'Reopened', 'Live', 'QA Blocked', 'Closed', 'To Do', 'Backlog']
 
 function smoothPath(pts) {
   if (!pts.length) return ''
@@ -111,22 +112,29 @@ const accOf = (est, actual) => (!(est > 0) || !(actual > 0)) ? null : (actual <=
 function bestSP(actual) { if (!(actual > 0)) return null; let sp = SP_DAYS[0][0], acc = -1; for (const [p, d] of SP_DAYS) { const a = accOf(d, actual); if (a > acc) { acc = a; sp = p } } return { sp, acc } }
 
 // ---------- per-ticket hover: days-in-column · SP-for-90% · when to move ----------
+// Uses fixed positioning (measured on hover) so the tooltip escapes table/board overflow clipping
+// and sits above everything at the top z-index.
 function IssueTip({ i, children }) {
+  const [pos, setPos] = useState(null)
+  const enter = e => { const r = e.currentTarget.getBoundingClientRect(); setPos({ left: r.left, top: r.top, bottom: r.bottom }) }
+  const leave = () => setPos(null)
   const rec = i.rec
   const actual = i.dev || i.delivery
   const b = bestSP(actual)
   const curAcc = accOf(estDaysOf(i.pts), actual)
   const c = rec?.atRisk ? RED : rec && rec.remaining < 0.5 ? GOLD : GREEN
   const when = rec ? new Date(rec.moveBy).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
-  return <span className="rectip-wrap" style={{ position: 'relative', cursor: 'help' }}>
+  const below = pos && pos.top < 190 // flip below the trigger when near the top of the viewport
+  const box = pos ? { position: 'fixed', left: Math.min(pos.left, (typeof window !== 'undefined' ? window.innerWidth : 1400) - 274), [below ? 'top' : 'bottom']: below ? pos.bottom + 8 : `calc(100vh - ${pos.top - 8}px)`, zIndex: 2147483647, width: 258, padding: '10px 12px', borderRadius: 9, background: 'rgba(20,28,40,0.99)', border: `1px solid ${(rec ? c : '#8ec8ff')}66`, boxShadow: '0 12px 30px -8px rgba(0,0,0,0.7)', pointerEvents: 'none' } : null
+  return <span onMouseEnter={enter} onMouseLeave={leave} style={{ position: 'relative', cursor: 'help' }}>
     {children}
-    <span className="rectip" style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 60, width: 258, padding: '10px 12px', borderRadius: 9, background: 'rgba(20,28,40,0.98)', border: `1px solid ${(rec ? c : '#8ec8ff')}55`, boxShadow: '0 10px 26px -8px rgba(0,0,0,0.65)', opacity: 0, pointerEvents: 'none', transition: 'opacity .12s' }}>
+    {pos && <span style={box}>
       <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#8ea1b8', marginBottom: 6 }}>{i.key} · in {i.status}</div>
       <TipRow label="In this column" value={`${fx(i.inCurrent)}d`} />
       {b && <TipRow label={curAcc >= 90 ? 'Estimate' : 'For ≥90% est'} value={curAcc >= 90 ? `on target · ${i.pts}pt` : `set to ${b.sp}pt (${Math.round(b.acc)}%)`} c={curAcc >= 90 ? GREEN : GOLD} />}
       {rec ? <TipRow label="Move next" value={rec.atRisk ? `→ ${rec.next} · overdue` : `→ ${rec.next} by ${when}`} c={c} /> : <TipRow label="Status" value="done — no action" />}
       {rec && <div style={{ font: `400 9.5px ${MONO}`, color: '#647285', marginTop: 5 }}>{rec.atRisk ? `${fx(Math.abs(rec.remaining))}d over budget` : `${fx(rec.remaining)}d of ${fx(rec.budget)}d budget left`}</div>}
-    </span>
+    </span>}
   </span>
 }
 const TipRow = ({ label, value, c = '#dbe4ef' }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '2px 0' }}>
@@ -146,6 +154,7 @@ export default function EngDashboard({ onExit }) {
   const [deepNum, setDeepNum] = useState(null)
   const [quarter, setQuarter] = useState('Q3')
   const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState(false) // brief loader on client-side query changes
   const [config, setConfig] = useState(null) // null | { mode:'new' } | { mode:'edit', key }
 
   const load = (refresh, proj) => {
@@ -163,6 +172,8 @@ export default function EngDashboard({ onExit }) {
   }
   useEffect(() => { load(false) }, [])
   useEffect(() => { if (snap?.members?.length && !member) setMember(snap.members[0].id) }, [snap])
+  // show a brief loader whenever the query changes (project/month/year/member/route/quarter)
+  useEffect(() => { setPending(true); const t = setTimeout(() => setPending(false), 300); return () => clearTimeout(t) }, [project, month, year, member, route, quarter])
 
   const selectProject = key => { setProject(key); setMember(null); load(false, key) } // keep last data during reload — no header/body flash
   const onSaved = list => { setProjects(list); setConfig(null) }
@@ -172,9 +183,12 @@ export default function EngDashboard({ onExit }) {
     <div style={{ minHeight: '100vh', color: '#e7eef6', fontFamily: BODY, background: 'radial-gradient(950px 440px at 18% -10%,rgba(142,200,255,0.13),transparent 60%),radial-gradient(760px 400px at 104% -4%,rgba(91,159,230,0.08),transparent 55%),#080b11' }}>
       <TopBar team={S?.team} projects={projects} project={project} onProject={selectProject} onAdd={() => setConfig({ mode: 'new' })} onEdit={() => project && project !== 'all' && setConfig({ mode: 'edit', key: project })}
         route={route} setRoute={setRoute} month={month} setMonth={setMonth} year={year} setYear={setYear} onExit={onExit} onRefresh={() => load(true)} busy={busy} />
-      <div style={{ maxWidth: 1320, margin: '0 auto', padding: '20px 22px 64px' }}>{children}</div>
+      <div style={{ position: 'relative', maxWidth: 1320, margin: '0 auto', padding: '20px 22px 64px' }}>
+        {children}
+        {(busy || pending) && <LoadingOverlay />}
+      </div>
       {config && <ProjectConfig mode={config.mode} project={config.mode === 'edit' ? projects.find(p => p.key === config.key) : null} onClose={() => setConfig(null)} onSaved={onSaved} onSelect={selectProject} />}
-      <style>{`@keyframes pulse{0%,100%{opacity:.35}50%{opacity:.6}} @keyframes spin{to{transform:rotate(360deg)}} .rectip-wrap:hover .rectip{opacity:1 !important}`}</style>
+      <style>{`@keyframes pulse{0%,100%{opacity:.35}50%{opacity:.6}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   )
 
@@ -319,6 +333,14 @@ function CredsForm({ onSaved }) {
 function Loading() {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     {[0, 1, 2].map(i => <div key={i} style={{ ...PANEL, height: i === 0 ? 90 : 160, animation: 'pulse 1.4s ease-in-out infinite', opacity: 0.5 }} />)}
+  </div>
+}
+const Spinner = ({ size = 14 }) => <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid rgba(142,200,255,0.25)', borderTopColor: BB, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+function LoadingOverlay() {
+  return <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(8,11,17,0.5)', backdropFilter: 'blur(1.5px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 130 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 10, background: 'rgba(20,28,40,0.96)', border: '1px solid rgba(142,200,255,0.16)', boxShadow: '0 10px 26px -8px rgba(0,0,0,0.6)' }}>
+      <Spinner /><span style={{ font: `500 12px ${BODY}`, color: '#cfe0f2' }}>Updating…</span>
+    </div>
   </div>
 }
 function NotWired({ reason, team, onSaved, onAddProject }) {
@@ -822,16 +844,18 @@ function Workload({ issues, members, reload }) {
     </Card>}
 
     {/* bug register — editable owner / fixer */}
-    <DataTable title="Bug register" meta="QA-reported · assigned to team · owner=has it · fixer=resolves it" minWidth={940} pageSize={12}
-      rows={bugs} getKey={b => b.key} initialSort={{ key: 'status', dir: 1 }}
+    <DataTable title="Bug register" meta="QA-reported · assigned to team · owner=has it · fixer=resolves it" minWidth={1120} pageSize={12}
+      rows={bugs} getKey={b => b.key} initialSort={{ key: 'reported', dir: -1 }}
       columns={[
         { key: 'bug', label: 'Bug', width: '82px', sort: b => b.key, filter: b => b.key + ' ' + b.summary, render: b => <IssueTip i={b}><TicketLink i={b} color={b.live ? '#7f8ea1' : RED} style={{ font: `500 12px ${MONO}` }} /></IssueTip> },
-        { key: 'summary', label: 'Summary', width: '1.8fr', sort: b => b.summary, render: b => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.linkedKey && <TicketLink i={{ key: b.linkedKey, host: b.host }} color="#647285" style={{ fontSize: 10 }}>↳{b.linkedKey}</TicketLink>} {b.summary}</span> },
-        { key: 'area', label: 'Area', width: '108px', sort: b => b.area || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.area ? '#9db6dc' : '#647285' }}>{b.area || '—'}</span> },
-        { key: 'status', label: 'Status', width: '92px', sort: b => b.status, filter: b => b.status, render: b => <span style={{ font: `600 9px ${MONO}`, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', background: b.statusColor + '26', color: b.statusColor }}>{b.status}</span> },
-        { key: 'assignee', label: 'Assigned now', width: '116px', sort: b => b.assignee?.name || '', filter: b => b.assignee?.name || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.assignee ? '#c3cfdc' : '#647285', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.assignee?.name || '—'}</span> },
-        { key: 'owner', label: 'Owner (has)', width: '140px', sort: b => b.owner?.name || '', render: b => ownSel(b, 'ownerId') },
-        { key: 'fixer', label: 'Fixer (resolves)', width: '140px', sort: b => b.fixer?.name || '', render: b => ownSel(b, 'fixerId') },
+        { key: 'summary', label: 'Summary', width: '1.6fr', sort: b => b.summary, render: b => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.linkedKey && <TicketLink i={{ key: b.linkedKey, host: b.host }} color="#647285" style={{ fontSize: 10 }}>↳{b.linkedKey}</TicketLink>} {b.summary}</span> },
+        { key: 'area', label: 'Area', width: '100px', sort: b => b.area || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.area ? '#9db6dc' : '#647285' }}>{b.area || '—'}</span> },
+        { key: 'status', label: 'Status', width: '90px', sort: b => b.status, filter: b => b.status, render: b => <span style={{ font: `600 9px ${MONO}`, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', background: b.statusColor + '26', color: b.statusColor }}>{b.status}</span> },
+        { key: 'reported', label: 'Reported', width: '78px', sort: b => b.created || '', render: b => <span style={{ font: `500 11px ${MONO}`, color: '#b3c1d1' }}>{fdate(b.created)}</span> },
+        { key: 'closed', label: 'Closed', width: '78px', sort: b => b.closedAt || '', render: b => <span style={{ font: `500 11px ${MONO}`, color: b.closedAt ? GREEN : '#647285' }}>{fdate(b.closedAt)}</span> },
+        { key: 'assignee', label: 'Assigned now', width: '112px', sort: b => b.assignee?.name || '', filter: b => b.assignee?.name || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.assignee ? '#c3cfdc' : '#647285', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.assignee?.name || '—'}</span> },
+        { key: 'owner', label: 'Owner (has)', width: '136px', sort: b => b.owner?.name || '', render: b => ownSel(b, 'ownerId') },
+        { key: 'fixer', label: 'Fixer (resolves)', width: '136px', sort: b => b.fixer?.name || '', render: b => ownSel(b, 'fixerId') },
       ]} />
   </section>
 }
@@ -841,22 +865,31 @@ const MiniStat = ({ label, v, c, sub }) => <div style={{ flex: 1, minWidth: 0, p
   {sub && <div style={{ font: `400 8px ${MONO}`, color: '#4c5768', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}</div>
 
 // ---------------- REVIEW (table + detail drawer) ----------------
+const prCol = {
+  ticket: { key: 'ticket', label: 'Ticket', width: '84px', sort: p => p.ticket, filter: p => p.ticket + ' ' + p.title + ' ' + p.author, render: p => <TicketLink i={{ key: p.ticket }} style={{ font: `500 12px ${MONO}` }} /> },
+  proj: { key: 'proj', label: 'Proj', width: '52px', sort: p => p.project, render: p => <ProjTag k={p.project} /> },
+  title: { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}><PRLink pr={p}>#{p.num}</PRLink> {p.title}</span> },
+  state: { key: 'state', label: 'State', width: '118px', sort: p => p.state, render: p => <PrBadge state={p.state} /> },
+  comments: { key: 'comments', label: 'Comments', width: '82px', align: 1, sort: p => p.comments, render: p => <span style={{ font: `500 12px ${MONO}`, color: '#c3cfdc' }}>{p.comments}</span> },
+  cycles: { key: 'cycles', label: 'Cycles', width: '66px', align: 1, sort: p => p.cycles, render: p => <span style={{ font: `600 12px ${MONO}`, color: p.cycles > 1 ? GOLD : '#c3cfdc' }}>{p.cycles}</span> },
+  first: { key: 'first', label: '1st review', width: '84px', align: 1, sort: p => p.firstReviewDays ?? 1e9, render: p => <span style={{ font: `500 12px ${MONO}`, color: PURPLE }}>{p.firstReviewDays == null ? '—' : fx(p.firstReviewDays) + 'd'}</span> },
+  open: { key: 'open', label: 'Open', width: '68px', align: 1, sort: p => p.openDays ?? 0, render: p => <span style={{ font: `500 12px ${MONO}`, color: '#e0e8f2' }}>{fx(p.openDays, 0)}d</span> },
+  merge: { key: 'merge', label: 'Merge', width: '72px', align: 1, sort: p => p.mergeDays ?? 1e9, render: p => <span style={{ font: `500 12px ${MONO}`, color: p.mergeDays == null ? '#647285' : '#e0e8f2' }}>{p.mergeDays == null ? '—' : fx(p.mergeDays) + 'd'}</span> },
+}
 function Review({ prs, deepNum, setDeepNum }) {
-  const list = [...prs].sort((a, b) => (b.mergedAt || b.closedAt || b.createdAt).localeCompare(a.mergedAt || a.closedAt || a.createdAt))
-  const cur = list.find(p => p.num === deepNum)
+  const cur = prs.find(p => p.num === deepNum)
+  const stageRank = p => (p.state === 'Approved' ? 2 : p.state === 'Changes requested' ? 1 : 0) // await review → changes → approved
+  const open = prs.filter(p => p.state !== 'Merged' && p.state !== 'Closed')
+    .sort((a, b) => stageRank(a) - stageRank(b) || (b.createdAt || '').localeCompare(a.createdAt || ''))
+  const done = prs.filter(p => p.state === 'Merged' || p.state === 'Closed')
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="Code review · GitHub" title="PR Review Timelines" right={<span style={{ font: `400 11px ${MONO}`, color: '#647285' }}>click a row for details</span>} />
-    <DataTable minWidth={900} pageSize={14} rows={list} getKey={p => p.num} onRowClick={p => setDeepNum(p.num)} activeKey={deepNum}
-      columns={[
-        { key: 'ticket', label: 'Ticket', width: '84px', sort: p => p.ticket, filter: p => p.ticket + ' ' + p.title + ' ' + p.author, render: p => <TicketLink i={{ key: p.ticket }} style={{ font: `500 12px ${MONO}` }} /> },
-        { key: 'proj', label: 'Proj', width: '52px', sort: p => p.project, render: p => <ProjTag k={p.project} /> },
-        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}><PRLink pr={p}>#{p.num}</PRLink> {p.title}</span> },
-        { key: 'state', label: 'State', width: '118px', sort: p => p.state, render: p => <PrBadge state={p.state} /> },
-        { key: 'comments', label: 'Comments', width: '82px', align: 1, sort: p => p.comments, render: p => <span style={{ font: `500 12px ${MONO}`, color: '#c3cfdc' }}>{p.comments}</span> },
-        { key: 'cycles', label: 'Cycles', width: '66px', align: 1, sort: p => p.cycles, render: p => <span style={{ font: `600 12px ${MONO}`, color: p.cycles > 1 ? GOLD : '#c3cfdc' }}>{p.cycles}</span> },
-        { key: 'first', label: '1st review', width: '84px', align: 1, sort: p => p.firstReviewDays ?? 1e9, render: p => <span style={{ font: `500 12px ${MONO}`, color: PURPLE }}>{p.firstReviewDays == null ? '—' : fx(p.firstReviewDays) + 'd'}</span> },
-        { key: 'merge', label: 'Merge', width: '72px', align: 1, sort: p => p.mergeDays ?? 1e9, render: p => <span style={{ font: `500 12px ${MONO}`, color: p.mergeDays == null ? '#647285' : '#e0e8f2' }}>{p.mergeDays == null ? '—' : fx(p.mergeDays) + 'd'}</span> },
-      ]} />
+    <DataTable title="Awaiting review" meta="await review → changes requested → approved" minWidth={900} pageSize={10}
+      rows={open} getKey={p => p.num} onRowClick={p => setDeepNum(p.num)} activeKey={deepNum}
+      columns={[prCol.ticket, prCol.proj, prCol.title, prCol.state, prCol.comments, prCol.cycles, prCol.first, prCol.open]} />
+    <DataTable title="Merged & closed" minWidth={900} pageSize={10} initialSort={{ key: 'merge', dir: -1 }}
+      rows={done} getKey={p => p.num} onRowClick={p => setDeepNum(p.num)} activeKey={deepNum}
+      columns={[prCol.ticket, prCol.proj, prCol.title, prCol.state, prCol.comments, prCol.cycles, prCol.first, prCol.merge]} />
     {cur && <PrDrawer pr={cur} onClose={() => setDeepNum(null)} />}
   </section>
 }

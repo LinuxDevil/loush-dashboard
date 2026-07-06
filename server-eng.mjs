@@ -344,6 +344,7 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     daysIn: Object.fromEntries(Object.entries(seg.daysIn).map(([k, v]) => [k, +v.toFixed(2)])),
     activeDays: +activeDays.toFixed(2), waitDays: +waitDays.toFixed(2),
     live, active: kind === 'active', month: d.getMonth(), year: d.getFullYear(),
+    created: f.created, closedAt: f.resolutiondate || (seg.liveAt ? new Date(seg.liveAt).toISOString() : null),
     curSince: new Date(seg.curSince).toISOString(),
     rec: live ? null : recFor(status, pts, seg.curSince),
     prNums: prs.map(p => p.num), stale, staleNote,
