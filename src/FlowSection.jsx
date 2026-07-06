@@ -48,7 +48,7 @@ export default function FlowSection() {
     const shown = new Set(Object.values(cols).flat().map(n => n.id))
     const vEdges = edges.filter(e => shown.has(e.from) && shown.has(e.to))
     // layout: fixed columns, vertical spread
-    const X = { entry: 70, skill: 300, command: 300, agent: 560, mcp: 800 }
+    const X = { entry: 70, skill: 300, agent: 560, mcp: 800 } // command nodes merge into the skill column
     const mid = [...cols.skill, ...cols.command]
     const H = Math.max(420, (Math.max(mid.length, cols.agent.length, cols.mcp.length) + 1) * 44)
     const pos = {}
@@ -92,7 +92,7 @@ export default function FlowSection() {
             ? <path d={`M ${p.x} ${p.y - 14} L ${p.x + 14} ${p.y} L ${p.x} ${p.y + 14} L ${p.x - 14} ${p.y} Z`} fill={c} stroke={isSel ? '#f6efe9' : 'rgba(255,255,255,0.25)'} strokeWidth={isSel ? 2.5 : 1.4} />
             : <circle cx={p.x} cy={p.y} r={r} fill={n.kind === 'command' ? 'transparent' : c} stroke={n.kind === 'command' ? c : isSel ? '#f6efe9' : 'rgba(255,255,255,0.18)'} strokeWidth={n.kind === 'command' ? 2.2 : isSel ? 2.5 : 1.4} strokeDasharray={n.ghost ? '3 3' : 'none'} />}
         <text x={p.x + (n.kind === 'entry' ? 0 : r + 6)} y={n.kind === 'entry' ? p.y + 28 : p.y + 4} textAnchor={n.kind === 'entry' ? 'middle' : 'start'} style={{ font: `500 10px ${MONO}`, fill: isSel ? '#f6efe9' : '#b0a69e' }}>{n.name.length > 22 ? n.name.slice(0, 21) + '…' : n.name}</text>
-        {deadEnds.includes(n.id) && <circle cx={p.x - (n.kind === 'agent' ? r : r) - 3} cy={p.y - r - 3} r={3.2} fill="#e5484d"><title>dead end — never reached in any session</title></circle>}
+        {deadEnds.includes(n.id) && <circle cx={p.x - r - 3} cy={p.y - r - 3} r={3.2} fill="#e5484d"><title>dead end — never reached in any session</title></circle>}
       </g>
     )
   }

@@ -73,7 +73,7 @@ export default function ResourceSection({ kind, title }) {
   const flash = m => { setStatus(m); setTimeout(() => setStatus(''), 3000) }
   const save = () =>
     api.put(`/api/res/${kind}/item?scope=${sel.scope}&name=${encodeURIComponent(sel.name)}`, { content })
-      .then(r => { flash(`saved (backup: ${r.backup ? '✓' : 'none'})`); load(); setDetail(d => ({ ...d, ...parseClient(content) })) })
+      .then(r => { flash(`saved (backup: ${r.backup ? '✓' : 'none'})`); load(); setDetail(d => ({ ...d, content, ...parseClient(content) })) })
       .catch(e => flash('error: ' + e.message))
   const fmToDrawerValues = fm => {
     const v = {}

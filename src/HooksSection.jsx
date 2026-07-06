@@ -180,7 +180,6 @@ function Health() {
   const [h, setH] = useState(null)
   useEffect(() => { api.get('/api/hooks/health').then(setH).catch(() => {}) }, [])
   if (!h) return <Skeleton tiles={3} rows={5} />
-  if (!h) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>scanning transcripts…</div>
   const rows = Object.entries(h.byEvent).sort((a, b) => b[1] - a[1])
   const max = Math.max(...rows.map(r => r[1]), 1)
   return (

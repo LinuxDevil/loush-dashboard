@@ -1423,7 +1423,6 @@ app.post('/api/gov/approvals/:id', (req, res) => {
 })
 
 // ---------- dry-run: resolve a hypothetical settings content without committing ----------
-let dryRunOverride = null // {scope, settings} — consulted by readJson shim below during resolve
 app.post('/api/gov/dryrun', (req, res) => {
   const { scope, content } = req.body
   let proposed
@@ -2427,7 +2426,25 @@ app.post('/api/bugs', (req, res) => {
   const { project, title, severity, intake } = req.body
   if (!title?.trim()) return res.status(400).json({ error: 'title required' })
   const bugs = readBugs()
-  const bug = { id: 'bug' + Date.now().toString(36), project: project || null, title: title.trim(), severity: severity || 'medium', status: 'open', intake: String(intake || '').slice(0, 20000), ...parseTrace(String(intake || '')), createdAt: Date.now(), fix: null }
+  const bug = { id: 'bug' + Date.now().toString(36), project: project || null, title: title.trim(), severity: severity || 'medium', status: 'open', intake: String(intake || '').slice(0, 20000), ...parseTrace(String(intake || '')), createdAt: Date.now(), fix: null, boardTicketId: null }
+  // Cross-link (not merge): a project bug also becomes a Board type:'bug' ticket so the two stores
+  // share one source of truth per bug. Each references the other; bug status stays authoritative here.
+  if (project && fs.existsSync(project)) {
+    try {
+      const board = readBoard()
+      const pipe = board.pipelines.find(p => p.id === projCfg(board, project).pipeline) || board.pipelines[0]
+      const t = {
+        id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        project, title: bug.title, desc: `Filed from Bugs (${bug.id}, ${bug.severity}).`, type: 'bug',
+        parent: null, deps: [], team: null, model: null, bugId: bug.id,
+        stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`,
+        blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
+        history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created from bug ' + bug.id }], createdAt: Date.now(), releasedAt: null,
+      }
+      board.tickets.push(t); writeBoard(board)
+      bug.boardTicketId = t.id
+    } catch {}
+  }
   bugs.push(bug); writeBugs(bugs)
   res.json(bug)
 })

@@ -106,6 +106,7 @@ export default function BugsSection() {
             <span style={{ font: `600 9px ${MONO}`, padding: '2px 7px', borderRadius: 5, color: SEV[b.severity], background: 'rgba(255,255,255,0.04)' }}>{b.severity.toUpperCase()}</span>
             <span style={{ font: "500 13.5px 'IBM Plex Sans'", color: '#e5dbd2', flex: 1 }}>{b.title}</span>
             <span style={{ font: `500 10.5px ${MONO}`, color: STATUS[b.status] }}>● {b.status}</span>
+            {b.boardTicketId && <span title={'linked board ticket ' + b.boardTicketId} style={{ font: `500 9px ${MONO}`, color: '#7cc4f7' }}>▦ on board</span>}
             <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{b.project ? b.project.split('/').pop() + ' · ' : ''}{age(b.createdAt)}</span>
           </div>
           {open === b.id && (

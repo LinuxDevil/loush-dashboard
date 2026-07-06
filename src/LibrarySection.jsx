@@ -114,7 +114,7 @@ function Bundles() {
     if (r?.ok) alert('Imported: ' + r.written.join(', '))
   }
   const download = async b => {
-    const full = await api.get('/api/hub/file?path=' + encodeURIComponent('~'.replace('~', '') + b.path || '')).catch(() => null)
+    const full = await api.get('/api/hub/file?path=' + encodeURIComponent(b.path || '')).catch(() => null)
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = b.name + '.harness.json'; a.click()
   }
