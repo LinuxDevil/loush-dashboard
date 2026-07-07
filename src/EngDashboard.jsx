@@ -176,6 +176,7 @@ export default function EngDashboard({ onExit }) {
   useEffect(() => { setPending(true); const t = setTimeout(() => setPending(false), 300); return () => clearTimeout(t) }, [project, month, year, member, route, quarter])
 
   const selectProject = key => { setProject(key); setMember(null); load(false, key) } // keep last data during reload — no header/body flash
+  const patchIssue = (key, fields) => setSnap(s => ({ ...s, issues: s.issues.map(i => i.key === key ? { ...i, ...fields } : i) }))
   const onSaved = list => { setProjects(list); setConfig(null) }
 
   const S = snap
@@ -206,7 +207,7 @@ export default function EngDashboard({ onExit }) {
     route === 'overview' ? <Overview {...{ S, issues, shipped, active, members, prsFor, month, year }} />
     : route === 'members' ? <Members {...{ S, issues, prs, members, member, setMember, prsFor }} />
     : route === 'board' ? <Board {...{ issues, members }} />
-    : route === 'workload' ? <Workload {...{ issues, members, reload: () => load(false) }} />
+    : route === 'workload' ? <Workload {...{ issues, members, patch: patchIssue, reload: () => load(false) }} />
     : route === 'review' ? <Review {...{ prs, deepNum, setDeepNum }} />
     : <Okrs {...{ S, issues, shipped, prs, quarter, setQuarter }} />
   )
@@ -766,13 +767,26 @@ function sprintStats(items) {
 }
 
 // ---------------- WORKLOAD (per-dev load, areas, bug ownership) ----------------
-function Workload({ issues, members, reload }) {
+function Workload({ issues, members, patch, reload }) {
   const [saving, setSaving] = useState(null)
   const devIds = new Set(members.map(m => m.id))
   const setOwn = (key, field, value) => {
+    const b = issues.find(i => i.key === key)
+    const person = value ? { id: value, name: members.find(m => m.id === value)?.name || 'Assigned' } : null
+    // optimistic local patch — mirrors server resolveOwnership so we skip the expensive full snapshot refetch
+    let fields
+    if (field === 'ownerId') {
+      const auto = (b.linkedKey && issues.find(x => x.key === b.linkedKey)?.assignee) || b.assignee || null
+      fields = value ? { owner: person, ownerId: value, ownerManual: true } : { owner: auto, ownerId: auto?.id || null, ownerManual: false }
+    } else {
+      // ponytail: server's auto-detected fixer isn't reconstructable client-side; clearing shows "— auto —" until the next full refresh
+      fields = value ? { fixer: person, fixerId: value, fixerManual: true } : { fixer: null, fixerId: null, fixerManual: false }
+    }
+    patch(key, fields)
     setSaving(key + field)
     fetch('/api/eng/bug-ownership', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, [field]: value || null }) })
-      .then(() => reload()).finally(() => setSaving(null))
+      .catch(() => reload()) // resync from server only if the write failed
+      .finally(() => setSaving(null))
   }
   // team bug = reported by our QA AND currently assigned to someone on the team
   const teamBug = i => i.isBug && i.qaReported && i.assigneeTeam
