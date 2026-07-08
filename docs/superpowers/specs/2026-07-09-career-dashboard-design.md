@@ -276,9 +276,11 @@ data, not a time-series warehouse; the "no warehouse" principle stands.
 
 ## 9. Out of scope (YAGNI)
 
-- No external integrations beyond files on disk (PRs via existing Eng snapshot; no new live Jira/GitHub).
+- **Phase 1** takes no external integrations beyond files already on disk (PRs via existing Eng snapshot).
+  External sources (GitHub/Jira/Confluence/Slack) arrive **Phase 2+** and remain **read-only batch imports
+  dropped to disk** (§11.A) — never live write-back, never a synchronous API dependency in a panel render.
 - No multi-user/team rollups (Eng dashboard owns team).
-- No editing of `/insights` source data (read-only over usage-data).
+- No editing of `/insights` or imported source data (read-only over usage-data + imports).
 - Phase 3 panels are provisional; do not pre-build.
 
 ## 10. Reuse map (don't rebuild)
