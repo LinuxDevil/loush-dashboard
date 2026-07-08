@@ -15,6 +15,17 @@ const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okr
 
 export const __test = { AUTHORED }
 
+const BUCKET_BY_STAGE = { 'ready-for-qa': 'toTest', 'qa-running': 'toTest',
+  'in-progress': 'inProgress', 'code-review': 'inProgress', 'fixing': 'inProgress',
+  'backlog': 'pending' }
+
+export function mapTicket(t, now = Date.now()) {
+  const lastAt = (t.history || []).slice(-1)[0]?.at
+  const ageDays = lastAt ? (now - lastAt) / 86400000 : 0
+  return { id: t.id, stage: t.stage, bucket: BUCKET_BY_STAGE[t.stage] || 'pending',
+    ageDays, slaDays: 5, project: t.project, title: t.title }
+}
+
 export default function mountCareer(app, deps = {}) {
   const { track, readJson } = deps
   const careerFile = deps.careerFile || path.join(CLAUDE, 'career.json')
@@ -28,17 +39,9 @@ export default function mountCareer(app, deps = {}) {
     const b = readJson(path.join(CLAUDE, 'bugs.json'), { bugs: [] })
     return { bugs: b.bugs || [], findings: [], myPrCount: 0, reverts: 0 } // findings/PRs arrive Phase 2 (GitHub)
   })
-  const BUCKET_BY_STAGE = { 'ready-for-qa': 'toTest', 'qa-running': 'toTest',
-    'in-progress': 'inProgress', 'code-review': 'inProgress', 'fixing': 'inProgress',
-    'backlog': 'pending' }
   const readTasks = deps.readTasks || (() => {
     const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
-    return (board.tickets || []).map(t => {
-      const lastAt = (t.history || []).slice(-1)[0]?.at
-      const ageDays = lastAt ? (Date.now() - lastAt) / 86400000 : 0
-      return { id: t.id, stage: t.stage, bucket: BUCKET_BY_STAGE[t.stage] || 'pending',
-        ageDays, slaDays: 5, project: t.project, title: t.title }
-    })
+    return (board.tickets || []).map(t => mapTicket(t))
   })
   const readReport = deps.readReport || (() => { try { return fs.readFileSync(path.join(usageDir, 'report.html'), 'utf8') } catch { return '' } })
   const readRunning = deps.readRunning || (() => {
