@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "concurrently -k \"node --watch server.mjs\" \"vite --open\"",
     "atoms:index": "node atoms/ingest.mjs",
-    "start": "npm run dev"
+    "start": "npm run dev",
+    "test": "node --test"
   },
   "dependencies": {
     "@codemirror/lang-html": "^6.4.9",
