@@ -31,7 +31,12 @@ This is a single-user tool; its enemy is abandonment, not bad architecture. Phas
 - **(b) Review-prep leverage** — the brag log / story-so-far export materially shortens the next
   review-cycle prep (measured: prep done "from receipts," not memory).
 - **(c) Behavior change** — at least one **Focus** recommendation changes what the author actually works
-  on in a given month.
+  on in a given month. This is the criterion most easily graded generously from memory, so it is made
+  **self-measuring**: every Focus item carries an **"acted on" mark** the author sets when it lands, and
+  "acted on" has a **defined evidence bar** — a ticket picked up, a lesson accepted, or a harness fix
+  applied, each **traceable to that specific Focus item** (the mark stores the linked ref). The Phase-1 gate
+  review then reads (c) **out of the dashboard, not out of memory** — which is the entire thesis of this
+  project applied to its own evaluation.
 
 If Phase 1 does not hit (a)–(c), we stop and reassess **before** building Phase 2 — not after.
 
@@ -78,7 +83,7 @@ Follows the existing multi-dashboard pattern (`?dash=cursor`, `?dash=eng`):
 | Transcripts | `~/.claude/projects/**/*.jsonl` | flow/deep-work, activity, workflow (fallback when usage-data absent) |
 | Git | project repos | commits, churn, language histogram |
 | Task Board / Jira | `~/.claude/taskboard.json` + Eng snapshot | pending / to-test / in-progress, cycle time, aging |
-| PRs & bugs | `~/.claude/bugs.json`, review findings (`ReportFindings` in transcripts) | DORA quality, attributed bugs (rule in 2.5) |
+| PRs & bugs | `~/.claude/bugs.json`, review findings (`ReportFindings` in transcripts) | change-fail proxy from **escaped** attributed bugs; review findings feed the **separate** caught-in-review signal (rule §2.5) |
 | Cursor + Eng snapshots | existing `/api/cursor/*`, `/api/eng/snapshot` | cross-tool activity, team quality metrics |
 | `career.json` (authored) | `~/.claude/career.json` | all curated state + persisted rollups (2.3) |
 
@@ -94,11 +99,27 @@ Each project aggregates its facets + git + taskboard + Cursor/Eng data into one 
 ### 2.3 Persistence
 
 Single sidecar `~/.claude/career.json`, written with the app's existing **versioned-write + backup**
-convention. **Minimize manual feeding** (§4 rule). Shape:
+convention. **Minimize manual feeding** (§4 rule).
+
+**Identity mapping (defined, not assumed).** Every attribution rule and cross-source join depends on knowing
+which git author / GitHub / Jira / Confluence / Slack identity is "me." This is resolved **once** into the
+`identity` block below and is the single source of truth for "mine." It is **validated on every import**: an
+import that matches **zero** of my identities warns loudly (likely a misconfigured handle) rather than
+returning a quietly-empty (and therefore silently-wrong) result. The resolver is unit-tested alongside the
+attribution function, including the common two-git-emails case.
+
+**Schema migration (backups protect against corruption, not drift).** On load, if `version` < current: run
+ordered migration steps in sequence, write the migrated file back, and retain the pre-migration file as a
+backup. If `version` is **newer** than this build understands: **refuse to write** and warn (an older build
+must not clobber a newer schema). Covered by a test: load a v1 fixture, assert the migrated shape. The shape
+below is versioned and expected to change across phases (§11.D adds collections mid-flight).
+
+Shape:
 
 ```
 {
   version, updatedAt,
+  identity: { gitEmails: [], githubHandle, jiraAccountId, confluenceUser, slackUserId },
   projects: [{ id, path, label, active, owned }],
   // authored / curated
   competency: { levelSelfAssessed, ratings: { [area]: { level, score1to5, note } },
@@ -141,13 +162,23 @@ convention. **Minimize manual feeding** (§4 rule). Shape:
 "Bugs from my work" and the change-fail proxy use a **single, explicit, conservative** rule, shown in UI
 with a "how this is counted" tooltip so the number is trustworthy:
 
-- A bug counts as **mine** iff at least one of: (1) it is linked (taskboard/Jira) to a ticket whose branch
-  I authored; (2) a `ReportFindings` review finding of severity ≥ *warning* landed on a diff I authored;
-  (3) a `bugs.json` entry whose auto-bisect culprit commit is authored by me (git author = configured me).
-- **Change-fail proxy** = (attributed bugs + reverts on my commits) ÷ (my merged PRs) over the window.
+**Escaped defects vs caught-in-review are different things and must never be summed.** Change-fail rate is
+a DORA measure of *escaped* failures; a finding caught before merge is the review process *working*.
+Conflating them creates a perverse incentive — more rigorous reviews would inflate the "bugs from my work"
+number — so they are two separate signals.
+
+- **Attributed bug (escaped) — counts as mine** iff at least one of: (1) it is linked (taskboard/Jira) to a
+  ticket whose branch I authored; (2) a `bugs.json` entry whose auto-bisect culprit commit is authored by me
+  (author matched via the identity block §2.3, not a single email). These feed the **change-fail proxy** =
+  (attributed bugs + reverts on my commits) ÷ (my merged PRs) over the window.
+- **Defect density caught in review — a SEPARATE signal, never in the change-fail numerator.**
+  `ReportFindings` findings of severity ≥ *warning* on a diff I authored are counted on their own axis.
+  Trending **down** means my self-verification is improving — genuinely useful, shown as its own metric, and
+  explicitly excluded from the bug ratio, the quality badge, and the personal best.
 - Attribution is **surfaced, never silent**: each counted bug lists which rule matched. Unattributable
-  bugs go to an "unattributed" bucket, not to me. The rule is centralized in one function, unit-tested.
-- **Phase-2 upgrade (§11.A):** once the GitHub import lands, rule (3) is replaced by **blame-based
+  bugs go to an "unattributed" bucket, not to me. The rule is centralized in one function, unit-tested
+  (including a test asserting review findings do NOT move the change-fail proxy).
+- **Phase-2 upgrade (§11.A):** once the GitHub import lands, rule (2) is augmented by **blame-based
   attribution** — link a bug-fix PR back to the PR that introduced the fixed lines via `git blame`,
   retiring the fuzzy `bugs.json` proxy and making the Quality panel trustworthy.
 
@@ -165,7 +196,7 @@ hard requirement in §1; later phases are earned by the §1.1 gate.
 | 3 | **Work Session & Flow** (SPACE) | `FlowPanel.jsx` | what my work session looks like | auto (session-meta/transcripts) |
 | 4 | **Quality** (DORA) | `QualityPanel.jsx` | bugs from my work; optimize metrics | auto (bugs/findings, rule §2.5) |
 | 5 | **`/insights` (per project)** | `InsightsProjectPanel.jsx` | include /insights output | auto (facets+meta+narrative) |
-| 6 | **Brag / Work Log** | `BragPanel.jsx` | promo/review prep | **auto-seeded** from merged PRs / closed tickets / releases / `/insights` wins; manual add optional. Includes a 3-line **weekly retro** capture (worked / didn't / differently) that feeds Analyze + the brag streak, and a **story-so-far** half-page narrative export + promo-packet export |
+| 6 | **Brag / Work Log** | `BragPanel.jsx` | promo/review prep | **auto-seeded** from merged PRs / closed tickets / releases / `/insights` wins; manual add optional. Includes a 3-line **weekly retro** capture (worked / didn't / change) that feeds Analyze + the brag streak, and a **story-so-far** half-page narrative export + promo-packet export |
 | 7 | **1:1 Prep** | `OneOnOnePanel.jsx` | *added in review — highest leverage* | **composition** of 1–6: wins since last 1:1, blockers/risks (aging tasks + quality regressions), decisions I need, progress on last-agreed actions, one growth topic. **Persists the meeting**: after each 1:1 log agreed actions + manager feedback; next brief opens with "status of what we agreed." |
 
 ### Phase 2 — growth analysis (earned by the §1.1 gate; some curation)
@@ -198,8 +229,12 @@ hard requirement in §1; later phases are earned by the §1.1 gate.
   in-progress ticket trending late → **risk-to-commitments** (surfaces in 1:1 brief early).
 - Competency: real evidence + low self-rating → "under-credited"; ladder row red → "gap to close" (→ Learning).
 
-Each heuristic emits `{ severity, area, message, evidenceRefs }`; Focus ranks them, `✨ Analyze` expands
-the top few, and any item can be **accepted as a quest** (Phase 3).
+Each heuristic emits `{ severity, area, message, evidenceRefs, actedOn }`. **These recommendation items
+exist in Phase 1** — surfaced inline in Tasks (recommended approach / risk-to-commitments), Quality (focus),
+and Me/Now — and each carries the **"acted on" mark** that §1.1(c) is measured by. The dedicated **Focus &
+Growth panel (Phase 2)** only *ranks and expands* the same items with `✨ Analyze`; it is not where they
+first appear. Any item can be **accepted as a quest** (Phase 3). The gate in §1.1(c) therefore reads out of
+Phase-1 panels, not out of a Phase-2 panel.
 
 ### 3.2 Gamification (Phase 3, panel 14)
 
@@ -267,7 +302,14 @@ data, not a time-series warehouse; the "no warehouse" principle stands.
 - **Parsers** (facets, session-meta, quarantined report.html) — unit tests over the real sample report + a
   malformed fixture; assert join-by-session_id, group-by-project_path, graceful skip, and that a report.html
   parse failure yields empty narrative without touching numeric output.
-- **Bug attribution (§2.5)** — table-driven: each rule branch + the unattributed bucket.
+- **Bug attribution (§2.5)** — table-driven: each rule branch + the unattributed bucket, **plus a test that
+  review findings do NOT move the change-fail proxy** (escaped vs caught-in-review stay separate).
+- **Identity resolver (§2.3)** — matches across the two-git-emails case; a zero-match import **warns** rather
+  than returning empty.
+- **Schema migration (§2.3)** — load a v1 fixture → assert migrated shape; a newer-than-current version is
+  refused, not clobbered.
+- **Lesson graduation (§11.B)** — a structured `check` auto-graduates when its metric meets target over the
+  window; a free-text `check` can only be graduated manually.
 - **Heuristics / allocation drift / risk-to-commitments** — synthetic snapshot slices → expected items.
 - **Rollup** — streak survives a window that no longer contains older activity days; bests are monotonic.
 - **Snapshot builder** — integration over tmp `usage-data` + `career.json`; asserts incremental skip.
@@ -347,8 +389,11 @@ Frames everything as **deltas against my own baseline**; a fine session/ticket n
    Inputs: CLAUDE.md presence/quality (and whether applied `/insights` suggestions), sessions ending in
    verification vs untested, friction rate vs my cross-project baseline, one-shot success, interruption/
    correction rate, tool-mix health. Output: score + top 2–3 fixes ("no CLAUDE.md, 2.3× baseline friction,
-   sessions rarely run tests"). **Harness improvements are legitimate quest material** — the rare metric
-   where improving the number genuinely improves the work.
+   sessions rarely run tests"). Applied-fix state is **re-detected from the repo each refresh** (§11.D), not
+   stored. **Harness improvements are legitimate quest material** (a Phase-3 forward-reference) — the rare
+   metric where improving the number genuinely improves the work — but the harness panel **renders its score
+   and fixes standalone** and must carry **no build dependency on quest code**; quests, when they arrive,
+   consume harness output, not the reverse.
 2. **Per-session "actual vs better."** Cheap deterministic heuristics catch pattern-level misses (many
    interruptions + `wrong_approach` → constraints not front-loaded; long session, no commits, unclear
    outcome → no checkpointing; hand-fixing output → verification missing). Deeper counterfactual is an
@@ -369,10 +414,15 @@ Frames everything as **deltas against my own baseline**; a fine session/ticket n
      cost a review round in 4 of last 6 (pattern) → confirm AC with reporter before starting (rule) →
      checked by: review rounds on vague-AC tickets drop (check)." **A lesson without a measurable check is a
      fortune cookie.** Nothing enters the list without explicit approve/edit/discard.
+     **The `check` must be structured, not prose** — a machine cannot evaluate "review rounds drop." It has
+     the same shape as a KR: `check: { metricRef, comparator, target, window }`. Free-text is a fallback
+     **only**, and a free-text-checked lesson is **manual-graduate only** (it can never auto-graduate). This
+     keeps the engine's core mechanic — verification — from silently degrading into a journal.
    - **Apply & verify:** active lessons resurface contextually — matching project shows it in Me/Now,
-     matching ticket flags it in Tasks. Each check is tracked: pattern stops → lesson **auto-graduates to
-     "internalized"** (badge-worthy); pattern recurs while active → **red flag for a 1:1** (rule wrong or
-     environmental). **Cap ~5 active lessons** — twenty active is zero active.
+     matching ticket flags it in Tasks. Each structured check is tracked against the live snapshot: pattern
+     stops (metric meets target over its window) → lesson **auto-graduates to "internalized"** (badge-worthy);
+     pattern recurs while active → **red flag for a 1:1** (rule wrong or environmental). **Cap ~5 active
+     lessons** — twenty active is zero active.
 
 **Psychological design rule (whole loop):** findings are deltas vs my own baseline; **graduated lessons are
 celebrated as loudly as new ones are raised**; **repeat-friction trending down is the headline**. A
@@ -393,9 +443,13 @@ dashboard that opens with a list of failures gets closed in week two.
 
 ```
 imports:     { github: {lastAt, path}, jira: {...}, confluence: {...}, slack: {...} },
-harness:     computed per project in snapshot (no persistence beyond applied-fix flags),
+harness:     computed per project in snapshot — NO persistence. "Applied fixes" are RE-DETECTED from the
+             repo each refresh (CLAUDE.md exists, sessions run tests, etc.), because a stored flag claims you
+             did the fix, not that it's still true,
 lessons:     [{ id, status:'draft'|'active'|'internalized'|'discarded',
-                situation, pattern, rule, check, evidenceRefs[], createdAt, graduatedAt }],
+                situation, pattern, rule,
+                check: { metricRef, comparator, target, window } | { freeText },  // freeText ⇒ manual-graduate only
+                evidenceRefs[], createdAt, graduatedAt }],
 retros:      [{ id, weekOf, worked, didnt, change }],
 ticketLinks: { [ticketId]: { prIds[], sessionIds[], confidence } }
 ```
