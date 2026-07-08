@@ -22,7 +22,11 @@ export function parseUsageData(dir, { mtimeCache } = {}) {
   let skipped = 0
   const metas = new Map()
   for (const f of listJson(metaDir)) {
-    try { const { val: m } = cachedRead(path.join(metaDir, f), cache); metas.set(m.session_id, m) }
+    try {
+      const { val: m, fromDisk } = cachedRead(path.join(metaDir, f), cache)
+      metas.set(m.session_id, m)
+      if (fromDisk) parsed++
+    }
     catch { skipped++ }
   }
   const sessions = []

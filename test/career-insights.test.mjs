@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseUsageData, groupByProject } from '../career-insights.mjs'
 
@@ -18,7 +19,7 @@ test('joins facets+session-meta on session_id and skips malformed', () => {
   assert.equal(s.git_commits, 2)                    // from session-meta
   assert.equal(s.friction_counts.wrong_approach, 2)
   assert.ok(skipped >= 1)                            // bad.json counted, not thrown
-  assert.equal(parsed, 1)
+  assert.equal(parsed, 2)  // counts both meta (s1.json) and facet (s1.json) reads from disk
 })
 
 test('groupByProject aggregates totals', () => {
@@ -40,4 +41,21 @@ test('mtime cache returns cached parse when unchanged', () => {
   assert.equal(r2.parsed, 0)        // nothing re-parsed
   assert.equal(r2.sessions.length, 1) // still returns joined data from cache
   assert.ok(before > 0)
+})
+
+test('counts meta-file re-reads in parsed', () => {
+  const cache = new Map()
+  const metaFile = path.join(DIR, 'session-meta', 's1.json')
+
+  // Parse once to populate cache
+  parseUsageData(DIR, { mtimeCache: cache })
+
+  // Bump mtime of session-meta file to trigger re-read
+  const now = Date.now()
+  fs.utimesSync(metaFile, now / 1000, now / 1000)
+
+  // Parse again with same cache; meta file should be re-read and counted in parsed
+  const result = parseUsageData(DIR, { mtimeCache: cache })
+  assert.equal(result.parsed, 1, 'meta re-read should increment parsed')
+  assert.equal(result.sessions.length, 1, 'session still joined correctly')
 })
