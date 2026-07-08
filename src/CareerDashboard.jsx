@@ -5,6 +5,7 @@ import MePanel from './career/MePanel.jsx'
 import TasksPanel from './career/TasksPanel.jsx'
 import FlowPanel from './career/FlowPanel.jsx'
 import QualityPanel from './career/QualityPanel.jsx'
+import InsightsProjectPanel from './career/InsightsProjectPanel.jsx'
 
 const TABS = ['Me / Now', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
@@ -31,6 +32,7 @@ export default function CareerDashboard({ onExit }) {
         : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />
+        : tab === 'Insights' ? <InsightsProjectPanel snap={snap} />
         : <div style={{ ...PANEL }}>Panel "{tab}" — wired in Tasks 11–16. Snapshot has {snap.projects?.length || 0} projects, {snap.focus?.length || 0} focus items.</div>}
     </div>
   )
