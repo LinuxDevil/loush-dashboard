@@ -38,3 +38,30 @@ test('parses friction with examples, horizon, features, and patterns with prompt
   assert.ok(r.stats.sessions > 0)
   assert.ok(r.stats.dateRange.length > 0)
 })
+
+test('anchors pattern prompt regex to copyable-prompt-section to avoid stealing next card', () => {
+  // Two pattern cards: first has NO copyable-prompt-section, second has one.
+  // The unanchored regex would consume second card's prompt into first card.
+  const html = `
+    <div class="pattern-card">
+      <div class="pattern-title">Pattern One</div>
+      <div class="pattern-summary">No prompt here</div>
+      <div class="pattern-detail">First card detail with no prompt block</div>
+    </div>
+    <div class="pattern-card">
+      <div class="pattern-title">Pattern Two</div>
+      <div class="pattern-summary">Has a prompt</div>
+      <div class="pattern-detail">Second card detail</div>
+      <div class="copyable-prompt-section">
+        <div class="prompt-label">Prompt Label</div>
+        <div class="copyable-prompt-row">
+          <code class="copyable-prompt">This is the second card's prompt</code>
+        </div>
+      </div>
+    </div>
+  `
+  const r = parseReportNarrative(html)
+  assert.equal(r.patterns.length, 2, 'should extract both pattern cards')
+  assert.equal(r.patterns[0].prompt, '', 'first pattern should have empty prompt')
+  assert.ok(r.patterns[1].prompt.includes('second card'), 'second pattern should have its own prompt, not stolen by first')
+})

@@ -34,7 +34,7 @@ function parse(html) {
     .map(m => ({ code: strip(m[1]), why: strip(m[2]) }))
   const features = all(/<div class="feature-title">([\s\S]*?)<\/div>\s*<div class="feature-oneliner">([\s\S]*?)<\/div>[\s\S]*?<div class="feature-why">([\s\S]*?)<\/div>/g, h)
     .map(m => ({ title: strip(m[1]), oneliner: strip(m[2]), why: strip(m[3]) }))
-  const patterns = all(/<div class="pattern-title">([\s\S]*?)<\/div>\s*<div class="pattern-summary">([\s\S]*?)<\/div>\s*<div class="pattern-detail">([\s\S]*?)<\/div>(?:[\s\S]*?<code class="copyable-prompt">([\s\S]*?)<\/code>)?/g, h)
+  const patterns = all(/<div class="pattern-title">([\s\S]*?)<\/div>\s*<div class="pattern-summary">([\s\S]*?)<\/div>\s*<div class="pattern-detail">([\s\S]*?)<\/div>\s*(?:<div class="copyable-prompt-section">[\s\S]*?<code class="copyable-prompt">([\s\S]*?)<\/code>)?/g, h)
     .map(m => ({ title: strip(m[1]), summary: strip(m[2]), detail: strip(m[3]), prompt: m[4] ? strip(m[4]) : '' }))
   const sub = strip(between(h, /<p class="subtitle">/, /<\/p>/))
   const mm = /(\d+)\s+messages? across\s+(\d+)\s+sessions/i.exec(sub)
