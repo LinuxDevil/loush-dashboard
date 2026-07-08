@@ -1,0 +1,5 @@
+{ "session_id": "s1", "underlying_goal": "ship feature X", "goal_categories": { "feature_implementation": 1 },
+  "outcome": "mostly_achieved", "user_satisfaction_counts": { "likely_satisfied": 3 },
+  "claude_helpfulness": "very_helpful", "session_type": "multi_task",
+  "friction_counts": { "wrong_approach": 2 }, "primary_success": "multi_file_changes",
+  "brief_summary": "shipped X" }
