@@ -1,6 +1,6 @@
 import { parseUsageData, groupByProject } from './career-insights.mjs'
 import { parseReportNarrative } from './career-insights-report.mjs'
-import { attributeBugs } from './career-attribution.mjs'
+import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
@@ -25,7 +25,12 @@ export function buildSnapshot(deps) {
   const bugInput = readBugs()
   // GitHub import, when present, is the better PR-count source than the (empty) Phase-1 stub.
   const myPrCount = github?.prLifecycle?.reviewRoundsPerPr?.length || bugInput.myPrCount || 0
-  const quality = attributeBugs({ ...bugInput, myPrCount, resolved })
+  // Blame (computed at import, pure data here) augments attribution when a GitHub import exists;
+  // otherwise fall back to the Phase-1 attributor. Escaped-vs-caught split is identical either way.
+  const quality = github && !github.error
+    ? attributeBugsWithBlame({ ...bugInput, myPrCount, resolved,
+        bugs: (bugInput.bugs || []).map(b => github.blame?.[b.id] ? { ...b, introducingAuthorEmail: github.blame[b.id] } : b) })
+    : attributeBugs({ ...bugInput, myPrCount, resolved })
   const todayIso = new Date().toISOString().slice(0, 10)
   const priorChangeFailProxy = priorQuarterRatio(config.rollup, todayIso)   // null when no prior quarter
 
