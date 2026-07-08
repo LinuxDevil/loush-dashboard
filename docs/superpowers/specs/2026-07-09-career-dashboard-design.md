@@ -111,7 +111,7 @@ convention. **Minimize manual feeding** (§4 rule). Shape:
   feedbackRequests: [{ id, askedOf, topic, trigger, status, requestedAt, receivedAt }],
   decisions: [{ id, date, chose, over, because, revisitWhen, outcome, becameAdr }],
   brag: [{ id, date, title, impact, evidence, source:'auto'|'manual', links[] }],
-  retros: [{ id, weekOf, worked, didnt, differently }],
+  retros: [{ id, weekOf, worked, didnt, change }],
   timeTarget: { deepWork, reviewsMentorship, designStrategy, opsInterrupts },   // percentages
   oneOnOnes: [{ id, date, agreedActions:[{text,done}], managerFeedback, growthTopic, briefSnapshot }],
   // derived + cached (idempotent)
@@ -147,6 +147,9 @@ with a "how this is counted" tooltip so the number is trustworthy:
 - **Change-fail proxy** = (attributed bugs + reverts on my commits) ÷ (my merged PRs) over the window.
 - Attribution is **surfaced, never silent**: each counted bug lists which rule matched. Unattributable
   bugs go to an "unattributed" bucket, not to me. The rule is centralized in one function, unit-tested.
+- **Phase-2 upgrade (§11.A):** once the GitHub import lands, rule (3) is replaced by **blame-based
+  attribution** — link a bug-fix PR back to the PR that introduced the fixed lines via `git blame`,
+  retiring the fuzzy `bugs.json` proxy and making the Quality panel trustworthy.
 
 ## 3. Panels (phased)
 
@@ -254,6 +257,11 @@ rollup** in `career.json.rollup` — an `activityDays` date-set (for streaks) pl
 silently wrong if derived from a limited load window, so they are persisted, not recomputed. This is a few
 kB, not a warehouse, and is the only place snapshot outputs are retained across refreshes.
 
+**Amended by §11.D (deliberate):** the external-source and learning-loop work adds a small set of further
+persisted structures — `imports` (pointers to on-disk export files, not the data itself), `lessons`
+(curated, human-approved), `ticketLinks` (a join cache), and `retros`. These are curated/cache/pointer
+data, not a time-series warehouse; the "no warehouse" principle stands.
+
 ## 8. Testing
 
 - **Parsers** (facets, session-meta, quarantined report.html) — unit tests over the real sample report + a
@@ -282,3 +290,112 @@ kB, not a warehouse, and is the only place snapshot outputs are retained across 
 - `claude -p` analyze, versioned writes, backups → Team Designer / Task Board / server backup helper.
 - Overview gamification primitives (level ring, streak, badge grid) → Overview.
 - Design system → existing dashboards; Career gets its own accent for distinct-but-consistent identity.
+
+## 11. Addendum — External Data Sources & the Learning Loop
+
+Added in review. The through-line: the value of external sources is **cross-referencing**, not more
+panels. Each source alone is activity; joined, they measure **influence and impact** — what senior/staff is
+actually assessed on. The learning loop then closes the circuit from "what happened" to "what I'll do
+differently." All of this is Phase 2+ (see §11.C); none of it precedes the Phase-1 gate.
+
+### 11.A External data sources (read-only, batch-imported to disk, each behind a quarantined parser)
+
+**Architectural conditions (hard, same rigor as §2.4):** all four sources are **read-only**; imports are
+**batch exports/API pulls dropped to disk** (files-on-disk architecture); **each source lands behind its own
+quarantined parser** — a Slack export-format change must never break the Quality panel; each import is a
+**snapshot input, not a new persistence layer** (only the pointer + lastAt persist, §11.D); tokens handled
+properly; **nothing ever writes back** to these systems.
+
+- **GitHub — first priority.** Adds the **review footprint** the spec is blind to: PRs I reviewed, comment
+  depth, how often my comments led to changes, whose code I review (mentorship), and **how often I'm
+  requested as reviewer** (the org's own expert signal — pure staff evidence). Plus PR lifecycle on my own
+  work: time-to-first-review, review rounds/PR, size distribution (4-round PRs = scoping/communication
+  growth signal; PRs unreviewed for days = a 1:1 team topic). **Closes the bug-attribution gap** →
+  blame-based rule (upgrades §2.5).
+- **Jira — second.** Beyond pending/in-progress: **cycle time per phase** (where my tickets stall),
+  **estimate vs actual** (systematic underestimation of a work type = concrete "get better" item),
+  **reopened-ticket rate** (cleaner change-fail signal than bugs), and **class of work** — epics I drive vs
+  tasks handed to me, tickets I filed vs received. **Originated-vs-assigned trending up over quarters is one
+  of the clearest promotion narratives that exists** → feeds the ladder-gap panel (§3, panel 8).
+- **Confluence — third.** The Influence panel's missing evidence base: docs authored / substantially
+  edited, comment threads resolved, and **view/link counts by others** (the line between a diary entry and
+  organizational influence). Runbooks/onboarding = glue work invisible everywhere else. **Auto-seeds
+  brag-log candidates** ("RFC on X viewed 40× across 3 teams").
+- **Slack — last, and constrained.** Most valuable: **unrecorded mentorship/expertise** — questions
+  answered in help channels, threads where I unblocked someone, incidents I jumped into, how often I'm
+  tagged when my domain breaks. Also honest SPACE wellbeing: after-hours messages / interrupt-driven days
+  measured where interrupts actually happen. **Hard Goodhart rule:** Slack data may feed **only** the brag
+  log, the interrupt/wellbeing view, and expertise signals — **never a volume metric**. Prefer saved
+  messages and reactions-received on substantive answers over raw activity.
+
+**Two cross-source composites:**
+1. **"True impact" join** for the brag log: Jira epic → its GitHub PRs → its Confluence design doc → the
+   Slack announcement thread. **One brag entry per shipped initiative with all four receipts attached** —
+   promo-packet generator at full power.
+2. **"Where my time actually goes" reconciliation:** Claude sessions + GitHub review activity + Jira
+   transitions + Slack interrupt bursts → one actual-vs-intended split (§3 panel 12). Any single source lies
+   about time; four triangulate it.
+
+### 11.B The learning loop
+
+Frames everything as **deltas against my own baseline**; a fine session/ticket needs no lesson.
+
+1. **Per-project Flow & Harness profile.** Make the Flow panel per-project (group-by `project_path`, already
+   present) and add a **harness score**: how well is each project set up for effective AI-assisted work?
+   Inputs: CLAUDE.md presence/quality (and whether applied `/insights` suggestions), sessions ending in
+   verification vs untested, friction rate vs my cross-project baseline, one-shot success, interruption/
+   correction rate, tool-mix health. Output: score + top 2–3 fixes ("no CLAUDE.md, 2.3× baseline friction,
+   sessions rarely run tests"). **Harness improvements are legitimate quest material** — the rare metric
+   where improving the number genuinely improves the work.
+2. **Per-session "actual vs better."** Cheap deterministic heuristics catch pattern-level misses (many
+   interruptions + `wrong_approach` → constraints not front-loaded; long session, no commits, unclear
+   outcome → no checkpointing; hand-fixing output → verification missing). Deeper counterfactual is an
+   **on-demand `✨ Analyze`** over the transcript, **never automatic**. Rules: **≤3 findings/session**, only
+   for sessions that **deviate from my baseline**. Headline meta-metric: **repeat-friction rate** (same
+   friction recurring in the same project) — the truest measure of learning vs logging.
+3. **Per-ticket retro.** For each closed ticket compose Jira history (cycle time by phase, estimate vs
+   actual, reopens) + its PRs (rounds, comments, size) + later-attributed bugs + AI sessions that touched
+   it. **Linkage rule:** ticket IDs in branch names/commits; sessions matched by ticket ID in first prompt
+   or working branch. **Where linkage fails, show the retro without session data rather than guessing** — a
+   wrong join poisons trust.
+4. **Lessons engine — a pipeline, not a panel.**
+   - **Harvest** candidates (each with evidence links): recurring PR-review themes on my code (not one-off
+     nitpicks), bugs traced to my changes (defect class: edge case / concurrency / misread AC), ticket AC
+     vs shipped (late AC = requirements-reading lesson), session friction patterns, weekly retro lines.
+   - **Distill:** a **weekly** (not per-event) `✨ Analyze` clusters candidates into themes and drafts
+     lessons in a fixed shape **situation → pattern → rule → check**. Example: "Vague-AC tickets (situation)
+     cost a review round in 4 of last 6 (pattern) → confirm AC with reporter before starting (rule) →
+     checked by: review rounds on vague-AC tickets drop (check)." **A lesson without a measurable check is a
+     fortune cookie.** Nothing enters the list without explicit approve/edit/discard.
+   - **Apply & verify:** active lessons resurface contextually — matching project shows it in Me/Now,
+     matching ticket flags it in Tasks. Each check is tracked: pattern stops → lesson **auto-graduates to
+     "internalized"** (badge-worthy); pattern recurs while active → **red flag for a 1:1** (rule wrong or
+     environmental). **Cap ~5 active lessons** — twenty active is zero active.
+
+**Psychological design rule (whole loop):** findings are deltas vs my own baseline; **graduated lessons are
+celebrated as loudly as new ones are raised**; **repeat-friction trending down is the headline**. A
+dashboard that opens with a list of failures gets closed in week two.
+
+### 11.C Sequencing (amends the §3 phase plan)
+
+- **Phase-2 gate unchanged, now concrete:** nothing here starts until the Phase-1 six-panel core (+ 1:1
+  Prep) has **survived four weeks of real use** against §1.1.
+- **Phase 2:** GitHub import (review footprint + blame-based attribution — upgrades already-built panels),
+  then Jira (cycle time + originated-vs-assigned). **Harness score per project ships alongside Phase 2** —
+  pure `/insights` regrouping, no new linkage.
+- **Phase 3:** Confluence, then Slack (under the §11.A hard constraint). **Ticket retros** once GitHub+Jira
+  linkage is proven; **Lessons pipeline last** — it only works fed by everything above; lessons from thin
+  data are horoscopes. Per-session AI critique stays on-demand only.
+
+### 11.D New persistence (extends §2.3; amends §7 deliberately)
+
+```
+imports:     { github: {lastAt, path}, jira: {...}, confluence: {...}, slack: {...} },
+harness:     computed per project in snapshot (no persistence beyond applied-fix flags),
+lessons:     [{ id, status:'draft'|'active'|'internalized'|'discarded',
+                situation, pattern, rule, check, evidenceRefs[], createdAt, graduatedAt }],
+retros:      [{ id, weekOf, worked, didnt, change }],
+ticketLinks: { [ticketId]: { prIds[], sessionIds[], confidence } }
+```
+
+All writes through the existing versioned-write + backup helper; all awards and imports **idempotent**.
