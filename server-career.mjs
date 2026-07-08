@@ -55,6 +55,20 @@ export default function mountCareer(app, deps = {}) {
     return out
   })
 
+  function bragCandidates() {
+    const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
+    const cands = []
+    for (const t of board.tickets || []) if (t.stage === 'released')
+      cands.push({ id: 'tkt:' + t.id, date: t.updatedAt || Date.now(), title: `Shipped ${t.id}: ${t.title || ''}`.trim(), impact: '', evidence: t.id, source: 'auto' })
+    const nar = cache?.insights?.narrative
+    for (const w of (nar?.wins || [])) cands.push({ id: 'win:' + w.title, date: Date.now(), title: w.title, impact: w.desc, evidence: '/insights', source: 'auto' })
+    return cands
+  }
+  const storyMd = (cfg) => {
+    const wins = [...(cfg.brag || [])].slice(-20)
+    return `# Story so far\n\n` + wins.map(b => `- **${b.title}** — ${b.impact || ''} ${b.evidence ? `(${b.evidence})` : ''}`).join('\n')
+  }
+
   const build = () => {
     const config = store.read()
     const resolved = resolveIdentity(config.identity)
@@ -63,6 +77,7 @@ export default function mountCareer(app, deps = {}) {
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)
     snap.rollup = { ...config.rollup, ...patch.rollup }
+    snap.bragCandidates = bragCandidates()
     cache = snap
     return snap
   }
@@ -90,4 +105,10 @@ export default function mountCareer(app, deps = {}) {
       res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
+
+  app.get('/api/career/brag', (req, res) => res.json({ candidates: bragCandidates(), entries: store.read().brag }))
+  app.post('/api/career/brag', (req, res) => { const cfg = store.read(); const e = { id: 'b' + Date.now(), date: Date.now(), source: 'manual', ...req.body.entry }; store.write({ brag: [...cfg.brag, e] }); cache = null; res.json({ ok: true }) })
+  app.post('/api/career/retro', (req, res) => { const cfg = store.read(); store.write({ retros: [...cfg.retros, { id: 'r' + Date.now(), ...req.body }] }); res.json({ ok: true }) })
+  app.get('/api/career/story-so-far', (req, res) => res.json({ markdown: storyMd(store.read()) }))
+  app.get('/api/career/promo-packet', (req, res) => { const c = store.read(); res.json({ markdown: storyMd(c) + `\n\n## Competency self-assessment\nLevel: ${c.competency?.levelSelfAssessed || '—'}\n` }) })
 }
