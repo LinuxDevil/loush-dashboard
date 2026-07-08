@@ -28,12 +28,15 @@
 
 **Files:** Create `test/fixtures/github/reviews.json`, `test/fixtures/github/prs.json`, `test/fixtures/jira/issues.json`.
 
-- [ ] **Step 1:** Capture your real review footprint and PR lifecycle JSON:
-  `gh api "search/issues?q=reviewed-by:@me+type:pr" > test/fixtures/github/reviews.json`
-  `gh pr list --author @me --state all --json number,title,createdAt,mergedAt,reviews,additions,deletions,files > test/fixtures/github/prs.json`
-- [ ] **Step 2:** Capture Jira issues you're involved in (reuse the Eng dashboard's configured host/token, or export from Jira): a JSON array of issues with `key, fields.status, fields.reporter, fields.assignee, fields.created, changelog.histories[]`. Save to `test/fixtures/jira/issues.json`.
-- [ ] **Step 3:** Inspect both — note the exact field paths present. **These fixtures are the contract** every parser test in this phase asserts against.
-- [ ] **Step 4:** Commit fixtures. `git add test/fixtures/github test/fixtures/jira && git commit -m "test(career): capture GitHub+Jira fixtures for phase-2 parsers"`
+> **PRIVACY — redact before committing (fix).** Raw `gh`/Jira output contains **other people's** names, emails, ticket titles, and review comments. Committed to a repo that ever touches a remote, that is coworker data leaving your machine. Same rule as Phase-3 Task 0: **keep field paths and shapes; tokenize every name/email/title/comment** (e.g. `reviewer-1`, `user1@example.test`, `TICKET-TITLE-1`). **Your own identity fields stay real** — the tests match "mine" on them.
+
+- [ ] **Step 1:** Capture your review footprint and PR lifecycle JSON, then run them through a redaction pass before saving:
+  `gh api "search/issues?q=reviewed-by:@me+type:pr" | node scripts/redact-fixture.mjs > test/fixtures/github/reviews.json`
+  `gh pr list --author @me --state all --json number,title,createdAt,mergedAt,reviews,additions,deletions,files | node scripts/redact-fixture.mjs > test/fixtures/github/prs.json`
+  Write a tiny `scripts/redact-fixture.mjs` that walks the JSON and replaces any key in `{name, login, email, title, body, displayName}` with a stable token (`login→reviewer-N`), **except** values equal to your own handle/emails (from `career.json.identity`), which pass through unchanged.
+- [ ] **Step 2:** Capture Jira issues you're involved in (reuse the Eng dashboard's host/token, or export from Jira): a JSON array with `key, fields.status, fields.reporter, fields.assignee, fields.created, changelog.histories[]`. Pipe through the same redactor (tokenize `reporter`/`assignee` displayName/email and `summary`, keep your own). Save to `test/fixtures/jira/issues.json`.
+- [ ] **Step 3:** Inspect both — note the exact field paths present. **These fixtures are the contract** every parser test asserts against. Confirm no un-tokenized coworker name/email/title remains (`grep` for a known colleague's name should return nothing).
+- [ ] **Step 4:** Commit the redactor + fixtures. `git add scripts/redact-fixture.mjs test/fixtures/github test/fixtures/jira && git commit -m "test(career): capture + redact GitHub/Jira fixtures for phase-2 parsers"`
 
 ---
 
@@ -58,13 +61,15 @@
 
 **Files:** Modify `career-attribution.mjs`; Test extend `test/career-attribution.test.mjs`.
 
-**Interfaces:** Add `attributeBugsWithBlame({ bugs, findings, myPrCount, reverts, resolved, blameLookup })` where `blameLookup(bug)` → `introducingAuthorEmail|null` (from `git blame` on the fixed lines, computed server-side). Rule (2) becomes: bug is mine if the PR that introduced the fixed lines is authored by me. **Review findings remain a separate axis** — reuse the exact Phase-1 `caughtInReview` logic unchanged.
+**Interfaces:** Add `attributeBugsWithBlame({ bugs, findings, myPrCount, reverts, resolved })` where each `bug` already carries a pre-computed `bug.introducingAuthorEmail` (see the import note below). Rule (2) becomes: bug is mine if the PR/commit that introduced the fixed lines is authored by me. **Review findings remain a separate axis** — reuse the exact Phase-1 `caughtInReview` logic unchanged.
 
-- [ ] **Step 1:** Write failing test: a bug whose `blameLookup` returns my email is attributed via rule `blame`; a review finding still does NOT move `changeFailProxy`.
+> **PERF — compute `git blame` at IMPORT time, never at snapshot build (fix).** Spec §2.4's warm-refresh target is a hard number; spawning `git blame -L` per fixed line inside `readBugs`/snapshot puts subprocess latency on every refresh. Instead, the GitHub import (Task 1) computes blame **once** when it drops to disk and stores a `{ bugId → introducingAuthorEmail }` map in the dropped file. The snapshot then consumes it as **pure data** — zero subprocess cost on refresh, and consistent with "imports are snapshot inputs" (§11.A). `attributeBugsWithBlame` therefore takes plain data, not a `blameLookup` callback.
+
+- [ ] **Step 1:** Write failing test: a bug with `introducingAuthorEmail` = my email is attributed via rule `blame`; a review finding still does NOT move `changeFailProxy`; a bug with a coworker's introducing email goes to `unattributed`.
 - [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3:** Implement `attributeBugsWithBlame` reusing the caught-in-review branch verbatim from `attributeBugs`; only the escaped-attribution branch gains the blame rule. Keep `attributeBugs` for the no-GitHub fallback.
-- [ ] **Step 4:** Run → PASS. Wire the server `readBugs` to provide `blameLookup` (spawns `git blame -L` per fixed line, memoized) when a repo path is known; snapshot uses `attributeBugsWithBlame` when GitHub import is present, else falls back.
-- [ ] **Step 5:** Commit `feat(career): blame-based escaped-bug attribution (findings still separate)`.
+- [ ] **Step 3:** Implement `attributeBugsWithBlame` reusing the caught-in-review branch verbatim from `attributeBugs`; only the escaped-attribution branch gains the blame rule (pure data, no spawn). Keep `attributeBugs` for the no-GitHub fallback.
+- [ ] **Step 4:** Run → PASS. In Task 1's import, add the blame computation (spawn `git blame` once per fixed line during import, memoized per commit) and persist the `bugId→introducingAuthorEmail` map into the dropped file. Snapshot merges that map onto bugs and uses `attributeBugsWithBlame` when a GitHub import is present, else falls back to Phase-1 `attributeBugs`.
+- [ ] **Step 5:** Commit `feat(career): blame-based attribution (blame computed at import, pure at refresh)`.
 
 ---
 

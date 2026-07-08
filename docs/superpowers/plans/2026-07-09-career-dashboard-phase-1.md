@@ -115,7 +115,9 @@ export function defaultConfig() {
     competency: { levelSelfAssessed: '', ratings: {}, ladder: [] },
     learning: { now: [], next: [], techRadar: [] },
     okrs: [], courses: [], ownership: [], feedback: [], feedbackRequests: [],
-    decisions: [], brag: [], retros: [], timeTarget: null, oneOnOnes: [],
+    decisions: [], brag: [], retros: [], timeTarget: null, oneOnOnes: [], pendingDecisions: [],
+    afterHoursWindow: { startHour: 19, endHour: 6 }, // LOCAL hours; "after hours" is personal (fix: not UTC)
+    tzOffsetHours: null,          // null = server-local getHours(); set e.g. 3 for UTC+3 to make it explicit/deterministic
     insightsRaw: null, analyses: {},
     xpLedger: [], quests: [], badges: [],
     rollup: { activityDays: [], streaks: {}, personalBests: {}, quarterlyBugRatio: {} },
@@ -149,6 +151,10 @@ function deepMerge(base, patch) {
   }
   return out
 }
+
+// RULE (mid-phase keys): any key added to defaultConfig() AFTER a career.json may already exist on disk
+// must EITHER be read with a fallback at every reader, OR be introduced with a CONFIG_VERSION bump + a
+// migration entry that backfills it. Task 13 uses the version-bump route (to exercise the migration path).
 
 export function makeStore({ file, track, readJson }) {
   const load = () => {
@@ -731,7 +737,8 @@ const mk = (severity, area, message, evidenceRefs = []) => ({ id: `${area}:${slu
 export function focusItems(snapshot = {}) {
   const out = []
   const q = snapshot.quality || {}
-  if ((q.changeFailProxy || 0) - (q.priorChangeFailProxy || 0) > 0.1)
+  // only fire when a real prior PERIOD exists; null prior (no previous quarter) must not false-fire (fix 2)
+  if (q.priorChangeFailProxy != null && (q.changeFailProxy || 0) - q.priorChangeFailProxy > 0.1)
     out.push(mk('high', 'quality', 'Change-fail rose sharply — shore up tests and verification', ['quality']))
   const w = snapshot.workflow || {}
   if (w.topFriction === 'wrong_approach')
@@ -788,13 +795,14 @@ import { defaultConfig } from '../career-config.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const usageDir = path.join(HERE, 'fixtures', 'usage-data')
 
-function deps() {
+function deps(over = {}) {
   return {
     usageDir, mtimeCache: new Map(), config: defaultConfig(),
     resolved: resolveIdentity({ gitEmails: ['ali@work.com'] }),
-    readBugs: () => ({ bugs: [{ id: 'b1', culpritAuthorEmail: 'ali@work.com' }], findings: [], myPrCount: 4, reverts: 0 }),
+    readBugs: () => ({ bugs: [{ id: 'b1', culpritAuthorEmail: 'ali@work.com' }], findings: [], myPrCount: 6, reverts: 0 }),
     readTasks: () => ([{ id: 'AIR-1', stage: 'in-progress', ageDays: 9, slaDays: 5 }]),
     readReport: () => '<html></html>',
+    ...over,
   }
 }
 
@@ -806,12 +814,29 @@ test('buildSnapshot assembles all phase-1 sections', () => {
   assert.equal(s.parsed >= 1, true)
 })
 
-test('updateRollup sources bug ratio from escaped-only proxy and records activity day', () => {
+test('lowestBugRatio only records on a meaningful window (>=5 PRs), else stays null (fix 4)', () => {
+  const big = updateRollup(defaultConfig(), buildSnapshot(deps()), '2026-07-09')          // myPrCount 6
+  assert.equal(big.rollup.personalBests.lowestBugRatio, buildSnapshot(deps()).quality.changeFailProxy)
+  const small = updateRollup(defaultConfig(), buildSnapshot(deps({ readBugs: () => ({ bugs: [], findings: [], myPrCount: 2, reverts: 0 }) })), '2026-07-09')
+  assert.equal(small.rollup.personalBests.lowestBugRatio, undefined) // guarded — not a permanent trivial zero
+})
+
+test('after-hours uses a LOCAL window, not UTC (fix 1)', () => {
+  // fixture s1 starts 19:24 UTC. At UTC+3 that is 22:24 local → after-hours (window 19–6).
+  const cfg = defaultConfig(); cfg.tzOffsetHours = 3
+  const s = buildSnapshot(deps({ config: cfg }))
+  assert.equal(s.flow.afterHoursPct, 1)             // 22:24 local IS after-hours
+  const cfg2 = defaultConfig(); cfg2.tzOffsetHours = -8 // PT: 19:24 UTC = 11:24 local → NOT after-hours
+  const s2 = buildSnapshot(deps({ config: cfg2 }))
+  assert.equal(s2.flow.afterHoursPct, 0)
+})
+
+test('coding streak survives an idle today (fix 3)', () => {
   const cfg = defaultConfig()
-  const snap = buildSnapshot(deps())
-  const patch = updateRollup(cfg, snap, '2026-07-09')
-  assert.ok(patch.rollup.activityDays.includes('2026-07-09'))
-  assert.equal(patch.rollup.personalBests.lowestBugRatio, snap.quality.changeFailProxy)
+  cfg.rollup.activityDays = ['2026-07-07', '2026-07-08'] // yesterday + day before; nothing today
+  const idleSnap = buildSnapshot(deps({ usageDir: path.join(HERE, 'fixtures', 'no-usage-dir') })) // missing dir → 0 sessions
+  const patch = updateRollup(cfg, { ...idleSnap, me: { sessionCount: 0 } }, '2026-07-09')
+  assert.equal(patch.rollup.streaks.coding, 2) // NOT 0
 })
 ```
 
@@ -829,7 +854,19 @@ import { parseReportNarrative } from './career-insights-report.mjs'
 import { attributeBugs } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
 
-const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
+export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
+// prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
+export function priorQuarterRatio(rollup, todayIso) {
+  const d = new Date(todayIso + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 3)
+  const v = rollup?.quarterlyBugRatio?.[quarterOf(d.toISOString().slice(0, 10))]
+  return v == null ? null : v
+}
+// LOCAL hour of a session; tzOffsetHours=null → server-local, else explicit UTC offset (deterministic in tests). (fix 1)
+export function localHour(iso, tzOffsetHours) {
+  const d = new Date(iso)
+  return tzOffsetHours == null ? d.getHours() : (d.getUTCHours() + tzOffsetHours + 24) % 24
+}
+const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
   const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport } = deps
@@ -838,16 +875,16 @@ export function buildSnapshot(deps) {
 
   const bugInput = readBugs()
   const quality = attributeBugs({ ...bugInput, resolved })
-  const priorChangeFailProxy = config.rollup?.personalBests?.lastChangeFailProxy || 0
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const priorChangeFailProxy = priorQuarterRatio(config.rollup, todayIso)   // null when no prior quarter
 
-  // flow / workflow rollups from all sessions
+  // flow / workflow rollups from all sessions — after-hours uses a LOCAL, configurable window (fix 1)
+  const win = config.afterHoursWindow || { startHour: 19, endHour: 6 }
   const totalFriction = {}
   let afterHours = 0, withTimes = 0
   for (const s of sessions) {
     for (const [k, v] of Object.entries(s.friction_counts || {})) totalFriction[k] = (totalFriction[k] || 0) + v
-    const hr = new Date(s.start_time).getUTCHours()
-    if (hr >= 20 || hr < 6) afterHours++
-    if (s.start_time) withTimes++
+    if (s.start_time) { withTimes++; if (inWindow(localHour(s.start_time, config.tzOffsetHours), win)) afterHours++ }
   }
   const topFriction = Object.entries(totalFriction).sort((a, b) => b[1] - a[1])[0]?.[0] || null
   const tasks = readTasks()
@@ -857,30 +894,38 @@ export function buildSnapshot(deps) {
     me: { runningNow: [], sessionCount: sessions.length },
     flow: { afterHoursPct: withTimes ? afterHours / withTimes : 0, wip: tasks.filter(t => t.stage === 'in-progress').length,
             sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}) },
-    quality: { ...quality, priorChangeFailProxy },
+    quality: { ...quality, priorChangeFailProxy, myPrCount: bugInput.myPrCount || 0 },
     workflow: { topFriction, friction: totalFriction,
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,
     insights: { narrative: parseReportNarrative(readReport()) },
     projects: [...byProject.entries()].map(([path, v]) => ({ path, ...v.totals, sessions: v.sessions.length })),
   }
-  snap.focus = focusItems(snap)
+  // hydrate the acted-on mark (guarded — `focusActed` is introduced in Task 13; guard keeps this correct before/after)
+  snap.focus = focusItems(snap).map(f => ({ ...f, actedOn: (config.focusActed || {})[f.id] || null }))
   return snap
 }
+
+const MEANINGFUL_PR_MIN = 5   // don't let a trivial 0/small-sample window own "personal best" forever (fix 4)
 
 export function updateRollup(config, snapshot, todayIso) {
   const rollup = JSON.parse(JSON.stringify(config.rollup || { activityDays: [], streaks: {}, personalBests: {}, quarterlyBugRatio: {} }))
   const days = new Set(rollup.activityDays)
-  if (snapshot.me.sessionCount > 0) days.add(todayIso)
+  const activeToday = snapshot.me.sessionCount > 0
+  if (activeToday) days.add(todayIso)
   rollup.activityDays = [...days].sort()
-  // coding streak = consecutive days ending today
-  let streak = 0; let d = new Date(todayIso + 'T00:00:00Z')
+  // coding streak: today-idle must NOT break it (spec §3.2) — start the walk at today if active, else yesterday (fix 3)
+  let streak = 0
+  let d = new Date(todayIso + 'T00:00:00Z')
+  if (!activeToday) d.setUTCDate(d.getUTCDate() - 1)
   while (days.has(d.toISOString().slice(0, 10))) { streak++; d.setUTCDate(d.getUTCDate() - 1) }
   rollup.streaks.coding = streak
-  const ratio = snapshot.quality.changeFailProxy                    // escaped-only source
-  rollup.personalBests.lastChangeFailProxy = ratio
-  rollup.personalBests.lowestBugRatio = rollup.personalBests.lowestBugRatio == null ? ratio : Math.min(rollup.personalBests.lowestBugRatio, ratio)
+  // bug ratio: escaped-only source, current PERIOD only; never overwrite a prior-period baseline (fix 2)
+  const ratio = snapshot.quality.changeFailProxy
   rollup.quarterlyBugRatio[quarterOf(todayIso)] = ratio
+  // personal best only from a meaningful window (fix 4)
+  if ((snapshot.quality.myPrCount || 0) >= MEANINGFUL_PR_MIN)
+    rollup.personalBests.lowestBugRatio = rollup.personalBests.lowestBugRatio == null ? ratio : Math.min(rollup.personalBests.lowestBugRatio, ratio)
   return { rollup }
 }
 ```
@@ -979,7 +1024,8 @@ const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 // authored sections the config POST is allowed to touch (never derived/rollup)
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
-  'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes'])
+  'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
+  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours'])
 
 export const __test = { AUTHORED }
 
@@ -1365,7 +1411,23 @@ app.post('/api/career/focus/act', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 ```
-Add `focusActed` to `defaultConfig()` (Task 1) as `{}` and to `AUTHORED`. In `buildSnapshot`, after `focusItems`, hydrate each item's `actedOn` from `config.focusActed[item.id] || null`. Add a config test asserting `focusActed` round-trips.
+`focusActed` is added mid-phase, so introduce it via a **version bump + migration** (per the mid-phase-keys rule in Task 1), which also exercises the migration machinery early. In `career-config.mjs`:
+- bump `export const CONFIG_VERSION = 2`
+- add `focusActed: {}` to `defaultConfig()`
+- append the v1→v2 migration: `MIGRATIONS[1] = (cfg) => ({ ...cfg, version: 2, focusActed: cfg.focusActed || {} })`
+- add `'focusActed'` to `AUTHORED` (Task 8)
+
+Add a migration test to `test/career-config.test.mjs`:
+```js
+test('migrate v1 -> v2 backfills focusActed', () => {
+  const { cfg, changed } = migrate({ version: 1, brag: [{ id: 'b1' }] })
+  assert.equal(cfg.version, 2)
+  assert.equal(changed, true)
+  assert.deepEqual(cfg.focusActed, {})
+  assert.equal(cfg.brag[0].id, 'b1')
+})
+```
+Then in `buildSnapshot`, after `focusItems`, hydrate each item's `actedOn` from `config.focusActed[item.id] || null`.
 
 - [ ] **Step 2: Create the panel**
 
@@ -1599,8 +1661,20 @@ function brief() {
   const sinceTs = last ? last.date : 0
   const winsSinceLast = (cfg.brag || []).filter(b => (b.date || 0) >= sinceTs).map(b => b.title)
   const blockers = (cache?.focus || []).filter(f => f.severity === 'high').map(f => f.message)
-  return { winsSinceLast, blockers, decisionsNeeded: [], lastAgreed: last?.agreedActions || [], growthTopic: '' }
+  // growthTopic defaults to the top not-yet-acted-on focus item (fix 7) — not a hardcoded '' placeholder
+  const topFocus = (cache?.focus || []).find(f => !f.actedOn)
+  return {
+    winsSinceLast, blockers,
+    decisionsNeeded: cfg.pendingDecisions || [],        // manual quick-add (§4: legitimate manual input; brief auto-composes the rest)
+    lastAgreed: last?.agreedActions || [],
+    growthTopic: topFocus ? topFocus.message : '',
+  }
 }
+// manual quick-add for "a decision I need from my manager" — inherently something you type
+app.post('/api/career/pending-decision', (req, res) => {
+  try { const cfg = store.read(); store.write({ pendingDecisions: [...(cfg.pendingDecisions || []), String(req.body.text || '').slice(0, 300)] }); cache = null; res.json({ ok: true }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 app.get('/api/career/brief', (req, res) => res.json(brief()))
 app.post('/api/career/one-on-one', (req, res) => {
   const cfg = store.read()
@@ -1620,13 +1694,15 @@ import { PANEL, HEAD, MONO, ACCENT } from './theme.js'
 export default function OneOnOnePanel({ reload }) {
   const [b, setB] = useState(null)
   const [fb, setFb] = useState(''); const [topic, setTopic] = useState(''); const [actions, setActions] = useState('')
-  useEffect(() => { api.get('/api/career/brief').then(setB).catch(e => toast(e.message, 'error')) }, [])
+  const [decision, setDecision] = useState('')
+  const loadBrief = () => api.get('/api/career/brief').then(b => { setB(b); setTopic(b.growthTopic || '') }).catch(e => toast(e.message, 'error'))
+  useEffect(() => { loadBrief() }, [])
   const save = async () => {
     const agreedActions = actions.split('\n').filter(Boolean).map(text => ({ text, done: false }))
     await api.post('/api/career/one-on-one', { agreedActions, managerFeedback: fb, growthTopic: topic })
-    toast('1:1 logged — next brief will track these', 'success'); setFb(''); setTopic(''); setActions(''); reload?.()
-    api.get('/api/career/brief').then(setB)
+    toast('1:1 logged — next brief will track these', 'success'); setFb(''); setActions(''); reload?.(); loadBrief()
   }
+  const addDecision = async () => { if (!decision.trim()) return; await api.post('/api/career/pending-decision', { text: decision }); setDecision(''); toast('added', 'success'); loadBrief() }
   if (!b) return <div style={{ ...PANEL, color: '#7a716a' }}>composing brief…</div>
   const Sec = ({ t, items, empty }) => <div style={PANEL}><div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>{t}</div>{items.length ? items.map((x, i) => <div key={i} style={{ font: `400 12px ${MONO}`, padding: '3px 0' }}>• {typeof x === 'string' ? x : x.text}{x.done === false ? ' ⏳' : ''}</div>) : <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>{empty}</div>}</div>
   return (
@@ -1634,6 +1710,18 @@ export default function OneOnOnePanel({ reload }) {
       <Sec t="Status of what we agreed" items={b.lastAgreed} empty="no prior 1:1 on record" />
       <Sec t="Wins since last 1:1" items={b.winsSinceLast} empty="log wins in the Brag panel" />
       <Sec t="Blockers & risks to raise" items={b.blockers} empty="nothing high-severity" />
+      <div style={PANEL}>
+        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Decisions I need</div>
+        {(b.decisionsNeeded || []).map((x, i) => <div key={i} style={{ font: `400 12px ${MONO}`, padding: '3px 0' }}>• {x}</div>)}
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <input value={decision} onChange={e => setDecision(e.target.value)} placeholder="a decision I need from my manager" style={{ flex: 1, font: `400 12px ${MONO}`, background: '#1c1815', color: '#e5dbd2', border: '1px solid #7a716a55', borderRadius: 6, padding: '6px 8px' }} />
+          <button onClick={addDecision} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>+ add</button>
+        </div>
+      </div>
+      <div style={PANEL}>
+        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 4 }}>Growth topic to raise</div>
+        <div style={{ font: `400 12px ${MONO}`, color: b.growthTopic ? '#e5dbd2' : '#7a716a' }}>{b.growthTopic || 'no focus item pending — pick one to discuss'}</div>
+      </div>
       <div style={PANEL}>
         <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>After the 1:1 — log it</div>
         <textarea value={actions} onChange={e => setActions(e.target.value)} placeholder="agreed actions (one per line)" style={{ width: '100%', height: 60, font: `400 12px ${MONO}`, background: '#1c1815', color: '#e5dbd2', border: '1px solid #7a716a55', borderRadius: 6, padding: 8, marginBottom: 6 }} />
@@ -1686,3 +1774,5 @@ git commit -m "docs(career): phase-1 README section + 4-week gate checklist"
 **Type consistency:** `focusItems`→`snap.focus`; `attributeBugs` return shape consumed identically in T7/T12; `makeStore.read/write` used in T8/T13/T15/T16; `resolveIdentity`/`matchesMe` signatures stable T2→T5→T7. `career.json` `focusActed` added in T13 is registered in `defaultConfig`/`AUTHORED`.
 
 **Note on real-data selectors:** T4's report.html regexes are pinned to the committed fixture; if your live report differs, the fixture is the contract — adjust regex to it (the quarantine guarantees a miss degrades to empty narrative, never a crash).
+
+**Review fixes incorporated (pre-execution):** (1) after-hours uses a LOCAL, configurable window with an explicit `tzOffsetHours` and a timezone-unambiguous test — no more UTC mis-flagging of healthy mornings; (2) the quality heuristic compares against the **prior quarter**, not the last refresh, and never fires without a real prior period; (3) the coding streak survives an idle today (walk starts at yesterday when today is idle); (4) `lowestBugRatio` only records on a meaningful window (≥5 PRs) so day-one zero can't own the record forever; (7) the 1:1 brief's `growthTopic` defaults to the top not-acted focus item and `decisionsNeeded` is a manual quick-add — no permanently-empty sections; (8a) `focusActed` is introduced via a CONFIG_VERSION bump + migration with its own test.

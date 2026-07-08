@@ -104,13 +104,27 @@
 
 ### Task 6: OKRs & Objectives
 
-**Files:** panel `src/career/OkrPanel.jsx`; Modify `server-career.mjs`.
+**Files:** Create `career-okr.mjs`; Test `test/career-okr.test.mjs`; panel `src/career/OkrPanel.jsx`; Modify `server-career.mjs`.
 
-**Interfaces:** `config.okrs=[{id,objective,quarter,krs:[{id,text,metricRef,target,current}]]`. Each KR's `metricRef` auto-tracks against snapshot panels 3/4/10 (flow/quality/allocation). Closing a KR emits an outcome XP event (Task 5). Renders progress rings per KR from live `current` vs `target`.
+**Interfaces:** `config.okrs=[{id,objective,quarter,krs:[{id,text,metricRef,target,current}]]`. `resolveKrCurrent(kr, snapshot)` reads the KR's `metricRef` (a dotted path into the snapshot, e.g. `quality.changeFailProxy`) and returns the live value — this linkage is what makes OKRs auto-tracking rather than a text file, so it is unit-tested first. Closing a KR emits an outcome XP event (Task 5).
 
-- [ ] **Step 1:** Panel with add-OKR/add-KR, `metricRef` picker (enumerated snapshot metrics), live progress.
-- [ ] **Step 2:** KR close → XP event; verify via preview (a KR wired to `quality.changeFailProxy` shows live current).
-- [ ] **Step 3:** Commit `feat(career): OKRs with metric-linked KRs feeding XP`.
+- [ ] **Step 1: Write the failing test** (the auto-tracking linkage — the only task without one until now):
+```js
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { resolveKrCurrent } from '../career-okr.mjs'
+test('a KR wired to quality.changeFailProxy reflects the live snapshot value', () => {
+  const snap = { quality: { changeFailProxy: 0.12 } }
+  assert.equal(resolveKrCurrent({ metricRef: 'quality.changeFailProxy', target: 0.05 }, snap), 0.12)
+})
+test('an unknown metricRef resolves to null, not a throw', () => {
+  assert.equal(resolveKrCurrent({ metricRef: 'nope.missing' }, {}), null)
+})
+```
+- [ ] **Step 2:** Run → FAIL (module missing).
+- [ ] **Step 3:** Implement `resolveKrCurrent` (safe dotted-path lookup returning `null` on any missing segment). Snapshot hydrates each KR's `current = resolveKrCurrent(kr, snap)`.
+- [ ] **Step 4:** Run → PASS. Panel: add-OKR/add-KR, `metricRef` picker (enumerated snapshot metrics), live progress rings; KR close → XP event.
+- [ ] **Step 5:** Verify via preview (a KR wired to `quality.changeFailProxy` shows the live current); commit `feat(career): OKRs with metric-linked auto-tracking + XP on close`.
 
 ---
 
