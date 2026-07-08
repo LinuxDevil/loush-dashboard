@@ -5,9 +5,33 @@ import { spawnSync } from 'node:child_process'
 import { makeStore } from './career-config.mjs'
 import { resolveIdentity, warnIfNoMatch } from './career-identity.mjs'
 import { buildSnapshot, updateRollup } from './career-snapshot.mjs'
+import { importGithub } from './career-import-github.mjs'
+import { blameMapForBugs } from './career-blame.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
+const IMPORTS = path.join(CLAUDE, 'career-imports')
+
+// Read-only shell to the already-authed gh CLI (mirrors server-eng.mjs). Never writes back.
+function gh(args, timeout = 60000) {
+  const r = spawnSync('gh', args, { timeout, maxBuffer: 64 * 1024 * 1024 })
+  if (r.status !== 0) throw new Error('gh: ' + (r.stderr || '').toString().slice(0, 200))
+  return r.stdout.toString()
+}
+// Latest raw drop for a source, or null. Quarantined: a missing/corrupt drop degrades to null.
+function latestDrop(source) {
+  const dir = path.join(IMPORTS, source)
+  let files = []; try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort() } catch { return null }
+  const f = files[files.length - 1]
+  if (!f) return null
+  try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) } catch { return null }
+}
+function writeDrop(source, data) {
+  const dir = path.join(IMPORTS, source); fs.mkdirSync(dir, { recursive: true })
+  const p = path.join(dir, `${Date.now()}.json`)
+  fs.writeFileSync(p, JSON.stringify(data))
+  return p
+}
 // authored sections the config POST is allowed to touch (never derived/rollup)
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
   'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
@@ -44,6 +68,14 @@ export default function mountCareer(app, deps = {}) {
     return (board.tickets || []).map(t => mapTicket(t))
   })
   const readReport = deps.readReport || (() => { try { return fs.readFileSync(path.join(usageDir, 'report.html'), 'utf8') } catch { return '' } })
+  // GitHub import is a snapshot INPUT read from the latest disk drop — never a live gh call on refresh.
+  const readGithub = deps.readGithub || ((resolved) => {
+    const drop = latestDrop('github')
+    if (!drop) return null
+    const imp = importGithub({ ghJson: { reviews: drop.reviews, prs: drop.prs }, resolved })
+    imp.blame = drop.blame || {}   // { bugId -> introducingAuthorEmail }, computed at import (Task 2)
+    return imp
+  })
   const readRunning = deps.readRunning || (() => {
     const root = path.join(CLAUDE, 'projects'); const cutoff = Date.now() - 5 * 60_000; const out = []
     let dirs = []; try { dirs = fs.readdirSync(root) } catch { return out }
@@ -72,7 +104,8 @@ export default function mountCareer(app, deps = {}) {
   const build = () => {
     const config = store.read()
     const resolved = resolveIdentity(config.identity)
-    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning })
+    const github = readGithub(resolved)
+    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github })
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)
@@ -103,6 +136,23 @@ export default function mountCareer(app, deps = {}) {
       acted[id] = { ref: ref || null, at: Date.now() }
       store.write({ focusActed: acted }); cache = null
       res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Read-only batch drop (spec §11.A): shell gh, write raw JSON to disk, persist only {lastAt,path}.
+  // Blame is computed HERE (once), not on refresh (spec §2.4 perf). A gh/format failure is quarantined.
+  app.post('/api/career/import/github', (req, res) => {
+    try {
+      const reviews = JSON.parse(gh(['api', 'search/issues?q=reviewed-by:@me+type:pr&per_page=50']))
+      const prs = JSON.parse(gh(['pr', 'list', '--author', '@me', '--state', 'all', '--json', 'number,title,createdAt,mergedAt,reviews,additions,deletions,files', '--limit', '50']))
+      const bugs = (readBugs().bugs) || []
+      const blame = blameMapForBugs(bugs)
+      const at = Date.now()
+      const p = writeDrop('github', { at, reviews, prs, blame })
+      const cfg = store.read()
+      store.write({ imports: { ...cfg.imports, github: { lastAt: at, path: p } } })
+      cache = null
+      res.json({ ok: true, lastAt: at, prs: prs.length, reviewsHit: (reviews.items || []).length })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

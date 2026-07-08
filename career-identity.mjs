@@ -12,9 +12,11 @@ export function resolveIdentity(identity = {}) {
   return r
 }
 
-export function matchesMe(resolved, { email } = {}) {
+export function matchesMe(resolved, { email, login, jiraAccountId } = {}) {
   if (!resolved || resolved.isEmpty) return false
   if (email && resolved.emails.has(String(email).toLowerCase())) return true
+  if (login && resolved.githubHandle && String(login).toLowerCase() === resolved.githubHandle.toLowerCase()) return true
+  if (jiraAccountId && resolved.jiraAccountId && String(jiraAccountId) === resolved.jiraAccountId) return true
   return false
 }
 

@@ -18,12 +18,14 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning } = deps
+  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null } = deps
   const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
   const byProject = groupByProject(sessions)
 
   const bugInput = readBugs()
-  const quality = attributeBugs({ ...bugInput, resolved })
+  // GitHub import, when present, is the better PR-count source than the (empty) Phase-1 stub.
+  const myPrCount = github?.prLifecycle?.reviewRoundsPerPr?.length || bugInput.myPrCount || 0
+  const quality = attributeBugs({ ...bugInput, myPrCount, resolved })
   const todayIso = new Date().toISOString().slice(0, 10)
   const priorChangeFailProxy = priorQuarterRatio(config.rollup, todayIso)   // null when no prior quarter
 
@@ -43,7 +45,11 @@ export function buildSnapshot(deps) {
     me: { runningNow: readRunning ? readRunning() : [], sessionCount: sessions.length },
     flow: { afterHoursPct: withTimes ? afterHours / withTimes : 0, wip: tasks.filter(t => t.stage === 'in-progress').length,
             sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}) },
-    quality: { ...quality, priorChangeFailProxy, myPrCount: bugInput.myPrCount || 0 },
+    quality: { ...quality, priorChangeFailProxy, myPrCount },
+    github: github && !github.error ? {
+      reviewFootprint: { ...github.reviewFootprint, reviewedForOthers: Object.fromEntries(github.reviewFootprint.reviewedForOthers) },
+      prLifecycle: github.prLifecycle,
+    } : null,
     workflow: { topFriction, friction: totalFriction,
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,
