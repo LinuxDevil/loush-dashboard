@@ -105,7 +105,12 @@ convention (like `taskboard.json`, `team-designs.json`). Shape (top level):
   techRadar: [{ id, tech, ring: 'adopt'|'trial'|'assess'|'hold', note }],
   brag: [{ id, date, title, impact, evidence, source: 'auto'|'manual', links[] }],
   insightsRaw: { reportParsedAt, atAGlance, wins, horizon, suggestedClaudeMd, features, patterns },
-  analyses: { [panelKey]: { inputHash, at, markdown } }
+  analyses: { [panelKey]: { inputHash, at, markdown } },
+  // gamification (see 3.2) — all awards idempotent by event id
+  xpLedger: [{ id, at, kind, xp }],
+  quests: [{ id, title, source, measure, target, xpReward, status, acceptedAt, completedAt }],
+  badges: [{ id, earnedAt }],
+  personalBests: { bestFlowWeek, lowestBugRatio, longestStreak, mostKrsInQuarter }
 }
 ```
 
@@ -129,6 +134,7 @@ the snapshot. Every panel maps to at least one hard requirement.
 | 11 | **Influence & Ownership** | `InfluencePanel.jsx` | staff+ signal (added) | ADRs/design docs authored, mentorship (reviews for others), talks/writing/OSS; systems owned |
 | 12 | **Feedback** | `FeedbackPanel.jsx` | grounds "lacking" / "do better" | captured feedback tagged strength/growth, linkable to competency areas |
 | 13 | **`/insights` (per project)** | `InsightsProjectPanel.jsx` | include /insights output | joined facets+session-meta grouped by project + parsed narrative from report.html |
+| 14 | **Gamification** | `GamePanel.jsx` | growth motivation / engagement | career level & XP, quests, skill tree, streaks, achievements, personal bests — see 3.2 |
 
 ### 3.1 Heuristic recommendation rules (examples, deterministic)
 
@@ -142,6 +148,37 @@ the snapshot. Every panel maps to at least one hard requirement.
 
 Each heuristic emits a small structured object `{ severity, area, message, evidenceRefs }` so the Focus
 panel can rank them and the `✨ Analyze` prompt can expand the top few.
+
+### 3.2 Gamification (panel 14)
+
+Rewards **career growth**, not raw activity (the Claude Overview already gamifies activity — this is
+deliberately different). Reuses the Overview gamification primitives (level ring, streak chip, badge grid).
+
+- **Career Level & XP** — a single level with XP from *growth events*, each worth fixed XP:
+  competency cell leveled up, learning goal completed, course finished, KR closed, OKR closed,
+  brag entry logged, design doc / ADR recorded, mentorship (review for another) recorded. Level curve
+  `n = ceil(sqrt(xp / 100))` (tunable). The XP ledger is derived on refresh from real events, with a
+  `career.json` `xpLedger` recording one-time awards so completed events aren't double-counted.
+- **Quests** — any Focus heuristic item or Learning goal can be **accepted as a quest**
+  `{ id, title, source, measure, target, xpReward, status, acceptedAt, completedAt }` stored in
+  `career.json`. Progress auto-tracks its `measure` against the live snapshot (e.g. "bug ratio < 5%");
+  completing it awards XP and can unlock a badge. Turns "what should I focus on" into actionable goals.
+- **Skill Tree** — the competency matrix rendered as a tree: each competency is a node, its ring fills
+  with `(evidence + selfRating)`, and higher-IC tiers are locked until prerequisites reach a threshold.
+  Purely a visualization over panel 2 data + `career.json` ratings; no new persistence.
+- **Streaks** — three: **coding streak** (days with session activity, from transcripts/session-meta),
+  **learning streak** (days a learning goal advanced or a course logged progress), **brag-log streak**
+  (consecutive days a brag entry was added — encodes the research-backed 5-min/day habit). Today-idle
+  doesn't break a streak (matches existing Overview streak rule).
+- **Achievements / badges** — computed live from real data, stored (once earned) in `career.json`
+  `badges[]`. Initial set: *First Design Doc, Mentor (reviewed ≥N others' PRs), OKR Closer,
+  Zero-Regression Sprint (a period with 0 attributed bugs), Deep-Work Champion (≥N deep-work blocks in a
+  week), IC-Level Reached, Polyglot (shipped in ≥N languages), Quest Streak, Course Graduate*.
+- **Personal bests** — "leaderboard vs past self": best flow week, lowest bug ratio, longest streak,
+  most KRs closed in a quarter. Derived from snapshot history within the loaded window; no warehouse.
+
+XP/quests/badges live in `career.json` (added to the shape in 2.3): `xpLedger[]`, `quests[]`, `badges[]`,
+`personalBests{}`. All awards are idempotent (keyed by event id) so a refresh never double-grants.
 
 ## 4. API surface (`server-career.mjs`)
 
