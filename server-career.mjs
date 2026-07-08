@@ -111,4 +111,32 @@ export default function mountCareer(app, deps = {}) {
   app.post('/api/career/retro', (req, res) => { const cfg = store.read(); store.write({ retros: [...cfg.retros, { id: 'r' + Date.now(), ...req.body }] }); res.json({ ok: true }) })
   app.get('/api/career/story-so-far', (req, res) => res.json({ markdown: storyMd(store.read()) }))
   app.get('/api/career/promo-packet', (req, res) => { const c = store.read(); res.json({ markdown: storyMd(c) + `\n\n## Competency self-assessment\nLevel: ${c.competency?.levelSelfAssessed || '—'}\n` }) })
+
+  function brief() {
+    const cfg = store.read()
+    const last = cfg.oneOnOnes[cfg.oneOnOnes.length - 1]
+    const sinceTs = last ? last.date : 0
+    const winsSinceLast = (cfg.brag || []).filter(b => (b.date || 0) >= sinceTs).map(b => b.title)
+    const blockers = (cache?.focus || []).filter(f => f.severity === 'high').map(f => f.message)
+    // growthTopic defaults to the top not-yet-acted-on focus item (fix 7) — not a hardcoded '' placeholder
+    const topFocus = (cache?.focus || []).find(f => !f.actedOn)
+    return {
+      winsSinceLast, blockers,
+      decisionsNeeded: cfg.pendingDecisions || [],        // manual quick-add (§4: legitimate manual input; brief auto-composes the rest)
+      lastAgreed: last?.agreedActions || [],
+      growthTopic: topFocus ? topFocus.message : '',
+    }
+  }
+  // manual quick-add for "a decision I need from my manager" — inherently something you type
+  app.post('/api/career/pending-decision', (req, res) => {
+    try { const cfg = store.read(); store.write({ pendingDecisions: [...(cfg.pendingDecisions || []), String(req.body.text || '').slice(0, 300)] }); cache = null; res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.get('/api/career/brief', (req, res) => res.json(brief()))
+  app.post('/api/career/one-on-one', (req, res) => {
+    const cfg = store.read()
+    const rec = { id: 'o' + Date.now(), date: Date.now(), agreedActions: req.body.agreedActions || [], managerFeedback: req.body.managerFeedback || '', growthTopic: req.body.growthTopic || '', briefSnapshot: brief() }
+    store.write({ oneOnOnes: [...cfg.oneOnOnes, rec] }); cache = null
+    res.json({ ok: true })
+  })
 }

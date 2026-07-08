@@ -103,3 +103,39 @@ test('POST /api/career/brag appends an entry, GET returns it, and story-so-far i
   await app.routes['GET /api/career/story-so-far']({}, r3)
   assert.ok(r3.body.markdown.includes('X'), 'expected story-so-far markdown to include X')
 })
+
+test('mountCareer registers the 1:1 prep routes', () => {
+  const app = appDouble()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-srv7-'))
+  mountCareer(app, { track: (f, c) => fs.writeFileSync(f, c), readJson: (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }, careerFile: path.join(dir, 'career.json'), usageDir: path.join(dir, 'usage-data') })
+  for (const key of ['GET /api/career/brief', 'POST /api/career/one-on-one', 'POST /api/career/pending-decision'])
+    assert.ok(app.routes[key], `missing ${key}`)
+})
+
+test('POST /api/career/one-on-one persists agreedActions and GET /api/career/brief surfaces lastAgreed', async () => {
+  const app = appDouble()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-srv8-'))
+  mountCareer(app, { track: (f, c) => fs.writeFileSync(f, c), readJson: (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }, careerFile: path.join(dir, 'career.json'), usageDir: path.join(dir, 'usage-data') })
+
+  const r1 = res()
+  await app.routes['POST /api/career/one-on-one']({ body: { agreedActions: [{ text: 'do X', done: false }] } }, r1)
+  assert.equal(r1.body.ok, true)
+
+  const r2 = res()
+  await app.routes['GET /api/career/brief']({}, r2)
+  assert.ok(r2.body.lastAgreed.some(a => a.text === 'do X'), 'expected lastAgreed to contain do X')
+})
+
+test('POST /api/career/pending-decision appends a decision and GET /api/career/brief surfaces decisionsNeeded', async () => {
+  const app = appDouble()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-srv9-'))
+  mountCareer(app, { track: (f, c) => fs.writeFileSync(f, c), readJson: (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }, careerFile: path.join(dir, 'career.json'), usageDir: path.join(dir, 'usage-data') })
+
+  const r1 = res()
+  await app.routes['POST /api/career/pending-decision']({ body: { text: 'need budget' } }, r1)
+  assert.equal(r1.body.ok, true)
+
+  const r2 = res()
+  await app.routes['GET /api/career/brief']({}, r2)
+  assert.ok(r2.body.decisionsNeeded.includes('need budget'), 'expected decisionsNeeded to contain need budget')
+})
