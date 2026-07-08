@@ -34,9 +34,12 @@ This is a single-user tool; its enemy is abandonment, not bad architecture. Phas
   on in a given month. This is the criterion most easily graded generously from memory, so it is made
   **self-measuring**: every Focus item carries an **"acted on" mark** the author sets when it lands, and
   "acted on" has a **defined evidence bar** — a ticket picked up, a lesson accepted, or a harness fix
-  applied, each **traceable to that specific Focus item** (the mark stores the linked ref). The Phase-1 gate
-  review then reads (c) **out of the dashboard, not out of memory** — which is the entire thesis of this
-  project applied to its own evaluation.
+  applied, each **traceable to that specific Focus item** (the mark stores the linked ref). **During the
+  Phase-1 gate specifically, the only reachable evidence type is "a ticket picked up (or task approach
+  followed), traceable to the Focus item"** — lesson-accepted and harness-fix-applied are Phase-2+ artifacts
+  that won't exist at gate time, so the gate must not depend on them. The Phase-1 gate review then reads (c)
+  **out of the dashboard, not out of memory** — the entire thesis of this project applied to its own
+  evaluation.
 
 If Phase 1 does not hit (a)–(c), we stop and reassess **before** building Phase 2 — not after.
 
@@ -178,6 +181,11 @@ number — so they are two separate signals.
 - Attribution is **surfaced, never silent**: each counted bug lists which rule matched. Unattributable
   bugs go to an "unattributed" bucket, not to me. The rule is centralized in one function, unit-tested
   (including a test asserting review findings do NOT move the change-fail proxy).
+- **Consequence — the rollup draws from this function, by construction.** `rollup.quarterlyBugRatio` and the
+  **Zero-Regression** badge now mean **escaped-only** by definition. The rollup writer MUST source its bug
+  counts from this centralized attribution function — never from `bugs.json` directly or any pre-§2.5-split
+  path — so caught-in-review findings can't leak into a persisted historical number where they'd be invisible
+  and permanent.
 - **Phase-2 upgrade (§11.A):** once the GitHub import lands, rule (2) is augmented by **blame-based
   attribution** — link a bug-fix PR back to the PR that introduced the fixed lines via `git blame`,
   retiring the fuzzy `bugs.json` proxy and making the Quality panel trustworthy.
