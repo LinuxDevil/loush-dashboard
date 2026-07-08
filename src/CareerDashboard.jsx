@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api, toast } from './api.js'
 import { PANEL, HEAD, MONO, ACCENT } from './career/theme.jsx'
+import MePanel from './career/MePanel.jsx'
 
 const TABS = ['Me / Now', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
@@ -23,7 +24,8 @@ export default function CareerDashboard({ onExit }) {
         {TABS.map(t => <button key={t} onClick={() => setTab(t)} style={{ font: `600 12px ${MONO}`, color: tab === t ? '#0d0b0a' : '#e5dbd2', background: tab === t ? ACCENT : 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>{t}</button>)}
       </div>
       {!snap ? <div style={{ ...PANEL, color: '#7a716a' }}>Loading… (run ↻ refresh if empty)</div>
-        : <div style={{ ...PANEL }}>Panel "{tab}" — wired in Tasks 10–16. Snapshot has {snap.projects?.length || 0} projects, {snap.focus?.length || 0} focus items.</div>}
+        : tab === 'Me / Now' ? <MePanel snap={snap} />
+        : <div style={{ ...PANEL }}>Panel "{tab}" — wired in Tasks 11–16. Snapshot has {snap.projects?.length || 0} projects, {snap.focus?.length || 0} focus items.</div>}
     </div>
   )
 }

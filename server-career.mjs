@@ -33,11 +33,21 @@ export default function mountCareer(app, deps = {}) {
     return (board.tickets || []).map(t => ({ id: t.id, stage: t.stage, ageDays: 0, slaDays: Infinity, project: t.project, title: t.title }))
   })
   const readReport = deps.readReport || (() => { try { return fs.readFileSync(path.join(usageDir, 'report.html'), 'utf8') } catch { return '' } })
+  const readRunning = deps.readRunning || (() => {
+    const root = path.join(CLAUDE, 'projects'); const cutoff = Date.now() - 5 * 60_000; const out = []
+    let dirs = []; try { dirs = fs.readdirSync(root) } catch { return out }
+    for (const d of dirs) {
+      const pdir = path.join(root, d)
+      let files = []; try { files = fs.readdirSync(pdir).filter(f => f.endsWith('.jsonl')) } catch { continue }
+      for (const f of files) { try { if (fs.statSync(path.join(pdir, f)).mtimeMs > cutoff) { out.push({ project: d, startedAt: fs.statSync(path.join(pdir, f)).mtimeMs }); break } } catch {} }
+    }
+    return out
+  })
 
   const build = () => {
     const config = store.read()
     const resolved = resolveIdentity(config.identity)
-    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport })
+    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning })
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)

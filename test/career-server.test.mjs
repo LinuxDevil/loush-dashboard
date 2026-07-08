@@ -30,3 +30,21 @@ test('config POST writes only authored keys', async () => {
   await app.routes['POST /api/career/config']({ body: { identity: { githubHandle: 'ali' } } }, r)
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).identity.githubHandle, 'ali')
 })
+
+test('snapshot exposes me.runningNow from readRunning dep', async () => {
+  const app = appDouble()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-srv3-'))
+  mountCareer(app, {
+    track: (f, c) => fs.writeFileSync(f, c),
+    readJson: (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } },
+    careerFile: path.join(dir, 'career.json'),
+    usageDir: path.join(dir, 'usage-data'),
+    readRunning: () => [{ project: 'x', startedAt: 1 }],
+  })
+  const r = res()
+  await app.routes['POST /api/career/refresh']({}, r)
+  const r2 = res()
+  await app.routes['GET /api/career/snapshot']({}, r2)
+  assert.equal(r2.body.me.runningNow.length, 1)
+  assert.equal(r2.body.me.runningNow[0].project, 'x')
+})

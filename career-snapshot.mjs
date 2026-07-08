@@ -18,7 +18,7 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport } = deps
+  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning } = deps
   const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
   const byProject = groupByProject(sessions)
 
@@ -40,7 +40,7 @@ export function buildSnapshot(deps) {
 
   const snap = {
     generatedAt: Date.now(), parsed, skipped,
-    me: { runningNow: [], sessionCount: sessions.length },
+    me: { runningNow: readRunning ? readRunning() : [], sessionCount: sessions.length },
     flow: { afterHoursPct: withTimes ? afterHours / withTimes : 0, wip: tasks.filter(t => t.stage === 'in-progress').length,
             sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}) },
     quality: { ...quality, priorChangeFailProxy, myPrCount: bugInput.myPrCount || 0 },
