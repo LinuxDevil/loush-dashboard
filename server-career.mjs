@@ -11,7 +11,7 @@ const CLAUDE = path.join(HOME, '.claude')
 // authored sections the config POST is allowed to touch (never derived/rollup)
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
   'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
-  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours'])
+  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed'])
 
 export const __test = { AUTHORED }
 
@@ -28,9 +28,17 @@ export default function mountCareer(app, deps = {}) {
     const b = readJson(path.join(CLAUDE, 'bugs.json'), { bugs: [] })
     return { bugs: b.bugs || [], findings: [], myPrCount: 0, reverts: 0 } // findings/PRs arrive Phase 2 (GitHub)
   })
+  const BUCKET_BY_STAGE = { 'ready-for-qa': 'toTest', 'qa-running': 'toTest',
+    'in-progress': 'inProgress', 'code-review': 'inProgress', 'fixing': 'inProgress',
+    'backlog': 'pending' }
   const readTasks = deps.readTasks || (() => {
     const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
-    return (board.tickets || []).map(t => ({ id: t.id, stage: t.stage, ageDays: 0, slaDays: Infinity, project: t.project, title: t.title }))
+    return (board.tickets || []).map(t => {
+      const lastAt = (t.history || []).slice(-1)[0]?.at
+      const ageDays = lastAt ? (Date.now() - lastAt) / 86400000 : 0
+      return { id: t.id, stage: t.stage, bucket: BUCKET_BY_STAGE[t.stage] || 'pending',
+        ageDays, slaDays: 5, project: t.project, title: t.title }
+    })
   })
   const readReport = deps.readReport || (() => { try { return fs.readFileSync(path.join(usageDir, 'report.html'), 'utf8') } catch { return '' } })
   const readRunning = deps.readRunning || (() => {
@@ -68,6 +76,15 @@ export default function mountCareer(app, deps = {}) {
       for (const [k, v] of Object.entries(req.body || {})) if (AUTHORED.has(k)) patch[k] = v
       const next = store.write(patch); cache = null
       res.json(next)
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/career/focus/act', (req, res) => {
+    try {
+      const { id, ref } = req.body || {}
+      const cfg = store.read(); const acted = cfg.focusActed || {}
+      acted[id] = { ref: ref || null, at: Date.now() }
+      store.write({ focusActed: acted }); cache = null
+      res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 }

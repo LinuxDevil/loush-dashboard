@@ -48,3 +48,32 @@ test('snapshot exposes me.runningNow from readRunning dep', async () => {
   assert.equal(r2.body.me.runningNow.length, 1)
   assert.equal(r2.body.me.runningNow[0].project, 'x')
 })
+
+test('POST /api/career/focus/act persists focusActed and hydrates actedOn on the next snapshot', async () => {
+  const app = appDouble()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-srv4-'))
+  mountCareer(app, {
+    track: (f, c) => fs.writeFileSync(f, c),
+    readJson: (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } },
+    careerFile: path.join(dir, 'career.json'),
+    usageDir: path.join(dir, 'usage-data'),
+    readTasks: () => [{ id: 'tasks-1', stage: 'in-progress', bucket: 'inProgress', ageDays: 10, slaDays: 5, project: 'p', title: 'overdue ticket' }],
+  })
+  await app.routes['POST /api/career/refresh']({}, res())
+  const r1 = res()
+  await app.routes['GET /api/career/snapshot']({}, r1)
+  const focus = r1.body.focus.find(f => f.id.startsWith('tasks:'))
+  assert.ok(focus, 'expected a tasks-area focus item for the overdue ticket')
+  assert.equal(focus.actedOn, null)
+
+  const r2 = res()
+  await app.routes['POST /api/career/focus/act']({ body: { id: focus.id, ref: 'tasks-1' } }, r2)
+  assert.equal(r2.body.ok, true)
+
+  await app.routes['POST /api/career/refresh']({}, res())
+  const r3 = res()
+  await app.routes['GET /api/career/snapshot']({}, r3)
+  const focus2 = r3.body.focus.find(f => f.id === focus.id)
+  assert.ok(focus2.actedOn, 'expected actedOn to be hydrated after acting on it')
+  assert.equal(focus2.actedOn.ref, 'tasks-1')
+})

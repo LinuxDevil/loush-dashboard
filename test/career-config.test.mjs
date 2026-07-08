@@ -25,6 +25,14 @@ test('migrate upgrades a versionless (v0) blob to current and marks changed', ()
   assert.ok(Array.isArray(cfg.retros)) // backfills missing collections
 })
 
+test('migrate v1 -> v2 backfills focusActed', () => {
+  const { cfg, changed } = migrate({ version: 1, brag: [{ id: 'b1' }] })
+  assert.equal(cfg.version, 2)
+  assert.equal(changed, true)
+  assert.deepEqual(cfg.focusActed, {})
+  assert.equal(cfg.brag[0].id, 'b1')
+})
+
 test('makeStore read() persists a migration and write() deep-merges', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-'))
   const file = path.join(dir, 'career.json')

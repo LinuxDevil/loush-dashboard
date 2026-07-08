@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api, toast } from './api.js'
 import { PANEL, HEAD, MONO, ACCENT } from './career/theme.jsx'
 import MePanel from './career/MePanel.jsx'
+import TasksPanel from './career/TasksPanel.jsx'
 import FlowPanel from './career/FlowPanel.jsx'
 import QualityPanel from './career/QualityPanel.jsx'
 
@@ -27,6 +28,7 @@ export default function CareerDashboard({ onExit }) {
       </div>
       {!snap ? <div style={{ ...PANEL, color: '#7a716a' }}>Loading… (run ↻ refresh if empty)</div>
         : tab === 'Me / Now' ? <MePanel snap={snap} />
+        : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />
         : <div style={{ ...PANEL }}>Panel "{tab}" — wired in Tasks 11–16. Snapshot has {snap.projects?.length || 0} projects, {snap.focus?.length || 0} focus items.</div>}

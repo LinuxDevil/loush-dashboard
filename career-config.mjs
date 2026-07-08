@@ -1,6 +1,6 @@
 // career.json store: default shape, ordered migrations, versioned read/write.
 // version bump checklist: add a migration entry, bump CONFIG_VERSION, extend defaultConfig().
-export const CONFIG_VERSION = 1
+export const CONFIG_VERSION = 2
 
 export function defaultConfig() {
   return {
@@ -18,6 +18,7 @@ export function defaultConfig() {
     xpLedger: [], quests: [], badges: [],
     rollup: { activityDays: [], streaks: {}, personalBests: {}, quarterlyBugRatio: {} },
     imports: {}, lessons: [], ticketLinks: {},
+    focusActed: {},
   }
 }
 
@@ -27,6 +28,8 @@ const MIGRATIONS = [
   (cfg) => { const d = defaultConfig(); return { ...d, ...cfg, version: 1,
     identity: { ...d.identity, ...(cfg.identity || {}) },
     rollup: { ...d.rollup, ...(cfg.rollup || {}) } } },
+  // v1 -> v2: backfill focusActed (Task 13, introduced mid-phase via version-bump route)
+  (cfg) => ({ ...cfg, version: 2, focusActed: cfg.focusActed || {} }),
 ]
 
 export function migrate(cfg) {
