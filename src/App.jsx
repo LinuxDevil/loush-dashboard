@@ -23,6 +23,7 @@ import BoardSection from './BoardSection.jsx'
 import QuickActions from './QuickActions.jsx'
 import CursorDashboard from './CursorDashboard.jsx'
 import EngDashboard from './EngDashboard.jsx'
+import CareerDashboard from './CareerDashboard.jsx'
 import ConstitutionSection from './ConstitutionSection.jsx'
 import Palette from './Palette.jsx'
 import { api, forceFresh } from './api.js'
@@ -169,6 +170,7 @@ export default function App() {
   const cur = SECTIONS.find(s => s.id === section)
   if (dash === 'cursor') return <CursorDashboard onSwitch={switchDash} />
   if (dash === 'eng') return <EngDashboard onExit={() => goDash('claude')} />
+  if (dash === 'career') return <CareerDashboard onExit={() => goDash('claude')} />
   return (
     <div className="app">
       <nav className="sidebar">
@@ -190,6 +192,7 @@ export default function App() {
           <div className="topbar-right">
             <button className="top-chip" onClick={switchDash} style={{ cursor: 'pointer' }} title="switch to the Cursor dashboard (read-only view of your Cursor usage)">⇄ Cursor</button>
             <button className="top-chip" onClick={() => goDash('eng')} style={{ cursor: 'pointer' }} title="Engineering Metrics — JIRA changelog + GitHub PRs for the Flight team">⇄ Eng Metrics</button>
+            <button className="top-chip" onClick={() => goDash('career')} style={{ cursor: 'pointer' }} title="Career — your personal growth dashboard">⇄ Career</button>
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
               style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}
