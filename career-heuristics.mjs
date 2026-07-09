@@ -17,5 +17,27 @@ export function focusItems(snapshot = {}) {
   for (const t of snapshot.tasks || [])
     if (t.stage === 'in-progress' && (t.ageDays || 0) > (t.slaDays || Infinity))
       out.push(mk('high', 'tasks', `Risk to commitments: ${t.id} is past its expected date`, [t.id]))
+
+  // Phase-2 rules --------------------------------------------------------------
+  // allocation bucket under half its target this window
+  for (const [bucket, d] of Object.entries(snapshot.allocation?.drift || {}))
+    if (d?.warn) out.push(mk('med', 'allocation', `Time drift: ${bucket} is under half your intended split this window`, ['allocation']))
+
+  // originated-vs-assigned: mostly executing others' work → drive more of your own (ratio < 0.5).
+  // ponytail: no persisted jira history yet, so "falling" is proxied by a low current ratio.
+  const ratio = snapshot.jira?.originatedVsAssigned?.ratio
+  if (ratio != null && ratio < 0.5)
+    out.push(mk('med', 'ownership', 'Drive more of your own work — most tickets are assigned to you, not originated by you', ['jira']))
+
+  // competency ladder gaps + under-credited areas
+  const comp = snapshot.competency || {}
+  for (const row of comp.ladder || [])
+    if (row.evidenceState === 'red')
+      out.push(mk('high', 'competency', `Gap to close: ${row.area} — ${row.expectation || 'ladder expectation unmet'}`, ['learning']))
+  const greenAreas = new Set((comp.ladder || []).filter(r => r.evidenceState === 'green').map(r => r.area))
+  for (const [area, rt] of Object.entries(comp.ratings || {}))
+    if (greenAreas.has(area) && (rt?.score1to5 || 0) <= 2)
+      out.push(mk('low', 'competency', `Under-credited: strong evidence in ${area} but a low self-rating`, ['competency']))
+
   return out.sort((a, b) => RANK[b.severity] - RANK[a.severity])
 }

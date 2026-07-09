@@ -66,6 +66,7 @@ export function buildSnapshot(deps) {
     } : null,
     jira: jira && !jira.error ? jira : null,
     allocation: computeAllocation({ sessions, github, target: config.timeTarget || null }),
+    competency: config.competency || { ratings: {}, ladder: [] },   // authored input the heuristics read
     workflow: { topFriction, friction: totalFriction, helpfulness, oneShotRate,
                 interruptRate: sessions.length ? sessions.reduce((a, s) => a + (s.user_interruptions || 0), 0) / sessions.length : 0,
                 sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}),

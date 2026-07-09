@@ -23,3 +23,30 @@ test('quiet snapshot yields no items', () => {
   const items = focusItems({ quality: { changeFailProxy: 0.05, priorChangeFailProxy: 0.05 }, workflow: {}, flow: { afterHoursPct: 0.1, wip: 1 }, tasks: [] })
   assert.equal(items.length, 0)
 })
+
+test('phase-2 rules: allocation drift, originated-vs-assigned, ladder gap, under-credited', () => {
+  const snap = {
+    allocation: { drift: { designStrategy: { warn: true }, deepWork: { warn: false } } },
+    jira: { originatedVsAssigned: { ratio: 0.3 } },
+    competency: {
+      ratings: { Technical: { score1to5: 2 } },
+      ladder: [{ level: 'Senior', area: 'Direction', expectation: 'Drives decisions', evidenceState: 'red' },
+               { level: 'Senior', area: 'Technical', expectation: 'Deep expertise', evidenceState: 'green' }],
+    },
+  }
+  const items = focusItems(snap)
+  const areas = items.map(i => i.area)
+  assert.ok(areas.includes('allocation'), 'allocation drift missing')
+  assert.ok(items.some(i => i.area === 'ownership'), 'originated-vs-assigned missing')
+  assert.ok(items.some(i => i.area === 'competency' && i.severity === 'high'), 'ladder red gap missing')
+  assert.ok(items.some(i => i.area === 'competency' && i.severity === 'low'), 'under-credited missing')
+})
+
+test('phase-2 rules quiet when data healthy or absent', () => {
+  const items = focusItems({
+    allocation: { drift: { deepWork: { warn: false } } },
+    jira: { originatedVsAssigned: { ratio: 1.2 } },
+    competency: { ratings: { Technical: { score1to5: 4 } }, ladder: [{ area: 'Technical', evidenceState: 'green' }] },
+  })
+  assert.equal(items.length, 0)
+})
