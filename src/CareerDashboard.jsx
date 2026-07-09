@@ -8,8 +8,9 @@ import QualityPanel from './career/QualityPanel.jsx'
 import InsightsProjectPanel from './career/InsightsProjectPanel.jsx'
 import BragPanel from './career/BragPanel.jsx'
 import OneOnOnePanel from './career/OneOnOnePanel.jsx'
+import FocusPanel from './career/FocusPanel.jsx'
 
-const TABS = ['Me / Now', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
+const TABS = ['Me / Now', 'Focus', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
 export default function CareerDashboard({ onExit }) {
   const [snap, setSnap] = useState(null)
@@ -31,6 +32,7 @@ export default function CareerDashboard({ onExit }) {
       </div>
       {!snap ? <div style={{ ...PANEL, color: '#7a716a' }}>Loading… (run ↻ refresh if empty)</div>
         : tab === 'Me / Now' ? <MePanel snap={snap} />
+        : tab === 'Focus' ? <FocusPanel snap={snap} reload={load} />
         : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />
