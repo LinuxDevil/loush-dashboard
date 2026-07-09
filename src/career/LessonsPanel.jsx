@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { api, toast } from '../api.js'
 import { PANEL, HEAD, MONO, ACCENT } from './theme.jsx'
 
-const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#1c1815', color: '#e5dbd2', border: '1px solid #7a716a55', borderRadius: 6, padding: '4px 8px' })
-const btn = (bg = ACCENT) => ({ font: `600 11px ${MONO}`, color: '#0d0b0a', background: bg, border: 'none', borderRadius: 6, padding: '5px 10px', cursor: 'pointer' })
+const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#161b22', color: '#e6edf3', border: '1px solid #8b949e55', borderRadius: 6, padding: '4px 8px' })
+const btn = (bg = ACCENT) => ({ font: `600 11px ${MONO}`, color: '#0d1117', background: bg, border: 'none', borderRadius: 6, padding: '5px 10px', cursor: 'pointer' })
 
 // Framing (spec §11.B): graduated lessons are celebrated as loudly as new ones; the panel never opens
 // on a wall of failures. So we show internalized first, then active (with their live delta), then draft-a-lesson.
@@ -23,32 +23,32 @@ export default function LessonsPanel({ snap, reload }) {
 
   const statusPill = (l) => {
     const s = l.eval?.status
-    const c = s === 'cleared' ? '#5fd39a' : s === 'recurring' ? '#f2a2c4' : '#7a716a'
+    const c = s === 'cleared' ? '#3fb950' : s === 'recurring' ? '#bc8cff' : '#8b949e'
     return <span style={{ font: `700 10px ${MONO}`, color: c }}>{s || 'pending'}{l.eval?.flag1on1 ? ' · flag 1:1' : ''}</span>
   }
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {graduated.length > 0 && (
-        <div style={{ ...PANEL, borderColor: '#5fd39a55' }}>
-          <div style={{ font: `600 13px ${HEAD}`, color: '#5fd39a', marginBottom: 6 }}>✓ Internalized — friction you’ve trended down</div>
-          {graduated.map(l => <div key={l.id} style={{ font: `400 12px ${MONO}`, color: '#9a8f86', marginBottom: 3 }}>{l.rule}</div>)}
+        <div style={{ ...PANEL, borderColor: '#3fb95055' }}>
+          <div style={{ font: `600 13px ${HEAD}`, color: '#3fb950', marginBottom: 6 }}>✓ Internalized — friction you’ve trended down</div>
+          {graduated.map(l => <div key={l.id} style={{ font: `400 12px ${MONO}`, color: '#8b949e', marginBottom: 3 }}>{l.rule}</div>)}
         </div>
       )}
 
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Active lessons <span style={{ color: '#7a716a', font: `400 11px ${MONO}` }}>({active.length}/5)</span></div>
+        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Active lessons <span style={{ color: '#8b949e', font: `400 11px ${MONO}` }}>({active.length}/5)</span></div>
         {active.length ? active.map(l => (
-          <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid #7a716a22', padding: '6px 0' }}>
+          <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid #8b949e22', padding: '6px 0' }}>
             <div style={{ flex: 1 }}>
               <div style={{ font: `500 12px ${HEAD}` }}>{l.rule}</div>
-              {l.pattern && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>{l.situation} → {l.pattern}</div>}
-              <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{l.check?.metricRef ? `check: ${l.check.metricRef} ${l.check.comparator} ${l.check.target} (${l.check.window})` : `check: “${l.check?.freeText || '—'}” (manual)`}</div>
+              {l.pattern && <div style={{ font: `400 11px ${MONO}`, color: '#8b949e' }}>{l.situation} → {l.pattern}</div>}
+              <div style={{ font: `400 10.5px ${MONO}`, color: '#8b949e' }}>{l.check?.metricRef ? `check: ${l.check.metricRef} ${l.check.comparator} ${l.check.target} (${l.check.window})` : `check: “${l.check?.freeText || '—'}” (manual)`}</div>
             </div>
             {statusPill(l)}
-            <button onClick={() => discard(l.id)} style={{ font: `400 11px ${MONO}`, color: '#7a716a', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+            <button onClick={() => discard(l.id)} style={{ font: `400 11px ${MONO}`, color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
           </div>
-        )) : <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>No active lessons — raise one from a recurring friction below.</div>}
+        )) : <div style={{ font: `400 12px ${MONO}`, color: '#8b949e' }}>No active lessons — raise one from a recurring friction below.</div>}
       </div>
 
       <div style={PANEL}>

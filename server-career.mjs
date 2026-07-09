@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { makeStore } from './career-config.mjs'
 import { resolveIdentity, warnIfNoMatch } from './career-identity.mjs'
-import { buildSnapshot, updateRollup } from './career-snapshot.mjs'
+import { buildSnapshot, updateRollup, periodWindow } from './career-snapshot.mjs'
 import { importGithub } from './career-import-github.mjs'
 import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
@@ -65,27 +65,40 @@ export default function mountCareer(app, deps = {}) {
   let cache = null
 
   // real bug/task/report readers; overridable in deps for tests
-  const readBugs = deps.readBugs || (() => {
+  const inWin = (t, w) => { const ms = Date.parse(t); return Number.isNaN(ms) || (ms >= w.start && ms < w.end) }
+  const readBugs = deps.readBugs || ((w) => {
     const b = readJson(path.join(CLAUDE, 'bugs.json'), { bugs: [] })
-    return { bugs: b.bugs || [], findings: [], myPrCount: 0, reverts: 0 } // findings/PRs arrive Phase 2 (GitHub)
+    let bugs = b.bugs || []
+    if (w && !w.isYear) bugs = bugs.filter(x => inWin(x.date || x.createdAt || x.closedAt || x.introducedAt, w))
+    return { bugs, findings: [], myPrCount: 0, reverts: 0 } // findings/PRs arrive Phase 2 (GitHub)
   })
-  const readTasks = deps.readTasks || (() => {
+  const readTasks = deps.readTasks || ((w) => {
     const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
-    return (board.tickets || []).map(t => mapTicket(t))
+    let tickets = board.tickets || []
+    // ponytail: quarter-scope by a ticket's last activity; undated (no history) tickets stay visible. Ceiling: not per-status.
+    if (w && !w.isYear) tickets = tickets.filter(t => { const at = (t.history || []).slice(-1)[0]?.at; return at == null || (at >= w.start && at < w.end) })
+    return tickets.map(t => mapTicket(t))
   })
   const readReport = deps.readReport || (() => { try { return fs.readFileSync(path.join(usageDir, 'report.html'), 'utf8') } catch { return '' } })
   // GitHub import is a snapshot INPUT read from the latest disk drop — never a live gh call on refresh.
-  const readGithub = deps.readGithub || ((resolved) => {
+  const readGithub = deps.readGithub || ((resolved, w) => {
     const drop = latestDrop('github')
     if (!drop) return null
-    const imp = importGithub({ ghJson: { reviews: drop.reviews, prs: drop.prs }, resolved })
+    let prs = drop.prs || [], items = drop.reviews?.items || []
+    if (w && !w.isYear) {
+      prs = prs.filter(p => inWin(p.createdAt, w))
+      items = items.filter(it => inWin(it.created_at || it.updated_at || it.submittedAt, w))
+    }
+    const imp = importGithub({ ghJson: { reviews: { ...drop.reviews, items }, prs }, resolved })
     imp.blame = drop.blame || {}   // { bugId -> introducingAuthorEmail }, computed at import (Task 2)
     return imp
   })
-  const readJira = deps.readJira || ((resolved) => {
+  const readJira = deps.readJira || ((resolved, w) => {
     const drop = latestDrop('jira')
     if (!drop) return null
-    return importJira({ issues: drop.issues || [], resolved })
+    let issues = drop.issues || []
+    if (w && !w.isYear) issues = issues.filter(i => inWin(i.fields?.created, w))
+    return importJira({ issues, resolved })
   })
   // Re-detect CLAUDE.md presence + rough quality each refresh (no persistence, §11.B/D).
   const probeRepo = deps.probeRepo || ((projectPath) => {
@@ -119,26 +132,39 @@ export default function mountCareer(app, deps = {}) {
     return `# Story so far\n\n` + wins.map(b => `- **${b.title}** — ${b.impact || ''} ${b.evidence ? `(${b.evidence})` : ''}`).join('\n')
   }
 
-  const build = () => {
+  const build = (period = '') => {
     const config = store.read()
     const resolved = resolveIdentity(config.identity)
-    const github = readGithub(resolved)
-    const jira = readJira(resolved)
-    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github, jira, probeRepo })
+    const window = periodWindow(period)
+    const github = readGithub(resolved, window)
+    const jira = readJira(resolved, window)
+    const snap = buildSnapshot({ usageDir, transcriptsDir: path.join(CLAUDE, 'projects'), mtimeCache, config, resolved,
+      readBugs: () => readBugs(window), readTasks: () => readTasks(window), readReport, readRunning, github, jira, probeRepo, window })
+    snap.period = window.label
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
-    const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
-    store.write(patch)
-    snap.rollup = { ...config.rollup, ...patch.rollup }
-    // auto-graduate active lessons whose STRUCTURED check cleared (idempotent: internalized never re-fires)
-    const graduated = (config.lessons || []).map(l =>
-      l.status === 'active' && evaluateLesson(l, snap).graduate ? { ...l, status: 'internalized', graduatedAt: Date.now() } : l)
-    if (graduated.some((l, i) => l !== (config.lessons || [])[i])) { store.write({ lessons: graduated }); snap.lessons = graduated.map(l => ({ ...l, eval: evaluateLesson(l, snap) })) }
+    // Rollup/lessons are CURRENT-STATE side effects — only the full-year build may mutate them (a quarter view is read-only).
+    if (window.isYear) {
+      const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
+      store.write(patch)
+      snap.rollup = { ...config.rollup, ...patch.rollup }
+      // auto-graduate active lessons whose STRUCTURED check cleared (idempotent: internalized never re-fires)
+      const graduated = (config.lessons || []).map(l =>
+        l.status === 'active' && evaluateLesson(l, snap).graduate ? { ...l, status: 'internalized', graduatedAt: Date.now() } : l)
+      if (graduated.some((l, i) => l !== (config.lessons || [])[i])) { store.write({ lessons: graduated }); snap.lessons = graduated.map(l => ({ ...l, eval: evaluateLesson(l, snap) })) }
+      cache = snap
+    } else {
+      snap.rollup = { ...config.rollup }
+    }
     snap.bragCandidates = bragCandidates()
-    cache = snap
     return snap
   }
 
-  app.get('/api/career/snapshot', (req, res) => { try { res.json(cache || build()) } catch (e) { res.status(500).json({ error: e.message }) } })
+  app.get('/api/career/snapshot', (req, res) => {
+    try {
+      const period = req.query?.period || ''
+      res.json(periodWindow(period).isYear ? (cache || build(period)) : build(period))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
   app.post('/api/career/refresh', (req, res) => {
     try { const t0 = Date.now(); const s = build(); res.json({ parsed: s.parsed, skipped: s.skipped, tookMs: Date.now() - t0 }) }
     catch (e) { res.status(500).json({ error: e.message }) }

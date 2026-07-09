@@ -1,5 +1,6 @@
 import React from 'react'
-import { PANEL, HEAD, MONO, ACCENT, Stat } from './theme.jsx'
+import { PANEL, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, PURPLE, Tile, Ring, Badge, SectionTitle } from './theme.jsx'
+import { useUsage, useEngSelf } from './data.jsx'
 
 const BADGE_LABEL = {
   'first-design-doc': 'First Design Doc', 'mentor-5': 'Mentor ≥5', 'okr-closer': 'OKR Closer',
@@ -11,27 +12,36 @@ const BADGE_LABEL = {
 export default function GamePanel({ snap }) {
   const g = snap?.game || { xp: 0, level: 0, streaks: {}, badges: [], personalBests: {} }
   const pb = g.personalBests || {}
+  const { data: usage } = useUsage()
+  const { data: eng } = useEngSelf()
+  const xpInLevel = (g.xp || 0) % 100 // ponytail: assume 100 XP / level for the ring fill
+
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <Stat label="level (outcomes only)" val={g.level} />
-        <Stat label="total XP" val={g.xp} />
-        <Stat label="coding streak" val={`${g.streaks?.coding || 0}d`} />
-        <Stat label="learning streak" val={`${g.streaks?.learning || 0}d`} />
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'stretch' }}>
+        <div style={{ ...PANEL, display: 'flex', gap: 18, alignItems: 'center' }}>
+          <Ring value={xpInLevel / 100} label={`L${g.level}`} sub={`${g.xp} XP`} color={ACCENT} size={68} />
+          <div>
+            <div style={{ font: `600 13px ${HEAD}`, color: INK }}>Level {g.level}</div>
+            <div style={{ font: `400 11px ${BODY}`, color: MUTE, marginTop: 2 }}>outcomes only — no XP for logging</div>
+          </div>
+        </div>
+        <Tile label="coding streak" value={`${g.streaks?.coding || usage?.streak || 0}🔥`} sub={`${usage?.activeDays ?? '—'} active days`} tone={GREEN} />
+        <Tile label="learning streak" value={`${g.streaks?.learning || 0}d`} sub="courses & goals" tone={PURPLE} />
+        {eng?.dora && <Tile label="shipped (90d)" value={eng.dora.throughput90} sub="tickets delivered" tone={ACCENT} />}
       </div>
 
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Badges</div>
+        <SectionTitle>Badges</SectionTitle>
         {g.badges?.length
-          ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{g.badges.map(b =>
-              <span key={b} style={{ font: `600 11px ${MONO}`, color: '#0d0b0a', background: ACCENT, borderRadius: 6, padding: '4px 10px' }}>{BADGE_LABEL[b] || b}</span>)}</div>
-          : <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>None yet — badges are earned by outcomes (ship a design doc, close an OKR, a zero-escaped sprint).</div>}
+          ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{g.badges.map(b => <Badge key={b} tone="accent">{BADGE_LABEL[b] || b}</Badge>)}</div>
+          : <div style={{ font: `400 12px ${BODY}`, color: MUTE }}>None yet — badges are earned by outcomes (ship a design doc, close an OKR, a zero-escaped sprint).</div>}
       </div>
 
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Personal bests</div>
-        <div style={{ font: `400 12px ${MONO}`, color: '#9a8f86', display: 'grid', gap: 4 }}>
-          <div>lowest escaped-bug ratio: {pb.lowestBugRatio ?? '—'}</div>
+        <SectionTitle>Personal bests</SectionTitle>
+        <div style={{ font: `400 12px ${MONO}`, color: INK, display: 'grid', gap: 5 }}>
+          <div>lowest escaped-bug ratio: <span style={{ color: eng?.dora ? GREEN : MUTE }}>{pb.lowestBugRatio ?? (eng?.dora ? `${Math.round(eng.dora.changeFailRate * 100)}% now` : '—')}</span></div>
           <div>longest streak: {pb.longestStreak ?? 0}d</div>
           <div>best flow week: {pb.bestFlowWeek ?? '—'}</div>
           <div>most KRs / quarter: {pb.mostKrsQuarter ?? '—'}</div>

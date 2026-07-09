@@ -3,7 +3,7 @@ import { api, toast } from '../api.js'
 import { PANEL, HEAD, MONO, ACCENT } from './theme.jsx'
 
 const RINGS = ['adopt', 'trial', 'assess', 'hold']
-const RING_COL = { adopt: '#5fd39a', trial: ACCENT, assess: '#8ab4f8', hold: '#f2a2c4' }
+const RING_COL = { adopt: '#3fb950', trial: ACCENT, assess: '#58a6ff', hold: '#bc8cff' }
 const uid = () => 'g' + Math.random().toString(36).slice(2, 9)
 
 function GoalList({ title, goals, onChange }) {
@@ -13,11 +13,11 @@ function GoalList({ title, goals, onChange }) {
   const del = i => onChange(goals.filter((_, j) => j !== i))
   return <div style={PANEL}>
     <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>{title}</div>
-    {goals.map((g, i) => <div key={g.id} style={{ padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+    {goals.map((g, i) => <div key={g.id} style={{ padding: '6px 0', borderTop: '1px solid #21262d' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ flex: 1, font: `500 12px ${MONO}` }}>{g.title} {g.measure ? <span style={{ color: '#7a716a' }}>· {g.measure} → {g.target}</span> : <span style={{ color: '#f2a2c4' }}>· needs measure+target</span>}</div>
-        <span style={{ font: `500 11px ${MONO}`, color: '#7a716a' }}>{g.progress || 0}%</span>
-        <button onClick={() => del(i)} style={{ font: `400 11px ${MONO}`, color: '#7a716a', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+        <div style={{ flex: 1, font: `500 12px ${MONO}` }}>{g.title} {g.measure ? <span style={{ color: '#8b949e' }}>· {g.measure} → {g.target}</span> : <span style={{ color: '#bc8cff' }}>· needs measure+target</span>}</div>
+        <span style={{ font: `500 11px ${MONO}`, color: '#8b949e' }}>{g.progress || 0}%</span>
+        <button onClick={() => del(i)} style={{ font: `400 11px ${MONO}`, color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
       </div>
       <input type="range" min="0" max="100" value={g.progress || 0} onChange={e => set(i, { progress: +e.target.value })} style={{ width: '100%', accentColor: ACCENT }} />
     </div>)}
@@ -29,7 +29,7 @@ function GoalList({ title, goals, onChange }) {
     </div>
   </div>
 }
-const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#1c1815', color: '#e5dbd2', border: '1px solid #7a716a55', borderRadius: 6, padding: '4px 8px' })
+const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#161b22', color: '#e6edf3', border: '1px solid #8b949e55', borderRadius: 6, padding: '4px 8px' })
 const btn = () => ({ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '4px 10px', cursor: 'pointer' })
 
 export default function LearningPanel() {
@@ -40,7 +40,7 @@ export default function LearningPanel() {
   useEffect(() => { api.get('/api/career/config').then(cfg => {
     setLearning(cfg.learning || { now: [], next: [], techRadar: [] }); setCourses(cfg.courses || [])
   }).catch(e => toast(e.message, 'error')) }, [])
-  if (!learning) return <div style={{ ...PANEL, color: '#7a716a' }}>Loading…</div>
+  if (!learning) return <div style={{ ...PANEL, color: '#8b949e' }}>Loading…</div>
 
   const save = async () => {
     // a measurable goal requires measure + target (validate before save)
@@ -59,8 +59,8 @@ export default function LearningPanel() {
       <div style={PANEL}>
         <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Courses</div>
         {courses.map((c, i) => <div key={c.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', font: `400 12px ${MONO}` }}>
-          <div style={{ flex: 1 }}>{c.title} <span style={{ color: '#7a716a' }}>· {c.provider} · {c.status} · {c.progress}%</span></div>
-          <button onClick={() => setCourses(courses.filter((_, j) => j !== i))} style={{ font: `400 11px ${MONO}`, color: '#7a716a', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+          <div style={{ flex: 1 }}>{c.title} <span style={{ color: '#8b949e' }}>· {c.provider} · {c.status} · {c.progress}%</span></div>
+          <button onClick={() => setCourses(courses.filter((_, j) => j !== i))} style={{ font: `400 11px ${MONO}`, color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>)}
         <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
           <input value={cDraft.title} onChange={e => setCDraft({ ...cDraft, title: e.target.value })} placeholder="course" style={inp(1, 110)} />
@@ -75,8 +75,8 @@ export default function LearningPanel() {
         {RINGS.map(ring => { const rows = (learning.techRadar || []).filter(t => t.ring === ring); return rows.length ? <div key={ring} style={{ marginBottom: 6 }}>
           <div style={{ font: `600 11px ${MONO}`, color: RING_COL[ring], textTransform: 'uppercase' }}>{ring}</div>
           {rows.map(t => <div key={t.id} style={{ display: 'flex', gap: 8, font: `400 12px ${MONO}`, padding: '2px 0' }}>
-            <div style={{ flex: 1 }}>{t.tech} {t.note ? <span style={{ color: '#7a716a' }}>— {t.note}</span> : null}</div>
-            <button onClick={() => setLearning({ ...learning, techRadar: learning.techRadar.filter(x => x.id !== t.id) })} style={{ font: `400 11px ${MONO}`, color: '#7a716a', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+            <div style={{ flex: 1 }}>{t.tech} {t.note ? <span style={{ color: '#8b949e' }}>— {t.note}</span> : null}</div>
+            <button onClick={() => setLearning({ ...learning, techRadar: learning.techRadar.filter(x => x.id !== t.id) })} style={{ font: `400 11px ${MONO}`, color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
           </div>)}
         </div> : null })}
         <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
@@ -87,7 +87,7 @@ export default function LearningPanel() {
         </div>
       </div>
 
-      <button onClick={save} style={{ font: `600 12px ${MONO}`, color: '#0d0b0a', background: ACCENT, border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', justifySelf: 'start' }}>Save</button>
+      <button onClick={save} style={{ font: `600 12px ${MONO}`, color: '#0d1117', background: ACCENT, border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', justifySelf: 'start' }}>Save</button>
     </div>
   )
 }

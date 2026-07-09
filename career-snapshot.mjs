@@ -1,4 +1,4 @@
-import { parseUsageData, groupByProject } from './career-insights.mjs'
+import { parseUsageData, deriveSessionsFromTranscripts, groupByProject } from './career-insights.mjs'
 import { parseReportNarrative } from './career-insights-report.mjs'
 import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
@@ -19,6 +19,16 @@ export function feedbackNudges(tasks = [], config = {}) {
 }
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
+// Current-year period window. period = '' | 'YYYY' (year-to-date) → whole year; 'YYYYQn' → one quarter.
+// Year is always clamped to the CURRENT year: no previous-year data is ever served.
+export function periodWindow(period, now = Date.now()) {
+  const y = new Date(now).getUTCFullYear()
+  const m = /Q([1-4])$/.exec(period || '')
+  if (m) { const sm = (+m[1] - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(now, Date.UTC(y, sm + 3, 1)), isYear: false, label: `Q${m[1]}` } }
+  return { start: Date.UTC(y, 0, 1), end: now, isYear: true, label: String(y) }
+}
+// keep a session iff its start_time falls in the window; undated sessions count only in the full-year view.
+const inPeriod = (iso, w) => { const t = Date.parse(iso); return Number.isNaN(t) ? w.isYear : (t >= w.start && t < w.end) }
 // prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
 export function priorQuarterRatio(rollup, todayIso) {
   const d = new Date(todayIso + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - 3)
@@ -33,8 +43,16 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null, probeRepo = null } = deps
-  const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
+  const { usageDir, transcriptsDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null, probeRepo = null } = deps
+  // Two sources, merged by session_id: raw transcripts self-populate (zero setup), `/insights`
+  // facets overlay richer LLM-judged fields (outcome/session_type/helpfulness/friction) when present.
+  const facet = parseUsageData(usageDir, { mtimeCache })
+  const derived = transcriptsDir ? deriveSessionsFromTranscripts(transcriptsDir, { mtimeCache }) : { sessions: [], parsed: 0, skipped: 0 }
+  const bySid = new Map(derived.sessions.map(s => [s.session_id, s]))
+  for (const f of facet.sessions) bySid.set(f.session_id, { ...bySid.get(f.session_id), ...f })
+  let sessions = [...bySid.values()]
+  if (deps.window) sessions = sessions.filter(s => inPeriod(s.start_time, deps.window))
+  const parsed = facet.parsed + derived.parsed, skipped = facet.skipped + derived.skipped
   const byProject = groupByProject(sessions)
 
   const bugInput = readBugs()
@@ -71,7 +89,7 @@ export function buildSnapshot(deps) {
     generatedAt: Date.now(), parsed, skipped,
     me: { runningNow: readRunning ? readRunning() : [], sessionCount: sessions.length },
     flow: { afterHoursPct: withTimes ? afterHours / withTimes : 0, wip: tasks.filter(t => t.stage === 'in-progress').length,
-            sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}) },
+            sessionTypes: sessions.reduce((a, s) => (s.session_type ? (a[s.session_type] = (a[s.session_type] || 0) + 1) : 0, a), {}) },
     quality: { ...quality, priorChangeFailProxy, myPrCount },
     github: github && !github.error ? {
       reviewFootprint: { ...github.reviewFootprint, reviewedForOthers: Object.fromEntries(github.reviewFootprint.reviewedForOthers) },

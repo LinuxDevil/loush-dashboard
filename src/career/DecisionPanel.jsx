@@ -9,7 +9,7 @@ export default function DecisionPanel() {
   const [decisions, setDecisions] = useState(null)
   const [d, setD] = useState({ chose: '', over: '', because: '', revisitWhen: '' })
   useEffect(() => { api.get('/api/career/config').then(cfg => setDecisions(cfg.decisions || [])).catch(e => toast(e.message, 'error')) }, [])
-  if (!decisions) return <div style={{ ...PANEL, color: '#7a716a' }}>Loading…</div>
+  if (!decisions) return <div style={{ ...PANEL, color: '#8b949e' }}>Loading…</div>
 
   const persist = async (next) => { setDecisions(next); try { await api.post('/api/career/config', { decisions: next }); toast('saved', 'success') } catch (e) { toast(e.message, 'error') } }
   const add = () => {
@@ -21,7 +21,7 @@ export default function DecisionPanel() {
   const del = id => persist(decisions.filter(x => x.id !== id))
   const dueNow = x => x.revisitWhen && x.revisitWhen <= todayStr() && !x.outcome
 
-  const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#1c1815', color: '#e5dbd2', border: '1px solid #7a716a55', borderRadius: 6, padding: '4px 8px' })
+  const inp = (flex, w) => ({ flex, minWidth: w, font: `400 11px ${MONO}`, background: '#161b22', color: '#e6edf3', border: '1px solid #8b949e55', borderRadius: 6, padding: '4px 8px' })
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -34,25 +34,25 @@ export default function DecisionPanel() {
           </div>
           <input value={d.because} onChange={e => setD({ ...d, because: e.target.value })} placeholder="because…" style={inp(1, 200)} />
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <label style={{ font: `400 11px ${MONO}`, color: '#9a8f86' }}>revisit when:</label>
+            <label style={{ font: `400 11px ${MONO}`, color: '#8b949e' }}>revisit when:</label>
             <input type="date" value={d.revisitWhen} onChange={e => setD({ ...d, revisitWhen: e.target.value })} style={inp(0, 140)} />
-            <button onClick={add} style={{ font: `600 11px ${MONO}`, color: '#0d0b0a', background: ACCENT, border: 'none', borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>+ log</button>
+            <button onClick={add} style={{ font: `600 11px ${MONO}`, color: '#0d1117', background: ACCENT, border: 'none', borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>+ log</button>
           </div>
         </div>
       </div>
 
-      {decisions.slice().reverse().map(x => <div key={x.id} style={{ ...PANEL, borderColor: dueNow(x) ? '#f2a2c455' : PANEL.border }}>
+      {decisions.slice().reverse().map(x => <div key={x.id} style={{ ...PANEL, borderColor: dueNow(x) ? '#bc8cff55' : PANEL.border }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ flex: 1, font: `500 13px ${HEAD}` }}>{x.chose} {x.over ? <span style={{ color: '#7a716a' }}>over {x.over}</span> : null}</div>
-          {dueNow(x) && <span style={{ font: `700 10px ${MONO}`, color: '#f2a2c4', border: '1px solid #f2a2c455', borderRadius: 5, padding: '2px 6px' }}>REVISIT DUE</span>}
-          {x.becameAdr && <span style={{ font: `700 10px ${MONO}`, color: '#5fd39a' }}>ADR</span>}
-          <button onClick={() => del(x.id)} style={{ font: `400 11px ${MONO}`, color: '#7a716a', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
+          <div style={{ flex: 1, font: `500 13px ${HEAD}` }}>{x.chose} {x.over ? <span style={{ color: '#8b949e' }}>over {x.over}</span> : null}</div>
+          {dueNow(x) && <span style={{ font: `700 10px ${MONO}`, color: '#bc8cff', border: '1px solid #bc8cff55', borderRadius: 5, padding: '2px 6px' }}>REVISIT DUE</span>}
+          {x.becameAdr && <span style={{ font: `700 10px ${MONO}`, color: '#3fb950' }}>ADR</span>}
+          <button onClick={() => del(x.id)} style={{ font: `400 11px ${MONO}`, color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
-        {x.because && <div style={{ font: `400 12px ${MONO}`, color: '#9a8f86', marginTop: 2 }}>because {x.because}</div>}
-        <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginTop: 2 }}>{new Date(x.date).toLocaleDateString()}{x.revisitWhen ? ` · revisit ${x.revisitWhen}` : ''}</div>
+        {x.because && <div style={{ font: `400 12px ${MONO}`, color: '#8b949e', marginTop: 2 }}>because {x.because}</div>}
+        <div style={{ font: `400 10.5px ${MONO}`, color: '#8b949e', marginTop: 2 }}>{new Date(x.date).toLocaleDateString()}{x.revisitWhen ? ` · revisit ${x.revisitWhen}` : ''}</div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
           <input value={x.outcome || ''} onChange={e => setField(x.id, { outcome: e.target.value })} placeholder="outcome (closes the revisit)" style={inp(1, 160)} />
-          <label style={{ font: `400 11px ${MONO}`, color: '#9a8f86', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ font: `400 11px ${MONO}`, color: '#8b949e', display: 'flex', alignItems: 'center', gap: 4 }}>
             <input type="checkbox" checked={!!x.becameAdr} onChange={e => setField(x.id, { becameAdr: e.target.checked })} /> graduate to ADR
           </label>
         </div>

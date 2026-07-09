@@ -1,40 +1,83 @@
 import React, { useEffect, useState } from 'react'
 import { api, toast } from '../api.js'
-import { PANEL, HEAD, MONO, ACCENT } from './theme.jsx'
+import { PANEL, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, PURPLE, RED, Badge, SectionTitle } from './theme.jsx'
+import { useEngSelf } from './data.jsx'
+
+const jiraUrl = i => i.host ? `https://${i.host}/browse/${i.key}` : null
 
 export default function TicketRetroPanel() {
   const [tickets, setTickets] = useState(null)
   const [retro, setRetro] = useState(null)
+  const { data: eng } = useEngSelf()
   useEffect(() => { api.get('/api/career/retro-tickets').then(r => setTickets(r.tickets || [])).catch(e => toast(e.message, 'error')) }, [])
-  const open = async (id) => { setRetro('loading'); try { setRetro(await api.get('/api/career/retro/' + id)) } catch (e) { toast(e.message, 'error'); setRetro(null) } }
-  if (!tickets) return <div style={{ ...PANEL, color: '#7a716a' }}>Loading…</div>
+
+  // JIRA closed tickets (client-composed retro from issue fields — no server round-trip)
+  const jiraClosed = eng?.accountId ? eng.issues.filter(i => i.live).sort((a, b) => Date.parse(b.closedAt || 0) - Date.parse(a.closedAt || 0)).slice(0, 40) : []
+  const openJira = (i) => setRetro({ jira: true, i })
+  const openBoard = async (id) => { setRetro('loading'); try { setRetro(await api.get('/api/career/retro/' + id)) } catch (e) { toast(e.message, 'error'); setRetro(null) } }
+
+  if (!tickets) return <div style={{ ...PANEL, color: MUTE }}>Loading…</div>
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16 }}>
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Closed tickets</div>
-        {tickets.length ? tickets.map(t => (
-          <button key={t.id} onClick={() => open(t.id)} style={{ display: 'block', width: '100%', textAlign: 'left', font: `400 11px ${MONO}`, color: '#e5dbd2', background: 'none', border: '1px solid #7a716a33', borderRadius: 6, padding: '5px 8px', marginBottom: 4, cursor: 'pointer' }}>
-            <b>{t.id}</b> <span style={{ color: '#7a716a' }}>{t.stage}</span><br /><span style={{ color: '#9a8f86' }}>{t.title}</span>
+        <SectionTitle>Delivered tickets</SectionTitle>
+        {jiraClosed.map(i => (
+          <button key={i.key} onClick={() => openJira(i)} style={{ display: 'block', width: '100%', textAlign: 'left', font: `400 11px ${MONO}`, color: INK, background: 'none', border: `1px solid ${MUTE}33`, borderRadius: 6, padding: '6px 8px', marginBottom: 4, cursor: 'pointer' }}>
+            <b style={{ color: ACCENT }}>{i.key}</b> <span style={{ color: MUTE }}>{i.delivery}d</span><br /><span style={{ color: MUTE }}>{i.summary?.slice(0, 48)}</span>
           </button>
-        )) : <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>No closed tickets in taskboard.</div>}
+        ))}
+        {tickets.map(t => (
+          <button key={t.id} onClick={() => openBoard(t.id)} style={{ display: 'block', width: '100%', textAlign: 'left', font: `400 11px ${MONO}`, color: INK, background: 'none', border: `1px solid ${MUTE}33`, borderRadius: 6, padding: '6px 8px', marginBottom: 4, cursor: 'pointer' }}>
+            <b>{t.id}</b> <span style={{ color: MUTE }}>{t.stage}</span><br /><span style={{ color: MUTE }}>{t.title}</span>
+          </button>
+        ))}
+        {!jiraClosed.length && !tickets.length && <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>No closed tickets.</div>}
       </div>
 
       <div style={PANEL}>
-        {!retro ? <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>Pick a ticket to compose its retro.</div>
-          : retro === 'loading' ? <div style={{ color: '#7a716a' }}>Composing…</div>
+        {!retro ? <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>Pick a ticket to compose its retro.</div>
+          : retro === 'loading' ? <div style={{ color: MUTE }}>Composing…</div>
+          : retro.jira ? <JiraRetro i={retro.i} />
           : <div style={{ display: 'grid', gap: 8 }}>
               <div style={{ font: `600 14px ${HEAD}`, color: ACCENT }}>{retro.ticketId}</div>
-              <div style={{ font: `400 12px ${MONO}`, color: '#9a8f86' }}>
-                {retro.estimateVsActual ? `estimate ${retro.estimateVsActual.estimateDays}d vs actual ${retro.estimateVsActual.actualDays?.toFixed?.(1) ?? '—'}d` : 'no estimate on file'}
-              </div>
-              <div style={{ font: `400 12px ${MONO}`, color: '#9a8f86' }}>reopened: {retro.reopened} · escaped bugs: {retro.escapedBugs}</div>
-              <div style={{ font: `400 11px ${MONO}`, color: '#9a8f86' }}>cycle by phase: {Object.entries(retro.cycleByPhase || {}).map(([k, v]) => `${k} ${v.toFixed(1)}d`).join(' · ') || '—'}</div>
-              <div style={{ font: `400 11px ${MONO}`, color: retro.sessionsShown ? '#5fd39a' : '#7a716a' }}>
-                {retro.sessionsShown ? `${retro.sessions.length} linked session(s)` : 'sessions not shown — no confident link (won’t guess a join)'}
-              </div>
+              <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>{retro.estimateVsActual ? `estimate ${retro.estimateVsActual.estimateDays}d vs actual ${retro.estimateVsActual.actualDays?.toFixed?.(1) ?? '—'}d` : 'no estimate on file'}</div>
+              <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>reopened: {retro.reopened} · escaped bugs: {retro.escapedBugs}</div>
+              <div style={{ font: `400 11px ${MONO}`, color: MUTE }}>cycle by phase: {Object.entries(retro.cycleByPhase || {}).map(([k, v]) => `${k} ${v.toFixed(1)}d`).join(' · ') || '—'}</div>
             </div>}
       </div>
     </div>
   )
 }
+
+export function JiraRetro({ i }) {
+  const estActual = i.estAcc
+  const phases = Object.entries(i.daysIn || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <a href={jiraUrl(i)} target="_blank" rel="noreferrer" style={{ font: `600 15px ${HEAD}`, color: ACCENT, textDecoration: 'none' }}>{i.key}</a>
+        <Badge tone="green">{i.status}</Badge>
+        <span style={{ font: `400 12px ${BODY}`, color: INK }}>{i.summary}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        <Metric label="cycle time" v={`${i.delivery}d`} />
+        <Metric label="in dev" v={`${i.dev}d`} />
+        <Metric label="in review" v={`${i.cr}d`} />
+        <Metric label="est accuracy" v={estActual == null ? '—' : `${estActual}%`} tone={estActual != null && estActual < 60 ? RED : GREEN} />
+        <Metric label="QA cycles" v={i.qaCycles} tone={i.qaCycles > 1 ? PURPLE : INK} />
+        <Metric label="rework/reopen" v={i.rework} tone={i.rework > 0 ? RED : GREEN} />
+        <Metric label="PRs" v={(i.prNums || []).length} />
+      </div>
+      <div style={{ font: `400 11px ${MONO}`, color: MUTE }}>time by phase: {phases.map(([k, v]) => `${k} ${v}d`).join(' · ') || '—'}</div>
+      {i.stale && <div style={{ font: `400 11px ${MONO}`, color: PURPLE }}>⚠ {i.staleNote}</div>}
+      <div style={{ font: `400 12px ${BODY}`, color: MUTE, marginTop: 4 }}>
+        {i.rework > 0 ? `Reopened/reworked ${i.rework}× — worth a note on what changed mid-flight. ` : 'Clean single-pass delivery. '}
+        {estActual != null && estActual < 60 ? 'Estimate was off — recalibrate sizing for this ticket type.' : ''}
+      </div>
+    </div>
+  )
+}
+const Metric = ({ label, v, tone }) => (
+  <div><div style={{ font: `600 18px ${MONO}`, color: tone || INK }}>{v}</div><div style={{ font: `400 10.5px ${BODY}`, color: MUTE }}>{label}</div></div>
+)
