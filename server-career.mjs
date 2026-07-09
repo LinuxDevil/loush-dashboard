@@ -8,6 +8,7 @@ import { buildSnapshot, updateRollup } from './career-snapshot.mjs'
 import { importGithub } from './career-import-github.mjs'
 import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
+import { analysisKey, runAnalyze } from './career-analyze.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -182,6 +183,23 @@ export default function mountCareer(app, deps = {}) {
       store.write({ imports: { ...cfg.imports, jira: { lastAt: at, path: p } } })
       cache = null
       res.json({ ok: true, lastAt: at, issues: issues.length })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // On-demand only (§2,§3): cached by input hash so repeat clicks are free. Never runs on snapshot build.
+  // ponytail: spawnSync blocks this handler for the claude -p call — fine for a local single-user dashboard.
+  app.post('/api/career/analyze', (req, res) => {
+    try {
+      const { panelKey, payload } = req.body || {}
+      if (!panelKey) return res.status(400).json({ error: 'panelKey required' })
+      const key = analysisKey(panelKey, payload)
+      const cfg = store.read()
+      const hit = (cfg.analyses || {})[key]
+      if (hit) return res.json({ markdown: hit.markdown, cached: true })
+      const { markdown } = runAnalyze({ panelKey, payload })
+      store.write({ analyses: { ...(cfg.analyses || {}), [key]: { inputHash: key, at: Date.now(), markdown } } })
+      cache = null
+      res.json({ markdown, cached: false })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
