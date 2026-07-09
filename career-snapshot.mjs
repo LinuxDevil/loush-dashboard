@@ -4,6 +4,19 @@ import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
 import { harnessScore } from './career-harness.mjs'
 import { computeAllocation } from './career-allocation.mjs'
+import { hydrateOkrs } from './career-okr.mjs'
+import { computeStreaks, evaluateAchievements, personalBests as personalBestsOf } from './career-gamify.mjs'
+import { evaluateLesson } from './career-lessons.mjs'
+
+// Feedback nudges (Phase-3 T8): a shipped ticket / merged PR is the trigger to solicit feedback.
+export function feedbackNudges(tasks = [], config = {}) {
+  const asked = new Set((config.feedbackRequests || []).map(r => r.trigger))
+  const out = []
+  for (const t of tasks) if (t.stage === 'released' && !asked.has('tkt:' + t.id))
+    out.push({ id: 'nudge:tkt:' + t.id, trigger: 'tkt:' + t.id, topic: t.title || t.id,
+      suggestion: `Ask your PM/reviewer for feedback on ${t.id}${t.title ? ` (${t.title})` : ''}` })
+  return out
+}
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
 // prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
@@ -80,6 +93,19 @@ export function buildSnapshot(deps) {
   }
   // hydrate the acted-on mark (guarded — `focusActed` is introduced in Task 13; guard keeps this correct before/after)
   snap.focus = focusItems(snap).map(f => ({ ...f, actedOn: (config.focusActed || {})[f.id] || null }))
+
+  // Phase-3 sections (computed last — some read the assembled snap via metricRefs) --------------
+  snap.okrs = hydrateOkrs(config.okrs || [], snap)   // KR.current pulled live from the snapshot
+  const totalXp = (config.xpLedger || []).reduce((a, e) => a + (e.xp || 0), 0)
+  snap.game = {
+    xp: totalXp, level: Math.ceil(Math.sqrt(totalXp / 100)),
+    streaks: computeStreaks(config.rollup || {}, todayIso),
+    badges: evaluateAchievements(snap, config),
+    personalBests: personalBestsOf(config.rollup || {}),
+  }
+  // active lessons carry a live evaluation; graduated ones are kept for the "celebrate" view
+  snap.lessons = (config.lessons || []).map(l => ({ ...l, eval: evaluateLesson(l, snap) }))
+  snap.feedbackNudges = feedbackNudges(tasks, config)
   return snap
 }
 
