@@ -2,6 +2,7 @@ import { parseUsageData, groupByProject } from './career-insights.mjs'
 import { parseReportNarrative } from './career-insights-report.mjs'
 import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
+import { harnessScore } from './career-harness.mjs'
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
 // prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
@@ -18,7 +19,7 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null } = deps
+  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null, probeRepo = null } = deps
   const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
   const byProject = groupByProject(sessions)
 
@@ -43,6 +44,9 @@ export function buildSnapshot(deps) {
     if (s.start_time) { withTimes++; if (inWindow(localHour(s.start_time, config.tzOffsetHours), win)) afterHours++ }
   }
   const topFriction = Object.entries(totalFriction).sort((a, b) => b[1] - a[1])[0]?.[0] || null
+  // org-wide friction-per-session baseline for the harness score (Task 4)
+  const totalFrictionEvents = Object.values(totalFriction).reduce((a, b) => a + b, 0)
+  const baselineFrictionRate = sessions.length ? totalFrictionEvents / sessions.length : 1
   const tasks = readTasks()
 
   const snap = {
@@ -60,7 +64,10 @@ export function buildSnapshot(deps) {
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,
     insights: { narrative: parseReportNarrative(readReport()) },
-    projects: [...byProject.entries()].map(([path, v]) => ({ path, ...v.totals, sessions: v.sessions.length })),
+    projects: [...byProject.entries()].map(([path, v]) => ({ path, ...v.totals, sessions: v.sessions.length,
+      // harness score re-detected each refresh (no persistence, §11.B/D). probeRepo is server-supplied.
+      harness: harnessScore({ project: path, sessionsForProject: v.sessions, baselineFrictionRate,
+        repoProbe: probeRepo ? probeRepo(path) : {} }) })),
   }
   // hydrate the acted-on mark (guarded — `focusActed` is introduced in Task 13; guard keeps this correct before/after)
   snap.focus = focusItems(snap).map(f => ({ ...f, actedOn: (config.focusActed || {})[f.id] || null }))

@@ -82,6 +82,13 @@ export default function mountCareer(app, deps = {}) {
     if (!drop) return null
     return importJira({ issues: drop.issues || [], resolved })
   })
+  // Re-detect CLAUDE.md presence + rough quality each refresh (no persistence, §11.B/D).
+  const probeRepo = deps.probeRepo || ((projectPath) => {
+    for (const f of ['CLAUDE.md', path.join('.claude', 'CLAUDE.md')]) {
+      try { const txt = fs.readFileSync(path.join(projectPath, f), 'utf8'); return { hasClaudeMd: true, claudeMdQuality: Math.min(1, txt.length / 1500) } } catch {}
+    }
+    return { hasClaudeMd: false, claudeMdQuality: 0 }
+  })
   const readRunning = deps.readRunning || (() => {
     const root = path.join(CLAUDE, 'projects'); const cutoff = Date.now() - 5 * 60_000; const out = []
     let dirs = []; try { dirs = fs.readdirSync(root) } catch { return out }
@@ -112,7 +119,7 @@ export default function mountCareer(app, deps = {}) {
     const resolved = resolveIdentity(config.identity)
     const github = readGithub(resolved)
     const jira = readJira(resolved)
-    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github, jira })
+    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github, jira, probeRepo })
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)

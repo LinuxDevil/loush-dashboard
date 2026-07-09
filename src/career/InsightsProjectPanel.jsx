@@ -10,6 +10,16 @@ const Hist = ({ title, obj }) => {
       <div style={{ width: 30, textAlign: 'right', font: `500 10.5px ${MONO}`, color: '#7a716a' }}>{v}</div>
     </div>)}</div>
 }
+const Harness = ({ h }) => {
+  const col = h.score >= 75 ? '#5fd39a' : h.score >= 50 ? ACCENT : '#f2a2c4'
+  return <div style={{ marginBottom: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ font: `700 20px ${HEAD}`, color: col }}>{h.score}</div>
+      <div style={{ font: `600 11px ${MONO}`, color: '#7a716a' }}>harness score (re-detected each refresh)</div>
+    </div>
+    {(h.fixes || []).map(f => <div key={f.id} style={{ font: `400 11px ${MONO}`, color: '#cbb', marginTop: 4 }}>→ <b style={{ color: col }}>{f.title}:</b> {f.detail}</div>)}
+  </div>
+}
 export default function InsightsProjectPanel({ snap }) {
   const projects = snap.projects || []
   const [sel, setSel] = useState('')
@@ -23,7 +33,7 @@ export default function InsightsProjectPanel({ snap }) {
           <option value="">All projects ({projects.length})</option>
           {projects.map(x => <option key={x.path} value={x.path}>{x.path} · {x.sessions} sessions</option>)}
         </select>
-        {p ? <div><Hist title="Outcomes" obj={p.outcomes} /><Hist title="Friction" obj={p.friction} /><Hist title="Languages" obj={p.languages} /><Hist title="Tools" obj={p.tools} /></div>
+        {p ? <div>{p.harness && <Harness h={p.harness} />}<Hist title="Outcomes" obj={p.outcomes} /><Hist title="Friction" obj={p.friction} /><Hist title="Languages" obj={p.languages} /><Hist title="Tools" obj={p.tools} /></div>
           : <div style={{ font: `400 12px ${MONO}`, color: '#7a716a', marginTop: 8 }}>Pick a project to see its /insights breakdown.</div>}
       </div>
       <div style={PANEL}>
