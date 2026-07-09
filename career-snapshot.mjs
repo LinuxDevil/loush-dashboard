@@ -3,6 +3,7 @@ import { parseReportNarrative } from './career-insights-report.mjs'
 import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
 import { harnessScore } from './career-harness.mjs'
+import { computeAllocation } from './career-allocation.mjs'
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
 // prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
@@ -64,6 +65,7 @@ export function buildSnapshot(deps) {
       prLifecycle: github.prLifecycle,
     } : null,
     jira: jira && !jira.error ? jira : null,
+    allocation: computeAllocation({ sessions, github, target: config.timeTarget || null }),
     workflow: { topFriction, friction: totalFriction, helpfulness, oneShotRate,
                 interruptRate: sessions.length ? sessions.reduce((a, s) => a + (s.user_interruptions || 0), 0) / sessions.length : 0,
                 sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}),
