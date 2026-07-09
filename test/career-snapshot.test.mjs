@@ -28,6 +28,14 @@ test('buildSnapshot assembles all phase-1 sections', () => {
   assert.equal(s.parsed >= 1, true)
 })
 
+test('workflow rollup carries helpfulness + oneShotRate + interruptRate (Task 8)', () => {
+  const w = buildSnapshot(deps()).workflow
+  assert.ok(w.helpfulness && typeof w.helpfulness === 'object')
+  assert.equal(typeof w.oneShotRate, 'number')
+  assert.equal(typeof w.interruptRate, 'number')
+  assert.ok(w.sessionTypes && typeof w.sessionTypes === 'object')
+})
+
 test('lowestBugRatio only records on a meaningful window (>=5 PRs), else stays null (fix 4)', () => {
   const big = updateRollup(defaultConfig(), buildSnapshot(deps()), '2026-07-09')          // myPrCount 6
   assert.equal(big.rollup.personalBests.lowestBugRatio, buildSnapshot(deps()).quality.changeFailProxy)

@@ -10,8 +10,9 @@ import BragPanel from './career/BragPanel.jsx'
 import OneOnOnePanel from './career/OneOnOnePanel.jsx'
 import FocusPanel from './career/FocusPanel.jsx'
 import CompetencyPanel from './career/CompetencyPanel.jsx'
+import WorkflowPanel from './career/WorkflowPanel.jsx'
 
-const TABS = ['Me / Now', 'Focus', 'Competency', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
+const TABS = ['Me / Now', 'Focus', 'Competency', 'Workflow', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
 export default function CareerDashboard({ onExit }) {
   const [snap, setSnap] = useState(null)
@@ -35,6 +36,7 @@ export default function CareerDashboard({ onExit }) {
         : tab === 'Me / Now' ? <MePanel snap={snap} />
         : tab === 'Focus' ? <FocusPanel snap={snap} reload={load} />
         : tab === 'Competency' ? <CompetencyPanel />
+        : tab === 'Workflow' ? <WorkflowPanel snap={snap} />
         : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />

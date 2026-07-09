@@ -37,12 +37,16 @@ export function buildSnapshot(deps) {
 
   // flow / workflow rollups from all sessions — after-hours uses a LOCAL, configurable window (fix 1)
   const win = config.afterHoursWindow || { startHour: 19, endHour: 6 }
-  const totalFriction = {}
-  let afterHours = 0, withTimes = 0
+  const totalFriction = {}, helpfulness = {}
+  let afterHours = 0, withTimes = 0, oneShot = 0
   for (const s of sessions) {
     for (const [k, v] of Object.entries(s.friction_counts || {})) totalFriction[k] = (totalFriction[k] || 0) + v
     if (s.start_time) { withTimes++; if (inWindow(localHour(s.start_time, config.tzOffsetHours), win)) afterHours++ }
+    if (s.claude_helpfulness) helpfulness[s.claude_helpfulness] = (helpfulness[s.claude_helpfulness] || 0) + 1
+    // one-shot = a single-task session that ran without interruptions (spec §11.A workflow)
+    if ((s.session_type === 'one_shot' || s.session_type === 'single_task') && !(s.user_interruptions > 0)) oneShot++
   }
+  const oneShotRate = sessions.length ? oneShot / sessions.length : 0
   const topFriction = Object.entries(totalFriction).sort((a, b) => b[1] - a[1])[0]?.[0] || null
   // org-wide friction-per-session baseline for the harness score (Task 4)
   const totalFrictionEvents = Object.values(totalFriction).reduce((a, b) => a + b, 0)
@@ -60,7 +64,9 @@ export function buildSnapshot(deps) {
       prLifecycle: github.prLifecycle,
     } : null,
     jira: jira && !jira.error ? jira : null,
-    workflow: { topFriction, friction: totalFriction,
+    workflow: { topFriction, friction: totalFriction, helpfulness, oneShotRate,
+                interruptRate: sessions.length ? sessions.reduce((a, s) => a + (s.user_interruptions || 0), 0) / sessions.length : 0,
+                sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}),
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,
     insights: { narrative: parseReportNarrative(readReport()) },
