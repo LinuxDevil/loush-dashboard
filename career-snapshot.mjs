@@ -18,7 +18,7 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null } = deps
+  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null } = deps
   const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
   const byProject = groupByProject(sessions)
 
@@ -55,6 +55,7 @@ export function buildSnapshot(deps) {
       reviewFootprint: { ...github.reviewFootprint, reviewedForOthers: Object.fromEntries(github.reviewFootprint.reviewedForOthers) },
       prLifecycle: github.prLifecycle,
     } : null,
+    jira: jira && !jira.error ? jira : null,
     workflow: { topFriction, friction: totalFriction,
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,

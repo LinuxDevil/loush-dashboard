@@ -6,6 +6,7 @@ import { makeStore } from './career-config.mjs'
 import { resolveIdentity, warnIfNoMatch } from './career-identity.mjs'
 import { buildSnapshot, updateRollup } from './career-snapshot.mjs'
 import { importGithub } from './career-import-github.mjs'
+import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
 
 const HOME = os.homedir()
@@ -76,6 +77,11 @@ export default function mountCareer(app, deps = {}) {
     imp.blame = drop.blame || {}   // { bugId -> introducingAuthorEmail }, computed at import (Task 2)
     return imp
   })
+  const readJira = deps.readJira || ((resolved) => {
+    const drop = latestDrop('jira')
+    if (!drop) return null
+    return importJira({ issues: drop.issues || [], resolved })
+  })
   const readRunning = deps.readRunning || (() => {
     const root = path.join(CLAUDE, 'projects'); const cutoff = Date.now() - 5 * 60_000; const out = []
     let dirs = []; try { dirs = fs.readdirSync(root) } catch { return out }
@@ -105,7 +111,8 @@ export default function mountCareer(app, deps = {}) {
     const config = store.read()
     const resolved = resolveIdentity(config.identity)
     const github = readGithub(resolved)
-    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github })
+    const jira = readJira(resolved)
+    const snap = buildSnapshot({ usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github, jira })
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)
@@ -153,6 +160,21 @@ export default function mountCareer(app, deps = {}) {
       store.write({ imports: { ...cfg.imports, github: { lastAt: at, path: p } } })
       cache = null
       res.json({ ok: true, lastAt: at, prs: prs.length, reviewsHit: (reviews.items || []).length })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Jira: prefer a pasted export (the changelog-bearing REST payload); acli can't expand changelog,
+  // so a paste is the reliable source. Read-only drop to disk + persist {lastAt,path}. Quarantined.
+  app.post('/api/career/import/jira', (req, res) => {
+    try {
+      let issues = req.body?.issues
+      if (!Array.isArray(issues)) throw new Error('POST { issues: [...] } — paste the Jira REST export (fields + changelog)')
+      const at = Date.now()
+      const p = writeDrop('jira', { at, issues })
+      const cfg = store.read()
+      store.write({ imports: { ...cfg.imports, jira: { lastAt: at, path: p } } })
+      cache = null
+      res.json({ ok: true, lastAt: at, issues: issues.length })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
