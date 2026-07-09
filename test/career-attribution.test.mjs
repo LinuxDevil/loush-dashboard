@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveIdentity } from '../career-identity.mjs'
-import { attributeBugs } from '../career-attribution.mjs'
+import { attributeBugs, attributeBugsWithBlame } from '../career-attribution.mjs'
 
 const resolved = resolveIdentity({ gitEmails: ['ali@work.com'] })
 
@@ -27,6 +27,21 @@ test('review findings NEVER move the change-fail proxy', () => {
   assert.equal(r.changeFailProxy, 0)                       // findings excluded
   assert.equal(r.caughtInReview.length, 1)                 // only f1
   assert.equal(r.defectDensityCaughtInReview, 1 / 2)
+})
+
+test('blame attribution: introducing author (pure data) attributes; review findings stay separate', () => {
+  const bugs = [
+    { id: 'b1', introducingAuthorEmail: 'ali@work.com' },        // I introduced the fixed lines → mine
+    { id: 'b2', introducingAuthorEmail: 'someone@else.com' },     // coworker introduced → unattributed
+    { id: 'b3', ticketAuthorEmail: 'ali@work.com' },              // falls back to Phase-1 rule
+  ]
+  const findings = [{ id: 'f1', severity: 'error', diffAuthorEmail: 'ali@work.com' }]
+  const r = attributeBugsWithBlame({ bugs, findings, myPrCount: 4, reverts: 0, resolved })
+  assert.deepEqual(r.attributed.map(a => a.id).sort(), ['b1', 'b3'])
+  assert.equal(r.attributed.find(a => a.id === 'b1').rule, 'blame')
+  assert.deepEqual(r.unattributed.map(a => a.id), ['b2'])
+  assert.equal(r.changeFailProxy, 2 / 4)                          // b1 + b3, findings excluded
+  assert.equal(r.caughtInReview.length, 1)                        // review finding on a separate axis
 })
 
 test('empty identity attributes nothing', () => {

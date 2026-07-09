@@ -8,8 +8,20 @@ import QualityPanel from './career/QualityPanel.jsx'
 import InsightsProjectPanel from './career/InsightsProjectPanel.jsx'
 import BragPanel from './career/BragPanel.jsx'
 import OneOnOnePanel from './career/OneOnOnePanel.jsx'
+import FocusPanel from './career/FocusPanel.jsx'
+import CompetencyPanel from './career/CompetencyPanel.jsx'
+import WorkflowPanel from './career/WorkflowPanel.jsx'
+import LearningPanel from './career/LearningPanel.jsx'
+import AllocationPanel from './career/AllocationPanel.jsx'
+import DecisionPanel from './career/DecisionPanel.jsx'
+import OkrPanel from './career/OkrPanel.jsx'
+import GamePanel from './career/GamePanel.jsx'
+import TicketRetroPanel from './career/TicketRetroPanel.jsx'
+import LessonsPanel from './career/LessonsPanel.jsx'
+import InfluencePanel from './career/InfluencePanel.jsx'
+import FeedbackPanel from './career/FeedbackPanel.jsx'
 
-const TABS = ['Me / Now', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
+const TABS = ['Me / Now', 'Focus', 'Competency', 'Workflow', 'Learning', 'Allocation', 'Decisions', 'OKRs', 'Lessons', 'Retro', 'Influence', 'Feedback', 'Game', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
 export default function CareerDashboard({ onExit }) {
   const [snap, setSnap] = useState(null)
@@ -31,6 +43,18 @@ export default function CareerDashboard({ onExit }) {
       </div>
       {!snap ? <div style={{ ...PANEL, color: '#7a716a' }}>Loading… (run ↻ refresh if empty)</div>
         : tab === 'Me / Now' ? <MePanel snap={snap} />
+        : tab === 'Focus' ? <FocusPanel snap={snap} reload={load} />
+        : tab === 'Competency' ? <CompetencyPanel />
+        : tab === 'Workflow' ? <WorkflowPanel snap={snap} />
+        : tab === 'Learning' ? <LearningPanel />
+        : tab === 'Allocation' ? <AllocationPanel snap={snap} />
+        : tab === 'Decisions' ? <DecisionPanel />
+        : tab === 'OKRs' ? <OkrPanel snap={snap} />
+        : tab === 'Lessons' ? <LessonsPanel snap={snap} reload={load} />
+        : tab === 'Retro' ? <TicketRetroPanel />
+        : tab === 'Influence' ? <InfluencePanel snap={snap} />
+        : tab === 'Feedback' ? <FeedbackPanel snap={snap} />
+        : tab === 'Game' ? <GamePanel snap={snap} />
         : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />

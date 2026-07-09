@@ -1,7 +1,22 @@
 import { parseUsageData, groupByProject } from './career-insights.mjs'
 import { parseReportNarrative } from './career-insights-report.mjs'
-import { attributeBugs } from './career-attribution.mjs'
+import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
+import { harnessScore } from './career-harness.mjs'
+import { computeAllocation } from './career-allocation.mjs'
+import { hydrateOkrs } from './career-okr.mjs'
+import { computeStreaks, evaluateAchievements, personalBests as personalBestsOf } from './career-gamify.mjs'
+import { evaluateLesson } from './career-lessons.mjs'
+
+// Feedback nudges (Phase-3 T8): a shipped ticket / merged PR is the trigger to solicit feedback.
+export function feedbackNudges(tasks = [], config = {}) {
+  const asked = new Set((config.feedbackRequests || []).map(r => r.trigger))
+  const out = []
+  for (const t of tasks) if (t.stage === 'released' && !asked.has('tkt:' + t.id))
+    out.push({ id: 'nudge:tkt:' + t.id, trigger: 'tkt:' + t.id, topic: t.title || t.id,
+      suggestion: `Ask your PM/reviewer for feedback on ${t.id}${t.title ? ` (${t.title})` : ''}` })
+  return out
+}
 
 export const quarterOf = iso => { const d = new Date(iso); return `${d.getUTCFullYear()}Q${Math.floor(d.getUTCMonth() / 3) + 1}` }
 // prior PERIOD baseline = previous quarter's recorded ratio (null if none). Never the last refresh (fix 2).
@@ -18,24 +33,38 @@ export function localHour(iso, tzOffsetHours) {
 const inWindow = (hr, w) => w.startHour <= w.endHour ? (hr >= w.startHour && hr < w.endHour) : (hr >= w.startHour || hr < w.endHour)
 
 export function buildSnapshot(deps) {
-  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning } = deps
+  const { usageDir, mtimeCache, config, resolved, readBugs, readTasks, readReport, readRunning, github = null, jira = null, probeRepo = null } = deps
   const { sessions, skipped, parsed } = parseUsageData(usageDir, { mtimeCache })
   const byProject = groupByProject(sessions)
 
   const bugInput = readBugs()
-  const quality = attributeBugs({ ...bugInput, resolved })
+  // GitHub import, when present, is the better PR-count source than the (empty) Phase-1 stub.
+  const myPrCount = github?.prLifecycle?.reviewRoundsPerPr?.length || bugInput.myPrCount || 0
+  // Blame (computed at import, pure data here) augments attribution when a GitHub import exists;
+  // otherwise fall back to the Phase-1 attributor. Escaped-vs-caught split is identical either way.
+  const quality = github && !github.error
+    ? attributeBugsWithBlame({ ...bugInput, myPrCount, resolved,
+        bugs: (bugInput.bugs || []).map(b => github.blame?.[b.id] ? { ...b, introducingAuthorEmail: github.blame[b.id] } : b) })
+    : attributeBugs({ ...bugInput, myPrCount, resolved })
   const todayIso = new Date().toISOString().slice(0, 10)
   const priorChangeFailProxy = priorQuarterRatio(config.rollup, todayIso)   // null when no prior quarter
 
   // flow / workflow rollups from all sessions — after-hours uses a LOCAL, configurable window (fix 1)
   const win = config.afterHoursWindow || { startHour: 19, endHour: 6 }
-  const totalFriction = {}
-  let afterHours = 0, withTimes = 0
+  const totalFriction = {}, helpfulness = {}
+  let afterHours = 0, withTimes = 0, oneShot = 0
   for (const s of sessions) {
     for (const [k, v] of Object.entries(s.friction_counts || {})) totalFriction[k] = (totalFriction[k] || 0) + v
     if (s.start_time) { withTimes++; if (inWindow(localHour(s.start_time, config.tzOffsetHours), win)) afterHours++ }
+    if (s.claude_helpfulness) helpfulness[s.claude_helpfulness] = (helpfulness[s.claude_helpfulness] || 0) + 1
+    // one-shot = a single-task session that ran without interruptions (spec §11.A workflow)
+    if ((s.session_type === 'one_shot' || s.session_type === 'single_task') && !(s.user_interruptions > 0)) oneShot++
   }
+  const oneShotRate = sessions.length ? oneShot / sessions.length : 0
   const topFriction = Object.entries(totalFriction).sort((a, b) => b[1] - a[1])[0]?.[0] || null
+  // org-wide friction-per-session baseline for the harness score (Task 4)
+  const totalFrictionEvents = Object.values(totalFriction).reduce((a, b) => a + b, 0)
+  const baselineFrictionRate = sessions.length ? totalFrictionEvents / sessions.length : 1
   const tasks = readTasks()
 
   const snap = {
@@ -43,15 +72,40 @@ export function buildSnapshot(deps) {
     me: { runningNow: readRunning ? readRunning() : [], sessionCount: sessions.length },
     flow: { afterHoursPct: withTimes ? afterHours / withTimes : 0, wip: tasks.filter(t => t.stage === 'in-progress').length,
             sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}) },
-    quality: { ...quality, priorChangeFailProxy, myPrCount: bugInput.myPrCount || 0 },
-    workflow: { topFriction, friction: totalFriction,
+    quality: { ...quality, priorChangeFailProxy, myPrCount },
+    github: github && !github.error ? {
+      reviewFootprint: { ...github.reviewFootprint, reviewedForOthers: Object.fromEntries(github.reviewFootprint.reviewedForOthers) },
+      prLifecycle: github.prLifecycle,
+    } : null,
+    jira: jira && !jira.error ? jira : null,
+    allocation: computeAllocation({ sessions, github, target: config.timeTarget || null }),
+    competency: config.competency || { ratings: {}, ladder: [] },   // authored input the heuristics read
+    workflow: { topFriction, friction: totalFriction, helpfulness, oneShotRate,
+                interruptRate: sessions.length ? sessions.reduce((a, s) => a + (s.user_interruptions || 0), 0) / sessions.length : 0,
+                sessionTypes: sessions.reduce((a, s) => (a[s.session_type] = (a[s.session_type] || 0) + 1, a), {}),
                 tools: sessions.reduce((a, s) => { for (const [k, v] of Object.entries(s.tool_counts || {})) a[k] = (a[k] || 0) + v; return a }, {}) },
     tasks,
     insights: { narrative: parseReportNarrative(readReport()) },
-    projects: [...byProject.entries()].map(([path, v]) => ({ path, ...v.totals, sessions: v.sessions.length })),
+    projects: [...byProject.entries()].map(([path, v]) => ({ path, ...v.totals, sessions: v.sessions.length,
+      // harness score re-detected each refresh (no persistence, §11.B/D). probeRepo is server-supplied.
+      harness: harnessScore({ project: path, sessionsForProject: v.sessions, baselineFrictionRate,
+        repoProbe: probeRepo ? probeRepo(path) : {} }) })),
   }
   // hydrate the acted-on mark (guarded — `focusActed` is introduced in Task 13; guard keeps this correct before/after)
   snap.focus = focusItems(snap).map(f => ({ ...f, actedOn: (config.focusActed || {})[f.id] || null }))
+
+  // Phase-3 sections (computed last — some read the assembled snap via metricRefs) --------------
+  snap.okrs = hydrateOkrs(config.okrs || [], snap)   // KR.current pulled live from the snapshot
+  const totalXp = (config.xpLedger || []).reduce((a, e) => a + (e.xp || 0), 0)
+  snap.game = {
+    xp: totalXp, level: Math.ceil(Math.sqrt(totalXp / 100)),
+    streaks: computeStreaks(config.rollup || {}, todayIso),
+    badges: evaluateAchievements(snap, config),
+    personalBests: personalBestsOf(config.rollup || {}),
+  }
+  // active lessons carry a live evaluation; graduated ones are kept for the "celebrate" view
+  snap.lessons = (config.lessons || []).map(l => ({ ...l, eval: evaluateLesson(l, snap) }))
+  snap.feedbackNudges = feedbackNudges(tasks, config)
   return snap
 }
 
