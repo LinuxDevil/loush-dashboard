@@ -13,8 +13,9 @@ import CompetencyPanel from './career/CompetencyPanel.jsx'
 import WorkflowPanel from './career/WorkflowPanel.jsx'
 import LearningPanel from './career/LearningPanel.jsx'
 import AllocationPanel from './career/AllocationPanel.jsx'
+import DecisionPanel from './career/DecisionPanel.jsx'
 
-const TABS = ['Me / Now', 'Focus', 'Competency', 'Workflow', 'Learning', 'Allocation', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
+const TABS = ['Me / Now', 'Focus', 'Competency', 'Workflow', 'Learning', 'Allocation', 'Decisions', 'Tasks', 'Flow', 'Quality', 'Insights', 'Brag', '1:1 Prep']
 
 export default function CareerDashboard({ onExit }) {
   const [snap, setSnap] = useState(null)
@@ -41,6 +42,7 @@ export default function CareerDashboard({ onExit }) {
         : tab === 'Workflow' ? <WorkflowPanel snap={snap} />
         : tab === 'Learning' ? <LearningPanel />
         : tab === 'Allocation' ? <AllocationPanel snap={snap} />
+        : tab === 'Decisions' ? <DecisionPanel />
         : tab === 'Tasks' ? <TasksPanel snap={snap} reload={load} />
         : tab === 'Flow' ? <FlowPanel snap={snap} />
         : tab === 'Quality' ? <QualityPanel snap={snap} />
