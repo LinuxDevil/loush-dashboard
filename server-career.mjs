@@ -9,6 +9,10 @@ import { importGithub } from './career-import-github.mjs'
 import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
 import { analysisKey, runAnalyze } from './career-analyze.mjs'
+import { krClosed } from './career-okr.mjs'
+import { awardXp } from './career-gamify.mjs'
+import { harvestCandidates, distill, evaluateLesson, addLesson } from './career-lessons.mjs'
+import { ticketRetro } from './career-retro.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -125,6 +129,10 @@ export default function mountCareer(app, deps = {}) {
     const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
     store.write(patch)
     snap.rollup = { ...config.rollup, ...patch.rollup }
+    // auto-graduate active lessons whose STRUCTURED check cleared (idempotent: internalized never re-fires)
+    const graduated = (config.lessons || []).map(l =>
+      l.status === 'active' && evaluateLesson(l, snap).graduate ? { ...l, status: 'internalized', graduatedAt: Date.now() } : l)
+    if (graduated.some((l, i) => l !== (config.lessons || [])[i])) { store.write({ lessons: graduated }); snap.lessons = graduated.map(l => ({ ...l, eval: evaluateLesson(l, snap) })) }
     snap.bragCandidates = bragCandidates()
     cache = snap
     return snap
@@ -208,6 +216,61 @@ export default function mountCareer(app, deps = {}) {
   app.post('/api/career/retro', (req, res) => { const cfg = store.read(); store.write({ retros: [...cfg.retros, { id: 'r' + Date.now(), ...req.body }] }); res.json({ ok: true }) })
   app.get('/api/career/story-so-far', (req, res) => res.json({ markdown: storyMd(store.read()) }))
   app.get('/api/career/promo-packet', (req, res) => { const c = store.read(); res.json({ markdown: storyMd(c) + `\n\n## Competency self-assessment\nLevel: ${c.competency?.levelSelfAssessed || '—'}\n` }) })
+
+  // T6: closing a KR emits an outcome XP event (idempotent by kr id, Task 5 Goodhart guard)
+  app.post('/api/career/okr/close-kr', (req, res) => {
+    try {
+      const { krId, text } = req.body || {}
+      if (!krId) return res.status(400).json({ error: 'krId required' })
+      const cfg = store.read()
+      const { xpLedger } = awardXp(cfg, [krClosed({ id: krId, text })])
+      store.write({ xpLedger }); cache = null
+      res.json({ ok: true, xp: xpLedger.reduce((a, e) => a + e.xp, 0) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // T4: weekly harvest of recurring themes → DRAFT lessons. Nothing is persisted here; the human
+  // approves via POST /lessons. ponytail: the rule/check is authored in the panel, not by an LLM pass.
+  app.post('/api/career/lessons/harvest', (req, res) => {
+    try {
+      const candidates = harvestCandidates(req.body || {})
+      const drafts = distill({ candidates, runAnalyze: c => ({ situation: c.theme, pattern: '', rule: '', check: { freeText: '' } }) })
+      res.json({ candidates, drafts })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/career/lessons', (req, res) => {   // approve/add an active lesson (cap-enforced)
+    try {
+      const cfg = store.read()
+      const lesson = { id: 'lsn' + Date.now(), status: 'active', raisedAt: Date.now(), ...(req.body.lesson || {}) }
+      const { lessons, error } = addLesson(cfg.lessons || [], lesson)
+      if (error) return res.status(409).json({ error })
+      store.write({ lessons }); cache = null
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/career/lessons/:id/discard', (req, res) => {
+    try {
+      const cfg = store.read()
+      store.write({ lessons: (cfg.lessons || []).map(l => l.id === req.params.id ? { ...l, status: 'discarded' } : l) })
+      cache = null; res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // T3: per-ticket retro. Session linkage needs branch/prompt metadata we don't persist yet, so sessions=[]
+  // → sessionsShown:false (the spec's preferred honest degradation — never a guessed join).
+  app.get('/api/career/retro-tickets', (req, res) => {
+    const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
+    res.json({ tickets: (board.tickets || []).filter(t => ['released', 'ready-for-qa', 'qa-running'].includes(t.stage)).map(t => ({ id: t.id, title: t.title, stage: t.stage })) })
+  })
+  app.get('/api/career/retro/:ticketId', (req, res) => {
+    try {
+      const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
+      const ticket = (board.tickets || []).find(t => t.id === req.params.ticketId)
+      if (!ticket) return res.status(404).json({ error: 'ticket not found' })
+      const prs = latestDrop('github')?.prs || []
+      res.json(ticketRetro({ ticket, prs, bugs: (readBugs().bugs) || [], sessions: [], ticketLinks: store.read().ticketLinks || {} }))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
 
   function brief() {
     const cfg = store.read()

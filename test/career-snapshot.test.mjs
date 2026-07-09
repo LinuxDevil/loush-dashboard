@@ -20,6 +20,17 @@ function deps(over = {}) {
   }
 }
 
+test('phase-3: snapshot carries okrs, game, lessons and feedbackNudges (a released ticket → nudge)', () => {
+  const cfg = defaultConfig()
+  cfg.okrs = [{ id: 'o1', objective: 'X', quarter: '2026Q3', krs: [{ id: 'k1', text: 'CFR', metricRef: 'quality.changeFailProxy', target: 0.05 }] }]
+  const s = buildSnapshot(deps({ config: cfg,
+    readTasks: () => ([{ id: 'AIR-9', stage: 'released', title: 'Ship it' }]) }))
+  assert.equal(s.okrs[0].krs[0].current, s.quality.changeFailProxy)   // metric-linked KR is live
+  assert.ok(s.game && typeof s.game.level === 'number')
+  assert.ok(Array.isArray(s.lessons))
+  assert.ok(s.feedbackNudges.some(n => n.trigger === 'tkt:AIR-9'))    // released ticket produced a nudge
+})
+
 test('buildSnapshot assembles all phase-1 sections', () => {
   const s = buildSnapshot(deps())
   assert.ok(s.quality.changeFailProxy > 0)
