@@ -10,6 +10,8 @@ import mountConstitution from './server-constitution.mjs'
 import mountAtoms from './server-atoms.mjs'
 import mountEng from './server-eng.mjs'
 import mountCareer from './server-career.mjs'
+import mountMemory from './server-memory.mjs'
+import mountMindwalk from './server-mindwalk.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -26,6 +28,8 @@ mountConstitution(app) // /api/constitution/* — .wakeel/constitution insights,
 mountAtoms(app) // /api/atoms/* — feature catalog + grounded ask-the-project search, shared by both dashboards
 mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
 mountCareer(app, { track: (...a) => track(...a), readJson: (...a) => readJson(...a) }) // /api/career/* — personal Career dashboard
+mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
+mountMindwalk(app) // /api/mindwalk/* — runs the mindwalk binary (Claude sessions, or transcoded Cursor ones)
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.

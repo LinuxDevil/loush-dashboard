@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { marked } from 'marked'
+import GameTab, { GameStrip } from './Gamification.jsx'
 
 // Engineering Metrics — self-contained shell. Multi-project (project dropdown + "All projects"),
 // dev-team-only members (dropdown), sprint task board, paginated tables, and a per-ticket hover
@@ -204,18 +206,20 @@ export default function EngDashboard({ onExit }) {
   const prsFor = i => (i.prNums || []).map(n => prByNum[n]).filter(Boolean)
 
   return shell(
-    route === 'overview' ? <Overview {...{ S, issues, shipped, active, members, prsFor, month, year }} />
+    route === 'overview' ? <Overview {...{ S, issues, shipped, active, members, prsFor, month, year, prs, project, onArcade: () => setRoute('game') }} />
     : route === 'members' ? <Members {...{ S, issues, prs, members, member, setMember, prsFor }} />
     : route === 'board' ? <Board {...{ issues, members }} />
+    : route === 'sprint' ? <Sprint {...{ issues, members }} />
     : route === 'workload' ? <Workload {...{ issues, members, patch: patchIssue, reload: () => load(false) }} />
     : route === 'review' ? <Review {...{ prs, deepNum, setDeepNum }} />
-    : <Okrs {...{ S, issues, shipped, prs, quarter, setQuarter }} />
+    : route === 'okrs' ? <Okrs {...{ S, issues, shipped, prs, quarter, setQuarter }} />
+    : <GameTab {...{ issues, prs, project }} />
   )
 }
 
 // ---------------- chrome ----------------
 function TopBar({ team, projects, project, onProject, onAdd, onEdit, route, setRoute, month, setMonth, year, setYear, onExit, onRefresh, busy }) {
-  const nav = [['overview', 'Overview', '▦'], ['members', 'Members', '◍'], ['board', 'Board', '▤'], ['workload', 'Workload', '⚖'], ['review', 'Review', '⟨⟩'], ['okrs', 'OKRs', '◎']]
+  const nav = [['overview', 'Overview', '▦'], ['members', 'Members', '◍'], ['board', 'Board', '▤'], ['sprint', 'Sprint', '◔'], ['workload', 'Workload', '⚖'], ['review', 'Review', '⟨⟩'], ['okrs', 'OKRs', '◎'], ['game', 'Arcade', '🎮']]
   const years = [year, 2026, 2025].filter((v, i, a) => a.indexOf(v) === i)
   const repoShort = r => (r || '').split('/')[1] || r
   const activeName = project === 'all' ? 'All projects' : (projects.find(p => p.key === project)?.name || team?.name || '')
@@ -373,7 +377,7 @@ const H1 = ({ kicker, title, right }) => <div style={{ display: 'flex', alignIte
 const ProjTag = ({ k }) => k ? <span style={{ font: `600 8px ${MONO}`, letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 4, background: 'rgba(124,155,214,0.14)', color: '#9db6dc' }}>{k}</span> : null
 
 // ---------------- OVERVIEW ----------------
-function Overview({ S, issues, shipped, active, members, prsFor, month, year }) {
+function Overview({ S, issues, shipped, active, members, prsFor, month, year, prs, project, onArcade }) {
   const prevM = month === 0 ? 11 : month - 1, prevY = month === 0 ? year - 1 : year
   const shippedPrev = issues.filter(i => i.live && i.month === prevM && i.year === prevY)
   const kpiVal = (set, f) => avg(set.map(f))
@@ -437,6 +441,8 @@ function Overview({ S, issues, shipped, active, members, prsFor, month, year }) 
       {headChips.map((c, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 9, background: 'rgba(19,27,38,0.7)', border: '1px solid rgba(142,200,255,0.1)' }}>
         <span style={{ font: `700 15px ${HEAD}`, color: c.c }}>{c.v}</span><span style={{ font: `400 11px ${BODY}`, color: '#7f8ea1' }}>{c.l}</span></div>)}
     </div>} />
+
+    <GameStrip issues={issues} prs={prs} project={project} onOpen={onArcade} />
 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
       {kpis.map((k, i) => <div key={i} style={{ background: 'linear-gradient(150deg,rgba(19,27,38,0.85),rgba(11,16,23,0.6))', border: '1px solid rgba(142,200,255,0.1)', borderRadius: 13, padding: '13px 14px', display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -699,11 +705,11 @@ function Board({ issues, members }) {
     </div>}
   </section>
 }
-function BoardCard({ i }) {
+function BoardCard({ i, onOpen }) {
   const c = i.rec?.atRisk ? RED : i.rec && i.rec.remaining < 0.5 ? GOLD : 'rgba(142,200,255,0.09)'
   const first = n => (n ? n.split(' ')[0] : '—')
   return <IssueTip i={i}>
-    <div style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(19,27,38,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div onClick={onOpen ? () => onOpen(i) : undefined} style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(19,27,38,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6, cursor: onOpen ? 'pointer' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <TicketLink i={i} style={{ font: `600 10.5px ${MONO}` }} />
         <ProjTag k={i.project} />
@@ -732,7 +738,7 @@ const RoleChip = ({ label, name, c }) => <span style={{ display: 'inline-flex', 
   <span style={{ color: c, fontWeight: 700 }}>{label}</span><span style={{ color: name === '—' ? '#4c5768' : '#b3c1d1' }}>{name}</span></span>
 
 // reusable status-column board for a set of issues (paginated by the caller)
-function ColumnsBoard({ items, minCol = 232 }) {
+function ColumnsBoard({ items, minCol = 232, onOpen }) {
   const cols = colsFor(items)
   if (!items.length) return <Empty text="Nothing here." />
   return <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6 }}>
@@ -745,7 +751,7 @@ function ColumnsBoard({ items, minCol = 232 }) {
           <span style={{ font: `500 10px ${MONO}`, color: '#647285' }}>{its.length}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 40, padding: 6, borderRadius: 10, background: 'rgba(10,15,22,0.4)', border: '1px solid rgba(142,200,255,0.05)' }}>
-          {its.map(i => <BoardCard key={i.key} i={i} />)}
+          {its.map(i => <BoardCard key={i.key} i={i} onOpen={onOpen} />)}
           {its.length === 0 && <div style={{ padding: '10px 6px', font: `400 10.5px ${MONO}`, color: '#3d4757', textAlign: 'center' }}>—</div>}
         </div>
       </div>
@@ -764,6 +770,193 @@ function sprintStats(items) {
     ['Avg cycle', cyc.length ? fx(avg(cyc)) + 'd' : '—', PURPLE],
     ['At risk', String(items.filter(i => i.rec?.atRisk).length), items.some(i => i.rec?.atRisk) ? GOLD : '#7f8ea1'],
   ]
+}
+
+// ---------------- SPRINT (person-centric active sprint + rich ticket detail) ----------------
+function Sprint({ issues, members }) {
+  const [who, setWho] = useState('all')
+  const [open, setOpen] = useState(null) // open ticket key
+  const [sid, setSid] = useState(null)   // selected sprint name
+  const memberIds = useMemo(() => new Set(members.map(m => m.id)), [members])
+  const devScoped = useMemo(() => issues.filter(i => (i.devAssignee && memberIds.has(i.devAssignee.id)) || memberIds.has(i.assignee?.id)), [issues, memberIds])
+  const order = useMemo(() => {
+    const groups = {}
+    for (const i of devScoped) { const k = i.sprint?.name || '__none__'; (groups[k] ||= { name: i.sprint?.name || null, state: i.sprint?.state || '', id: i.sprint?.id || 0, items: [] }).items.push(i) }
+    return Object.values(groups).sort((a, b) => {
+      const aA = /active/i.test(a.state) ? 1 : 0, bA = /active/i.test(b.state) ? 1 : 0
+      if (aA !== bA) return bA - aA                              // active sprint first
+      const an = a.name ? 1 : 0, bn = b.name ? 1 : 0
+      if (an !== bn) return bn - an                              // real sprints before "no sprint"
+      return (b.id || 0) - (a.id || 0) || (b.name || '').localeCompare(a.name || '')
+    })
+  }, [devScoped])
+  const grp = order.find(g => (g.name || '__none__') === sid) || order[0]
+  const items = grp ? grp.items.filter(i => who === 'all' || i.devAssignee?.id === who || i.assignee?.id === who) : []
+  const stats = sprintStats(items)
+  const openIssue = devScoped.find(i => i.key === open)
+
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <H1 kicker="Sprint analytics · dev team" title="Sprint" right={<div style={{ display: 'flex', gap: 8 }}>
+      <select value={who} onChange={e => setWho(e.target.value)} style={{ ...sel, padding: '9px 14px', font: `600 13px ${BODY}` }}>
+        <option value="all">All dev team</option>
+        {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+      </select>
+      <select value={grp ? (grp.name || '__none__') : ''} onChange={e => setSid(e.target.value)} style={{ ...sel, padding: '9px 14px', font: `600 13px ${BODY}` }}>
+        {order.map(g => <option key={g.name || '__none__'} value={g.name || '__none__'}>{g.name || 'No sprint'}{/active/i.test(g.state) ? ' · active' : ''}</option>)}
+      </select>
+    </div>} />
+    {!grp ? <Card><Empty text="No dev-team tickets in any sprint." /></Card> : <>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${stats.length},1fr)`, gap: 8 }}>
+        {stats.map((s, i) => <div key={i} style={{ ...PANEL, padding: '11px 13px' }}>
+          <div style={{ font: `700 19px ${HEAD}`, color: s[2] }}>{s[1]}</div>
+          <div style={{ font: `400 8.5px ${MONO}`, color: '#647285', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s[0]}</div></div>)}
+      </div>
+      <div style={{ ...PANEL, padding: '14px 16px' }}>
+        <div style={{ font: `400 10.5px ${MONO}`, color: '#647285', marginBottom: 10 }}>{items.length} ticket{items.length === 1 ? '' : 's'} · click a card for full detail, metrics & AI acceptance-criteria / test cases</div>
+        <ColumnsBoard items={items} onOpen={i => setOpen(i.key)} />
+      </div>
+    </>}
+    {openIssue && <TicketDetail issue={openIssue} onClose={() => setOpen(null)} />}
+  </section>
+}
+
+const miniBtn = { padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(142,200,255,0.18)', background: 'rgba(18,27,39,0.9)', color: '#cfe0f2', cursor: 'pointer', font: `500 11px ${BODY}` }
+const Sec = ({ title, right, children }) => <div style={{ ...PANEL, padding: '13px 15px' }}>
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+    <div style={{ font: `600 12px ${HEAD}`, color: '#eaf1f9', letterSpacing: '0.02em' }}>{title}</div>{right}</div>
+  {children}</div>
+// rule-based insights (no extra AI call) derived from the snapshot metrics
+function insightsFor(i) {
+  const out = []
+  if (i.rec) {
+    const when = new Date(i.rec.moveBy).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    out.push(i.rec.atRisk
+      ? { c: RED, t: `Overdue in ${i.status} — move to ${i.rec.next} now (${fx(Math.abs(i.rec.remaining))}d over budget)` }
+      : { c: i.rec.remaining < 0.5 ? GOLD : GREEN, t: `Move to ${i.rec.next} by ${when} · ${fx(i.rec.remaining)}d of ${fx(i.rec.budget)}d left` })
+  } else if (i.live) out.push({ c: GREEN, t: 'Shipped — no action needed' })
+  if (i.rework > 0) out.push({ c: GOLD, t: `Reworked / reopened ${i.rework}×` })
+  if (i.qaCycles > 1) out.push({ c: GOLD, t: `${i.qaCycles} QA cycles` })
+  if (i.stale) out.push({ c: RED, t: i.staleNote || 'Status out of date vs PR' })
+  if (i.active && !(i.prNums || []).length) out.push({ c: BB, t: 'No PR linked yet' })
+  if (i.estAcc != null && i.estAcc < 75) out.push({ c: RED, t: `Estimate off — ${fx(i.estAcc, 0)}% accuracy for ${i.pts}pt` })
+  const actual = i.dev || i.delivery, b = bestSP(actual)
+  if (b && accOf(estDaysOf(i.pts), actual) < 90) out.push({ c: GOLD, t: `For ≥90% estimate accuracy this should be ${b.sp}pt (now ${i.pts || 0}pt)` })
+  if (!out.length) out.push({ c: '#7f8ea1', t: 'On track — nothing flagged' })
+  return out
+}
+
+function TicketDetail({ issue: i, onClose }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState(null)
+  const [busy, setBusy] = useState('')   // '' | 'ac' | 'tests'
+  const [edit, setEdit] = useState(null) // { kind, md }
+  useEffect(() => {
+    setD(null); setErr(null); setEdit(null)
+    fetch(`/api/eng/ticket/${i.key}?project=${i.project}`).then(r => r.json())
+      .then(x => x.error ? setErr(x.error) : setD(x)).catch(e => setErr(String(e)))
+  }, [i.key, i.project])
+  const setArt = (kind, a) => setD(s => ({ ...s, artifacts: { ...(s?.artifacts || {}), [kind]: a } }))
+  const gen = kind => {
+    setBusy(kind); setErr(null)
+    fetch(`/api/eng/ticket/${i.key}/generate?project=${i.project}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) })
+      .then(r => r.json()).then(a => a.error ? setErr(a.error) : setArt(kind, a)).catch(e => setErr(String(e))).finally(() => setBusy(''))
+  }
+  const save = (kind, md) => fetch(`/api/eng/ticket/${i.key}/artifact`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, md }) })
+    .then(r => r.json()).then(a => { setArt(kind, a); setEdit(null) }).catch(e => setErr(String(e)))
+
+  const bars = Object.entries(i.daysIn || {}).filter(([, v]) => v > 0.01).sort((a, b) => b[1] - a[1])
+  const barMax = Math.max(0.5, ...bars.map(b => b[1]))
+  const kd = [['Type', i.type], ['Status', i.status], ['Points', i.pts || '—'], ['Sprint', i.sprint?.name || '—'],
+    ['Dev', i.devAssignee?.name || '—'], ['QA', i.qaAssignee?.name || '—'], ['Assignee', i.assignee?.name || '—'], ['Parent', i.parent?.key || '—']]
+  const metrics = [['Cycle', i.delivery != null ? fx(i.delivery) + 'd' : '—', BB], ['In dev', fx(i.dev) + 'd', BB], ['Review', fx(i.cr) + 'd', PURPLE],
+    ['QA cycles', String(i.qaCycles), GOLD], ['Rework', String(i.rework), i.rework ? GOLD : '#7f8ea1'], ['Est acc', i.estAcc == null ? '—' : fx(i.estAcc, 0) + '%', i.estAcc == null ? '#7f8ea1' : accColor(i.estAcc)]]
+  const artMeta = { ac: { title: 'Acceptance Criteria', noun: 'acceptance criteria' }, tests: { title: 'Test Cases', noun: 'test cases' } }
+
+  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(4,7,11,0.55)', backdropFilter: 'blur(2px)', display: 'flex', justifyContent: 'flex-end' }}>
+    <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '96vw', height: '100vh', overflowY: 'auto', background: 'linear-gradient(180deg,#0d131d,#0a0f16)', borderLeft: '1px solid rgba(142,200,255,0.12)', padding: '18px 20px 60px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: '#93a6bb' }}>{i.status}</span></div>
+          <div style={{ font: `700 17px ${HEAD}`, color: '#f0f5fb', marginTop: 6, lineHeight: 1.3 }}>{i.summary}</div>
+        </div>
+        <button onClick={onClose} style={{ ...miniBtn, width: 30, height: 28, padding: 0 }}>✕</button>
+      </div>
+
+      <Sec title="Key data">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
+          {kd.map(([k, v]) => <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid rgba(142,200,255,0.05)', padding: '3px 0' }}>
+            <span style={{ font: `400 11px ${BODY}`, color: '#8b98a9' }}>{k}</span>
+            <span style={{ font: `600 11px ${MONO}`, color: '#dbe4ef', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>)}
+        </div>
+      </Sec>
+
+      <Sec title="Metrics">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: bars.length ? 12 : 0 }}>
+          {metrics.map(([l, v, c]) => <div key={l} style={{ padding: '8px 10px', borderRadius: 9, background: 'rgba(10,15,22,0.5)', border: '1px solid rgba(142,200,255,0.06)' }}>
+            <div style={{ font: `700 16px ${HEAD}`, color: c }}>{v}</div><div style={{ font: `400 8.5px ${MONO}`, color: '#647285', textTransform: 'uppercase' }}>{l}</div></div>)}
+        </div>
+        {bars.map(([k, v]) => <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0' }}>
+          <span style={{ width: 120, flexShrink: 0, font: `500 10.5px ${BODY}`, color: '#b3c1d1' }}>{k}</span>
+          <div style={{ flex: 1, height: 7, borderRadius: 4, background: 'rgba(142,200,255,0.06)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${v / barMax * 100}%`, background: colorFor(k), borderRadius: 4 }} /></div>
+          <span style={{ width: 40, textAlign: 'right', font: `600 10.5px ${MONO}`, color: '#e0e8f2' }}>{fx(v)}d</span></div>)}
+      </Sec>
+
+      <Sec title="Insights">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {insightsFor(i).map((s, idx) => <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span style={{ color: s.c, fontSize: 10 }}>●</span><span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc' }}>{s.t}</span></div>)}
+        </div>
+      </Sec>
+
+      {err && <div style={{ font: `400 12px ${BODY}`, color: RED }}>Failed to load detail: {err}</div>}
+      {!d && !err && <div style={{ ...PANEL, padding: '13px 15px', display: 'flex', gap: 8, alignItems: 'center', color: '#8b98a9' }}><Spinner /><span style={{ font: `500 12px ${BODY}` }}>Loading content, history & PR context…</span></div>}
+
+      {d && <>
+        <Sec title="Ticket content">
+          {d.description ? <div style={{ font: `400 12px/1.6 ${BODY}`, color: '#c3cfdc', whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{d.description}</div> : <Empty text="No description." />}
+          {d.comments.length > 0 && <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {d.comments.slice(-6).map((c, idx) => <div key={idx} style={{ borderLeft: '2px solid rgba(142,200,255,0.2)', paddingLeft: 10 }}>
+              <div style={{ font: `600 10px ${MONO}`, color: '#93a6bb' }}>{c.author} · {fdate(c.at)}</div>
+              <div style={{ font: `400 11.5px/1.5 ${BODY}`, color: '#b3c1d1', whiteSpace: 'pre-wrap' }}>{c.body}</div></div>)}
+          </div>}
+        </Sec>
+
+        {d.prs.length > 0 && <Sec title={`Linked PRs (${d.prs.length})`}>
+          {d.prs.map(p => <div key={p.num} style={{ padding: '6px 0', borderBottom: '1px solid rgba(142,200,255,0.05)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><PRLink pr={{ repo: p.repo, num: p.num }} /><span style={{ font: `500 9px ${MONO}`, color: '#647285' }}>{p.state} · {p.changedFiles || 0} files</span></div>
+            <div style={{ font: `400 11px ${BODY}`, color: '#b3c1d1' }}>{p.title}</div></div>)}
+        </Sec>}
+
+        <Sec title="History">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflow: 'auto' }}>
+            {d.history.length === 0 ? <Empty text="No transitions recorded." /> : d.history.map((h, idx) => <div key={idx} style={{ display: 'flex', gap: 8, font: `400 10.5px ${MONO}` }}>
+              <span style={{ color: '#647285', flexShrink: 0, width: 104 }}>{new Date(h.at).toLocaleDateString([], { month: 'short', day: 'numeric' })} {new Date(h.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span style={{ color: '#b3c1d1' }}>{h.field === 'status' ? '' : h.field + ': '}{h.from ? `${h.from} → ` : ''}<span style={{ color: '#dbe4ef' }}>{h.to}</span></span></div>)}
+          </div>
+        </Sec>
+
+        {['ac', 'tests'].map(kind => {
+          const a = d.artifacts?.[kind]
+          const editing = edit?.kind === kind
+          return <Sec key={kind} title={artMeta[kind].title} right={<div style={{ display: 'flex', gap: 6 }}>
+            {a && !editing && <button style={miniBtn} onClick={() => setEdit({ kind, md: a.md })}>edit</button>}
+            <button style={miniBtn} disabled={busy === kind} onClick={() => gen(kind)}>{busy === kind ? 'generating…' : a ? 'regenerate' : 'generate'}</button>
+          </div>}>
+            {busy === kind && <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#8b98a9' }}><Spinner /><span style={{ font: `500 11.5px ${BODY}` }}>Asking claude…</span></div>}
+            {!a && busy !== kind && !editing && <Empty text={`No ${artMeta[kind].noun} yet — generate from the ticket content.`} />}
+            {editing ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <textarea value={edit.md} onChange={e => setEdit({ kind, md: e.target.value })} rows={12} style={{ ...cfgInp, resize: 'vertical', fontFamily: MONO, fontSize: 12 }} />
+              <div style={{ display: 'flex', gap: 8 }}><button style={{ ...miniBtn, color: '#0a1420', background: 'linear-gradient(135deg,#a7d5ff,#5b9fe6)', border: 'none' }} onClick={() => save(kind, edit.md)}>save</button><button style={miniBtn} onClick={() => setEdit(null)}>cancel</button></div>
+            </div> : a && <>
+              {a.stale && <div style={{ font: `400 10px ${MONO}`, color: GOLD, marginBottom: 6 }}>⚠ ticket changed since this was generated — regenerate to refresh</div>}
+              <div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(a.md) }} />
+              <div style={{ font: `400 9.5px ${MONO}`, color: '#647285', marginTop: 8 }}>{a.edited ? 'hand-edited' : `generated by ${a.model || 'claude'}`} · {fdate(a.at)}</div>
+            </>}
+          </Sec>
+        })}
+      </>}
+    </div>
+  </div>
 }
 
 // ---------------- WORKLOAD (per-dev load, areas, bug ownership) ----------------
@@ -790,17 +983,22 @@ function Workload({ issues, members, patch, reload }) {
   }
   // team bug = reported by our QA AND currently assigned to someone on the team
   const teamBug = i => i.isBug && i.qaReported && i.assigneeTeam
+  // ticket buckets by status: Open = TODO/backlog/in progress/code review, QA = ready-for-qa/in-qa/ready-for-release, Done = live
+  // ponytail: QA set covers the board's QA-phase variants (design qa, in qa (dev)); add more here if the board grows
+  const QA_STATUS = new Set(['ready for qa', 'design qa', 'in qa (dev)', 'in qa', 'ready for release'])
+  const inQA = i => !i.live && QA_STATUS.has((i.status || '').trim().toLowerCase())
   const load = members.map(m => {
     const assigned = issues.filter(i => i.assignee?.id === m.id)
-    const open = assigned.filter(i => !i.live)
-    const active = assigned.filter(i => i.active)
     const done = assigned.filter(i => i.live)
+    const qa = assigned.filter(inQA)
+    const open = assigned.filter(i => !i.live && !inQA(i))
+    const active = assigned.filter(i => i.active)
     const finished = done.map(i => i.delivery).filter(v => v > 0)
     const owned = issues.filter(i => teamBug(i) && i.ownerId === m.id)   // bugs he caused
     const fixed = issues.filter(i => teamBug(i) && i.fixerId === m.id)   // bugs he resolved
     const notOwnedFixed = fixed.filter(i => i.ownerId !== m.id).length   // fixed someone else's bug
     return {
-      m, ticketsN: assigned.length, openN: open.length, activeN: active.length, doneN: done.length,
+      m, ticketsN: assigned.length, openN: open.length, qaN: qa.length, activeN: active.length, doneN: done.length,
       sp: active.reduce((a, i) => a + i.pts, 0), avgFinish: finished.length ? avg(finished) : null,
       bugsOwned: owned.length, bugsFixed: fixed.length, notOwnedFixed,
       bugRatio: assigned.length ? Math.round(owned.length / assigned.length * 100) : 0,
@@ -839,12 +1037,12 @@ function Workload({ issues, members, patch, reload }) {
     {/* per-dev load */}
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(340px,1fr))', gap: 12 }}>
       {load.length === 0 && <Card><Empty text="No dev-team members in scope." /></Card>}
-      {load.map(({ m, ticketsN, openN, activeN, doneN, sp, avgFinish, bugsOwned, bugsFixed, notOwnedFixed, bugRatio, notOwnedRatio, atRisk }, idx) => <Card key={m.id}>
+      {load.map(({ m, ticketsN, openN, qaN, activeN, doneN, sp, avgFinish, bugsOwned, bugsFixed, notOwnedFixed, bugRatio, notOwnedRatio, atRisk }, idx) => <Card key={m.id}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <span style={{ width: 30, height: 30, borderRadius: 8, background: AVATARS[idx % AVATARS.length], display: 'flex', alignItems: 'center', justifyContent: 'center', font: `600 12px ${HEAD}`, color: '#0b1420' }}>{initials(m.name)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ font: `600 13.5px ${BODY}`, color: '#eaf1f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
-            <div style={{ font: `400 10px ${MONO}`, color: '#647285' }}>{activeN} active · {sp}pt in flight{atRisk ? ` · ${atRisk} at risk` : ''}</div>
+            <div style={{ font: `400 10px ${MONO}`, color: '#647285' }}>{activeN} active · {sp}pt in flight{qaN ? ` · ${qaN} in QA` : ''}{atRisk ? ` · ${atRisk} at risk` : ''}</div>
           </div>
           <div style={{ textAlign: 'right' }}><div style={{ font: `700 20px ${HEAD}`, color: openN >= maxOpen * 0.8 ? GOLD : BB }}>{openN}</div><div style={{ font: `400 8.5px ${MONO}`, color: '#647285', textTransform: 'uppercase' }}>open</div></div>
         </div>

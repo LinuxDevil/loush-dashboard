@@ -1,5 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { api } from '../api.js'
+
+// ── Shared period (Year/Q1–Q4) ───────────────────────────────────────────────
+// The header filter must scope EVERY panel's JIRA-derived data, not just the career snapshot.
+// eng data is loaded once (all-time) and scoped per-period in useEngSelf, so all 18 panels react
+// to the filter with no prop threading. The header calls setEngPeriod() when the filter changes.
+let _engPeriod = ''
+const _engSubs = new Set()
+export function setEngPeriod(p) { p = p || ''; if (p === _engPeriod) return; _engPeriod = p; for (const fn of _engSubs) fn(p) }
+
+// Current-year window for a period. '' = year-to-date; 'Qn' = that quarter (clamped to now). Mirrors
+// the server's periodWindow but browser-safe (server module imports node-only deps).
+function engWindow(period) {
+  const y = new Date().getFullYear(), nowMs = Date.now()
+  const m = /Q([1-4])/.exec(period || '')
+  if (m) { const sm = (+m[1] - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(nowMs, Date.UTC(y, sm + 3, 1)) } }
+  return { start: Date.UTC(y, 0, 1), end: nowMs }
+}
+const _ms = x => { const t = x ? Date.parse(x) : NaN; return Number.isNaN(t) ? null : t }
+// "This year's tickets" = created OR closed inside the window. Deliberately EXCLUDES ancient still-open
+// carryovers so their lifetime daysIn no longer inflates "where time goes". ponytail: daysIn is still each
+// ticket's lifetime total — true per-window clipping would need the changelog (server-side, deferred).
+function issueInWindow(i, w) {
+  const c = _ms(i.created), cl = _ms(i.closedAt)
+  return (c != null && c >= w.start && c < w.end) || (cl != null && cl >= w.start && cl < w.end)
+}
 
 // ── localStorage stale-while-revalidate cache ────────────────────────────────────────────
 // Repeat visits (even across full page reloads) paint instantly from the last-good payload,
@@ -45,27 +70,31 @@ export function loadEngSelf() {
     const myPrs = (snap.prs || []).filter(p => myKeys.has(p.ticket))
     // slim projection of ALL issues — only what OKR epic-progress needs (keeps the cache small)
     const allIssues = (snap.issues || []).map(i => ({ key: i.key, parent: i.parent ? { key: i.parent.key } : null, linkedKey: i.linkedKey, live: i.live, status: i.status, host: i.host }))
-    const now = Date.now(), d90 = now - 90 * 864e5
-
-    const delivered = mine.filter(i => i.live && !i.isBug)
-    const cycle = delivered.map(i => i.delivery).filter(x => x > 0)
-    const escaped = mine.filter(i => i.isBug && i.ownerId === accountId)
-    const shipped90 = delivered.filter(i => Date.parse(i.closedAt || 0) >= d90)
-    const dora = {
-      throughput90: shipped90.length,
-      cycleMedian: +median(cycle).toFixed(1),
-      cycleAvg: +avg(cycle).toFixed(1),
-      changeFailRate: delivered.length ? escaped.length / delivered.length : 0,
-      escapedBugs: escaped.length,
-      reworkAvg: +avg(mine.map(i => i.rework || 0)).toFixed(2),
-      estAcc: +avg(mine.map(i => i.estAcc).filter(x => x != null)).toFixed(0),
-      prReviewRounds: +avg(myPrs.map(p => p.cycles || 1)).toFixed(1),
-      prMergeDays: +median(myPrs.map(p => p.mergeDays).filter(x => x != null)).toFixed(1),
-      prFirstReviewDays: +median(myPrs.map(p => p.firstReviewDays).filter(x => x != null)).toFixed(1),
-      openNow: mine.filter(i => i.active).length,
-    }
-    return { available: true, accountId, email, issues: mine, prs: myPrs, allIssues, dora }
+    return { available: true, accountId, email, issues: mine, prs: myPrs, allIssues, dora: deriveDora(mine, myPrs, accountId) }
   })()
+}
+
+// Pure DORA derivation over a (possibly window-scoped) personal issue/PR set. Reused by useEngSelf so
+// the period filter recomputes DORA for the selected window instead of always showing all-time numbers.
+export function deriveDora(mine = [], myPrs = [], accountId) {
+  const d90 = Date.now() - 90 * 864e5
+  const delivered = mine.filter(i => i.live && !i.isBug)
+  const cycle = delivered.map(i => i.delivery).filter(x => x > 0)
+  const escaped = mine.filter(i => i.isBug && i.ownerId === accountId)
+  const shipped90 = delivered.filter(i => Date.parse(i.closedAt || 0) >= d90)
+  return {
+    throughput90: shipped90.length,
+    cycleMedian: +median(cycle).toFixed(1),
+    cycleAvg: +avg(cycle).toFixed(1),
+    changeFailRate: delivered.length ? escaped.length / delivered.length : 0,
+    escapedBugs: escaped.length,
+    reworkAvg: +avg(mine.map(i => i.rework || 0)).toFixed(2),
+    estAcc: +avg(mine.map(i => i.estAcc).filter(x => x != null)).toFixed(0),
+    prReviewRounds: +avg(myPrs.map(p => p.cycles || 1)).toFixed(1),
+    prMergeDays: +median(myPrs.map(p => p.mergeDays).filter(x => x != null)).toFixed(1),
+    prFirstReviewDays: +median(myPrs.map(p => p.firstReviewDays).filter(x => x != null)).toFixed(1),
+    openNow: mine.filter(i => i.active).length,
+  }
 }
 
 // SWR hook: seed synchronously from localStorage (instant paint), revalidate in background.
@@ -87,7 +116,24 @@ function useCached(key, loader, good) {
   return state
 }
 export const useUsage = () => useCached('usage', loadUsage, d => d != null && !!d.kpis)
-export const useEngSelf = () => useCached('engSelf', loadEngSelf, d => !!d?.accountId)
+
+// Eng data scoped to the current period. Loads once (all-time), then filters issues/PRs to the selected
+// window and recomputes DORA — so the Year/Q filter reflects across EVERY panel and all JIRA data.
+export function useEngSelf() {
+  const base = useCached('engSelf', loadEngSelf, d => !!d?.accountId)
+  const [period, setPeriod] = useState(_engPeriod)
+  useEffect(() => { const fn = p => setPeriod(p); _engSubs.add(fn); setPeriod(_engPeriod); return () => { _engSubs.delete(fn) } }, [])
+  const data = useMemo(() => {
+    const d = base.data
+    if (!d || !d.accountId || !Array.isArray(d.issues)) return d
+    const w = engWindow(period)
+    const issues = d.issues.filter(i => issueInWindow(i, w))
+    const keys = new Set(issues.map(i => i.key))
+    const prs = (d.prs || []).filter(p => keys.has(p.ticket))
+    return { ...d, issues, prs, dora: deriveDora(issues, prs, d.accountId), period }
+  }, [base.data, period])
+  return { ...base, data }
+}
 
 // ── derivations over the personal eng issue set (used by Overview/Delivery) ──────────────
 

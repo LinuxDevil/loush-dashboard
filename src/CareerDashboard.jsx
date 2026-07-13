@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api, toast } from './api.js'
 import { PANEL, HEAD, BODY, MONO, ACCENT, BG, PANEL_BG, LINE, INK, MUTE } from './career/theme.jsx'
 import { SubTabs } from './career/charts.jsx'
-import { resetCareerData } from './career/data.jsx'
+import { resetCareerData, setEngPeriod } from './career/data.jsx'
 import OverviewPage from './career/OverviewPage.jsx'
 import DeliveryPage from './career/DeliveryPage.jsx'
 import QualityPanel from './career/QualityPanel.jsx'
@@ -19,6 +19,12 @@ import FeedbackPanel from './career/FeedbackPanel.jsx'
 import DecisionPanel from './career/DecisionPanel.jsx'
 import LessonsPanel from './career/LessonsPanel.jsx'
 import GamePanel from './career/GamePanel.jsx'
+import MePanel from './career/MePanel.jsx'
+import FocusPanel from './career/FocusPanel.jsx'
+import TasksPanel from './career/TasksPanel.jsx'
+import TicketRetroPanel from './career/TicketRetroPanel.jsx'
+import ReviewsPanel from './career/ReviewsPanel.jsx'
+import EstimationPanel from './career/EstimationPanel.jsx'
 
 // composed page with an intra-page sub-tab strip
 function SubPage({ tabs }) {
@@ -33,11 +39,16 @@ function SubPage({ tabs }) {
 }
 
 // 8 pages. Each render() gets the current snapshot + reload via closure.
-function pagesFor(snap, reload) {
+function pagesFor(snap, reload, setTab) {
   return {
-    'Overview': () => <OverviewPage snap={snap} />,
+    'Me': () => <MePanel snap={snap} />,
+    'Overview': () => <OverviewPage snap={snap} onOpenGame={() => setTab('Game')} />,
     'Delivery': () => <DeliveryPage snap={snap} reload={reload} />,
     'Quality': () => <QualityPanel snap={snap} />,
+    'Focus': () => <SubPage tabs={[
+      { label: 'Focus', render: () => <FocusPanel snap={snap} reload={reload} /> },
+      { label: 'Tasks', render: () => <TasksPanel snap={snap} reload={reload} /> },
+    ]} />,
     'Workflow': () => <SubPage tabs={[
       { label: 'Workflow', render: () => <WorkflowPanel snap={snap} /> },
       { label: 'Insights', render: () => <InsightsProjectPanel snap={snap} /> },
@@ -46,10 +57,12 @@ function pagesFor(snap, reload) {
       { label: 'OKRs', render: () => <OkrPanel snap={snap} /> },
       { label: 'Competency', render: () => <CompetencyPanel /> },
       { label: 'Learning', render: () => <LearningPanel /> },
+      { label: 'Estimation', render: () => <EstimationPanel /> },
     ]} />,
     'Influence': () => <SubPage tabs={[
       { label: 'Influence', render: () => <InfluencePanel snap={snap} /> },
       { label: 'Allocation', render: () => <AllocationPanel snap={snap} /> },
+      { label: 'Reviews', render: () => <ReviewsPanel snap={snap} /> },
     ]} />,
     'Journal': () => <SubPage tabs={[
       { label: 'Brag', render: () => <BragPanel reload={reload} /> },
@@ -57,14 +70,15 @@ function pagesFor(snap, reload) {
       { label: 'Feedback', render: () => <FeedbackPanel snap={snap} /> },
       { label: 'Decisions', render: () => <DecisionPanel /> },
       { label: 'Lessons', render: () => <LessonsPanel snap={snap} reload={reload} /> },
+      { label: 'Retro', render: () => <TicketRetroPanel /> },
     ]} />,
-    'Game': () => <GamePanel snap={snap} />,
+    'Game': () => <GamePanel snap={snap} reload={reload} />,
   }
 }
 
 // side menu: [icon, label]
 const NAV = [
-  ['Now', [['◆', 'Overview'], ['▤', 'Delivery'], ['✦', 'Quality']]],
+  ['Now', [['◈', 'Me'], ['◆', 'Overview'], ['▤', 'Delivery'], ['✦', 'Quality'], ['◎', 'Focus']]],
   ['Work', [['⟳', 'Workflow'], ['▲', 'Growth'], ['➤', 'Influence']]],
   ['Reflect', [['✎', 'Journal'], ['♜', 'Game']]],
 ]
@@ -90,10 +104,10 @@ export default function CareerDashboard({ onExit }) {
   const [period, setPeriod] = useState('')
   const [busy, setBusy] = useState(false)
   const load = (p = period) => api.get('/api/career/snapshot' + (p ? `?period=${p}` : '')).then(setSnap).catch(e => toast(e.message, 'error'))
-  useEffect(() => { setSnap(null); load(period) }, [period])
+  useEffect(() => { setSnap(null); setEngPeriod(period); load(period) }, [period])
   const refresh = async () => { setBusy(true); try { resetCareerData(); await api.post('/api/career/refresh'); await load() } finally { setBusy(false) } }
 
-  const pages = snap ? pagesFor(snap, load) : null
+  const pages = snap ? pagesFor(snap, load, setTab) : null
 
   const btn = (active) => ({
     display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',

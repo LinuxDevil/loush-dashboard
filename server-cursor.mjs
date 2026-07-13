@@ -208,6 +208,24 @@ function editMcp(scope, fn) {
 
 const UUID = /^[0-9a-f-]{36}$/i
 
+// Cross-tool reuse (Career G1): AI-authored line totals from Cursor sessions. Quarantined — no Cursor
+// DB (or a read error) degrades to zeros so the Career build never fails on a missing Cursor install.
+// shared with server-mindwalk.mjs, which needs the composerId -> folder mapping
+export const cursorSnapshot = () => snapshot()
+
+export function cursorAiLines() {
+  try {
+    if (!fs.existsSync(DB)) return { sessions: 0, linesAdded: 0, linesRemoved: 0 }
+    const { sessions } = snapshot()
+    const real = sessions.filter(s => !s.subagent)
+    return {
+      sessions: real.length,
+      linesAdded: real.reduce((a, s) => a + (s.linesAdded || 0), 0),
+      linesRemoved: real.reduce((a, s) => a + (s.linesRemoved || 0), 0),
+    }
+  } catch { return { sessions: 0, linesAdded: 0, linesRemoved: 0 } }
+}
+
 export default function mountCursor(app, { testMcp } = {}) {
   const guard = handler => (req, res) => {
     if (!fs.existsSync(DB)) return res.json({ available: false })

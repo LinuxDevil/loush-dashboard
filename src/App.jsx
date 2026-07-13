@@ -25,6 +25,8 @@ import CursorDashboard from './CursorDashboard.jsx'
 import EngDashboard from './EngDashboard.jsx'
 import CareerDashboard from './CareerDashboard.jsx'
 import ConstitutionSection from './ConstitutionSection.jsx'
+import MemorySection from './MemorySection.jsx'
+import MindwalkSection from './MindwalkSection.jsx'
 import Palette from './Palette.jsx'
 import { api, forceFresh } from './api.js'
 
@@ -65,6 +67,8 @@ const SECTIONS = [
     ]} />
   ) },
   { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
+  { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
+  { id: 'mindwalk', label: 'Mindwalk', icon: '◉', kicker: 'Replay', title: 'Mindwalk — replay sessions on a 3D map of the repo', el: <MindwalkSection /> },
   { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },

@@ -27,7 +27,7 @@ test('migrate upgrades a versionless (v0) blob to current and marks changed', ()
 
 test('migrate v1 -> v2 backfills focusActed', () => {
   const { cfg, changed } = migrate({ version: 1, brag: [{ id: 'b1' }] })
-  assert.equal(cfg.version, 2)
+  assert.equal(cfg.version, CONFIG_VERSION)   // chains v1→v2→v3; focusActed still backfilled at the v2 step
   assert.equal(changed, true)
   assert.deepEqual(cfg.focusActed, {})
   assert.equal(cfg.brag[0].id, 'b1')

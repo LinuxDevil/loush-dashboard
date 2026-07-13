@@ -250,6 +250,91 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [tab, setTab] = useState('graph')
+  const statsRef = useRef(null)
+  const contentRef = useRef(null)
+  const [exporting, setExporting] = useState(null)
+
+  // ponytail: export = snapshot the already-rendered DOM of the SELECTED repo, tab by tab,
+  // driving real clicks into sub-pages (artifact / catalog detail) and saving one linked
+  // HTML file per page via the server. No re-implementation of any view.
+  const snapshot = (el, linkify) => {
+    for (const i of el.querySelectorAll('input')) { // React holds input state as properties — mirror to attributes so it serializes
+      if (i.type === 'checkbox') i.checked ? i.setAttribute('checked', '') : i.removeAttribute('checked')
+      else i.setAttribute('value', i.value)
+    }
+    const clone = el.cloneNode(true)
+    if (linkify) linkify(clone)
+    return clone.innerHTML
+  }
+  const waitIdle = async (extra = 0) => {
+    for (let i = 0; i < 300; i++) {
+      await new Promise(r => setTimeout(r, 100))
+      if (!/crunching atoms…|indexing atoms…|loading…|loading review state…/.test(contentRef.current?.parentElement?.innerText || '')) break
+    }
+    if (extra) await new Promise(r => setTimeout(r, extra)) // let the d3 force layout settle
+  }
+  const fileName = s => s.replace(/[^\w.-]+/g, '_') + '.html'
+  const page = (title, body) => {
+    const head = [...document.querySelectorAll('style, link[rel="stylesheet"], link[rel="preconnect"]')].map(n => n.outerHTML).join('\n')
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>${head}
+<style>body{background:#141110;color:#e5dbd2;padding:28px;max-width:1280px;margin:0 auto}h1{font:700 20px ${HEAD};margin:30px 0 10px}h2{font:600 13px ${HEAD};color:${accent};margin:24px 0 10px;text-transform:uppercase;letter-spacing:.08em}a{color:${accent}}</style>
+</head><body>${body}</body></html>`
+  }
+
+  // capture every clickable sub-page reachable from the current tab: click each row/card,
+  // snapshot the detail view, click "←" back. Returns [{label, file}] and pushes files.
+  const captureSubPages = async (prefix, files) => {
+    const clickables = () => [...contentRef.current.querySelectorAll('tbody tr[style*="pointer"], div[style*="grid-template-columns"] > div[style*="pointer"]')]
+    const n = clickables().length
+    const links = []
+    for (let i = 0; i < n; i++) {
+      const el = clickables()[i]
+      if (!el) break
+      el.click()
+      await waitIdle(150)
+      const back = contentRef.current.querySelector('button') // "← …" is always the first button on a detail view
+      if (!back || !/←/.test(back.textContent)) continue // row wasn't a drill-down after all
+      const title = contentRef.current.querySelector('span')?.textContent || `${prefix}-${i}`
+      for (const d of contentRef.current.querySelectorAll('details')) d.setAttribute('open', '') // expand markdown source etc.
+      const file = fileName(`${prefix}-${title}`)
+      files.push({ name: file, html: page(title, `<a href="index.html">← index</a><h1>${title}</h1><div style="display:grid;gap:14px">${snapshot(contentRef.current)}</div>`) })
+      links[i] = { label: title, file } // index-aligned with clickables() so the list view can wire row → file
+      setExporting(`${prefix} ${i + 1}/${n}`)
+      back.click()
+      await waitIdle(100)
+    }
+    return links
+  }
+
+  const exportHtml = async () => {
+    const origTab = tab
+    const files = []
+    const parts = [`<h1>${repo}</h1><div style="display:flex;gap:12px;flex-wrap:wrap">${snapshot(statsRef.current)}</div>`]
+    for (const x of TABS) {
+      if (x === 'ask') continue // interactive-only, nothing prefilled to share
+      setExporting(x); setTab(x)
+      await waitIdle(x === 'graph' ? 2500 : 200)
+      if (!contentRef.current) continue
+      if (['catalog', 'workflows', 'rules', 'skills'].includes(x)) {
+        const links = await captureSubPages(x, files) // walk the drill-downs first…
+        // …then snapshot the list view with each card/row wired to its sub-page file
+        const listHtml = snapshot(contentRef.current, clone => {
+          const els = [...clone.querySelectorAll('tbody tr[style*="pointer"], div[style*="grid-template-columns"] > div[style*="pointer"]')]
+          els.forEach((el, i) => links[i] && el.setAttribute('onclick', `window.location.href='${links[i].file}'`))
+        })
+        parts.push(`<h2>${x}</h2><div style="display:grid;gap:14px">${listHtml}</div>`)
+      } else {
+        parts.push(`<h2>${x}</h2><div style="display:grid;gap:14px">${snapshot(contentRef.current)}</div>`)
+      }
+    }
+    setTab(origTab); setExporting('saving…')
+    files.push({ name: 'index.html', html: page(`Constitution — ${tildify(repo)}`, parts.join('\n')) })
+    try {
+      const r = await api.post('/api/constitution/export', { name: 'constitution-' + repo.split('/').pop(), files })
+      setExporting(`✓ ${r.count} files → ${tildify(r.dir)}`)
+    } catch (e) { setExporting('✗ ' + e.message) }
+    setTimeout(() => setExporting(null), 10000)
+  }
 
   useEffect(() => { api.get('/api/constitution/repos').then(rs => { setRepos(rs); setRepo(r => r || rs[0] || '') }).catch(() => setRepos([])) }, [])
   useEffect(() => {
@@ -271,6 +356,9 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
       <input value={custom} onChange={e => setCustom(e.target.value)} placeholder="…or paste a repo path"
         onKeyDown={e => { if (e.key === 'Enter' && custom.trim()) { setRepo(custom.trim()); setCustom('') } }}
         style={{ font: `400 12px ${MONO}`, minWidth: 240 }} />
+      <button onClick={exportHtml} disabled={!!exporting && !exporting.startsWith('✓') && !exporting.startsWith('✗')} style={{ marginLeft: 'auto' }}>
+        {exporting ? exporting : '⬇ export html'}
+      </button>
     </div>
   )
 
@@ -291,7 +379,7 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
       {!data && !err && <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>crunching atoms…</div>}
       {data && (
         <>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div ref={statsRef} style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <Stat label="artifacts" val={t.artifacts} />
             <Stat label="verified atoms" val={t.atoms} />
             <Stat label="code files cited" val={t.citedFiles} />
@@ -301,6 +389,7 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
           <div style={{ display: 'flex', gap: 8 }}>
             {TABS.map(x => <button key={x} className={tab === x ? 'active' : ''} onClick={() => setTab(x)}>{x}</button>)}
           </div>
+          <div ref={contentRef} style={{ display: 'grid', gap: 14, minWidth: 0 }}>
 
           {tab === 'graph' && (
             <>
@@ -377,6 +466,7 @@ export default function ConstitutionSection({ accent = '#e5a03a' }) {
               ]} rows={data.debt.map((x, i) => ({ ...x, __key: i }))} />
             </div>
           )}
+          </div>
         </>
       )}
     </div>

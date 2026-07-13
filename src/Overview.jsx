@@ -121,6 +121,8 @@ export default function Overview() {
   const [projects, setProjects] = useState([])
   const [hookCount, setHookCount] = useState(0)
   const [pins, setPins] = useState([])
+  const [memory, setMemory] = useState(null)
+  const [openMem, setOpenMem] = useState(null)
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [sort, setSort] = useState({ col: 'score', dir: -1 })
@@ -128,7 +130,11 @@ export default function Overview() {
   useEffect(() => {
     api.get('/api/overview').then(setData)
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
-    api.get('/api/projects').then(setProjects).catch(() => {})
+    api.get('/api/projects').then(ps => {
+      setProjects(ps)
+      const cur = ps.find(p => p.current)
+      if (cur) api.get('/api/memory/recent?path=' + encodeURIComponent(cur.path)).then(setMemory).catch(() => {})
+    }).catch(() => {})
     api.get('/api/pins').then(setPins).catch(() => {})
     api.get('/api/hooks').then(d => {
       let n = 0
@@ -286,6 +292,30 @@ export default function Overview() {
           ))}
         </div>
       </div>
+
+      {memory?.items?.length > 0 && (
+        <div className="panel" style={{ animationDelay: '.52s' }}>
+          <h3>◆ Memory <span className="muted">{memory.project} · {memory.items.length} recalled · your past self</span></h3>
+          <div className="mini-list">
+            {memory.items.map(m => {
+              const c = { user: '#8a807a', feedback: '#e8a06a', project: '#5eb3f6', reference: '#3fb96a', memory: '#c98bf6' }[m.type] || '#c98bf6'
+              const open = openMem === m.path
+              return (
+                <div key={m.path} className="mini-row" style={{ alignItems: 'flex-start', cursor: 'pointer', flexWrap: 'wrap' }} onClick={() => setOpenMem(open ? null : m.path)}>
+                  <span className="mini-sq" style={{ background: c, marginTop: 4 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="mini-name">{m.name} <span className="chip" style={{ borderColor: c + '55', color: c }}>{m.type}</span></div>
+                    <div className="mini-meta" style={{ whiteSpace: open ? 'pre-wrap' : 'nowrap', overflow: open ? 'visible' : 'hidden', textOverflow: 'ellipsis' }}>
+                      {open ? (m.excerpt + (m.excerpt.length >= 600 ? '…' : '')) : (m.description || m.excerpt.slice(0, 90))}
+                    </div>
+                  </div>
+                  <span className="mini-meta" style={{ flexShrink: 0 }}>{ago(m.mtime)}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="panel" style={{ animationDelay: '.55s' }}>
         <div className="panel-head">

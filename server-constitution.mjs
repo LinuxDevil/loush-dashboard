@@ -4,6 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import express from 'express'
 
 const HOME = os.homedir()
 const CLAUDE_JSON = path.join(HOME, '.claude.json')
@@ -158,6 +159,19 @@ export default function mountConstitution(app) {
       cache.set(repo, { at: Date.now(), data })
       res.set('x-cached-at', String(Date.now()))
       res.json(data)
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // export — client snapshots the rendered DOM and posts pages here; we write a shareable
+  // folder of linked HTML files to ~/Downloads. Own body parser: exports run tens of MB.
+  app.post('/api/constitution/export', express.json({ limit: '300mb' }), (req, res) => {
+    try {
+      const { name, files } = req.body || {}
+      if (!Array.isArray(files) || !files.length) return res.status(400).json({ error: 'no files' })
+      const dir = path.join(HOME, 'Downloads', String(name || 'constitution-export').replace(/[^\w.-]+/g, '_'))
+      fs.mkdirSync(dir, { recursive: true })
+      for (const f of files) fs.writeFileSync(path.join(dir, String(f.name).replace(/[^\w.-]+/g, '_')), String(f.html))
+      res.json({ dir, count: files.length })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

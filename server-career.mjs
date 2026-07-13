@@ -10,9 +10,13 @@ import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
 import { analysisKey, runAnalyze } from './career-analyze.mjs'
 import { krClosed } from './career-okr.mjs'
-import { awardXp } from './career-gamify.mjs'
+import { awardXp, questDone } from './career-gamify.mjs'
 import { harvestCandidates, distill, evaluateLesson, addLesson } from './career-lessons.mjs'
 import { ticketRetro } from './career-retro.mjs'
+import { cursorAiLines } from './server-cursor.mjs'
+import { computeDomain } from './career-domain.mjs'
+import { meetingStats } from './career-meetings.mjs'
+import { weeklyDigest } from './career-digest.mjs'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -41,7 +45,7 @@ function writeDrop(source, data) {
 // authored sections the config POST is allowed to touch (never derived/rollup)
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
   'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
-  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed'])
+  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed', 'quests', 'kpiLinks'])
 
 export const __test = { AUTHORED }
 
@@ -89,7 +93,7 @@ export default function mountCareer(app, deps = {}) {
       prs = prs.filter(p => inWin(p.createdAt, w))
       items = items.filter(it => inWin(it.created_at || it.updated_at || it.submittedAt, w))
     }
-    const imp = importGithub({ ghJson: { reviews: { ...drop.reviews, items }, prs }, resolved })
+    const imp = importGithub({ ghJson: { reviews: { ...drop.reviews, items }, prs, reviewedPrs: drop.reviewedPrs || [], reviewPasses: drop.reviewPasses }, resolved })
     imp.blame = drop.blame || {}   // { bugId -> introducingAuthorEmail }, computed at import (Task 2)
     return imp
   })
@@ -100,6 +104,17 @@ export default function mountCareer(app, deps = {}) {
     if (w && !w.isYear) issues = issues.filter(i => inWin(i.fields?.created, w))
     return importJira({ issues, resolved })
   })
+  // G4: domain map is computed at import (git log) and stored whole — snapshot just reads the latest drop.
+  const readDomain = deps.readDomain || (() => latestDrop('domain'))
+  // G5: calendar events are dropped raw; meeting stats are cheap to compute per build (window-scoped).
+  const readMeetings = deps.readMeetings || ((resolved, w) => {
+    const drop = latestDrop('calendar')
+    if (!drop) return null
+    let events = drop.events || []
+    if (w && !w.isYear) events = events.filter(e => inWin(e.start, w))
+    return meetingStats(events, { meEmails: [...(resolved?.gitEmails || []), resolved?.email].filter(Boolean) })
+  })
+  const readCursor = deps.readCursor || (() => cursorAiLines())
   // Re-detect CLAUDE.md presence + rough quality each refresh (no persistence, §11.B/D).
   const probeRepo = deps.probeRepo || ((projectPath) => {
     for (const f of ['CLAUDE.md', path.join('.claude', 'CLAUDE.md')]) {
@@ -139,7 +154,8 @@ export default function mountCareer(app, deps = {}) {
     const github = readGithub(resolved, window)
     const jira = readJira(resolved, window)
     const snap = buildSnapshot({ usageDir, transcriptsDir: path.join(CLAUDE, 'projects'), mtimeCache, config, resolved,
-      readBugs: () => readBugs(window), readTasks: () => readTasks(window), readReport, readRunning, github, jira, probeRepo, window })
+      readBugs: () => readBugs(window), readTasks: () => readTasks(window), readReport, readRunning, github, jira, probeRepo, window,
+      cursor: readCursor(), domain: readDomain(), meetings: readMeetings(resolved, window) })
     snap.period = window.label
     warnIfNoMatch(resolved, snap.quality.attributed.length + snap.quality.unattributed.length ? snap.quality.attributed.length : 0, 'bugs')
     // Rollup/lessons are CURRENT-STATE side effects — only the full-year build may mutate them (a quarter view is read-only).
@@ -193,11 +209,30 @@ export default function mountCareer(app, deps = {}) {
   app.post('/api/career/import/github', (req, res) => {
     try {
       const reviews = JSON.parse(gh(['api', 'search/issues?q=reviewed-by:@me+type:pr&per_page=50']))
-      const prs = JSON.parse(gh(['pr', 'list', '--author', '@me', '--state', 'all', '--json', 'number,title,createdAt,mergedAt,reviews,additions,deletions,files', '--limit', '50']))
+      // `commits` field → per-PR commit list; summed at import for the G1 AI-code-share denominator.
+      const prs = JSON.parse(gh(['pr', 'list', '--author', '@me', '--state', 'all', '--json', 'number,title,createdAt,mergedAt,reviews,additions,deletions,files,commits', '--limit', '50']))
       const bugs = (readBugs().bugs) || []
       const blame = blameMapForBugs(bugs)
+      // Reviewer-side turnaround: created→my-first-review on OTHERS' PRs. Needs a per-PR reviews fetch.
+      // ponytail: bounded to 25 PRs + fully quarantined — a rate-limit/format hiccup degrades to [], never fails the import.
+      // reviewPasses = total count of MY review submissions across those PRs (G8 real comment/pass count).
+      let reviewedPrs = [], reviewPasses = 0
+      try {
+        const meLogin = JSON.parse(gh(['api', 'user'])).login
+        const searched = JSON.parse(gh(['search', 'prs', '--reviewed-by', '@me', '--state', 'all', '--json', 'number,createdAt,repository', '--limit', '25']))
+        for (const pr of searched) {
+          try {
+            const nwo = pr.repository?.nameWithOwner
+            if (!nwo) continue
+            const revs = JSON.parse(gh(['api', `repos/${nwo}/pulls/${pr.number}/reviews`]))
+            const minePasses = revs.filter(r => r.user?.login === meLogin).map(r => r.submitted_at).filter(Boolean).sort()
+            reviewPasses += minePasses.length
+            if (minePasses[0]) reviewedPrs.push({ createdAt: pr.createdAt, myFirstReviewAt: minePasses[0] })
+          } catch {}
+        }
+      } catch {}
       const at = Date.now()
-      const p = writeDrop('github', { at, reviews, prs, blame })
+      const p = writeDrop('github', { at, reviews, prs, blame, reviewedPrs, reviewPasses })
       const cfg = store.read()
       store.write({ imports: { ...cfg.imports, github: { lastAt: at, path: p } } })
       cache = null
@@ -220,6 +255,40 @@ export default function mountCareer(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // G5: calendar import (paste/export). Server can't call the Calendar MCP, so events arrive here as a
+  // batch — mirrors the Jira paste. Read-only drop to disk. Quarantined.
+  app.post('/api/career/import/calendar', (req, res) => {
+    try {
+      const events = req.body?.events
+      if (!Array.isArray(events)) throw new Error('POST { events: [{start,end,title,organizer}] } — export/paste your calendar')
+      const at = Date.now()
+      writeDrop('calendar', { at, events })
+      cache = null
+      res.json({ ok: true, at, events: events.length })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // G4: domain map computed at import (git log over owned repos — NEVER on refresh, spec §2.4 perf).
+  app.post('/api/career/import/domain', (req, res) => {
+    try {
+      const cfg = store.read()
+      const resolved = resolveIdentity(cfg.identity)
+      const repoPaths = (cfg.projects || []).filter(p => p.owned && p.path).map(p => p.path)
+      if (!repoPaths.length) return res.status(400).json({ error: 'no owned projects with a path — add them in config.projects' })
+      const domain = computeDomain(repoPaths, [...(resolved?.gitEmails || []), resolved?.email].filter(Boolean))
+      const at = Date.now()
+      writeDrop('domain', { at, ...domain })
+      cache = null
+      res.json({ ok: true, at, areas: domain.areas.length, keystones: domain.keystones.length })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // G10: deterministic weekly digest from the current snapshot + the persisted weekly series.
+  app.get('/api/career/digest', (req, res) => {
+    try { res.json(weeklyDigest(cache || build())) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // On-demand only (§2,§3): cached by input hash so repeat clicks are free. Never runs on snapshot build.
   // ponytail: spawnSync blocks this handler for the claude -p call — fine for a local single-user dashboard.
   app.post('/api/career/analyze', (req, res) => {
@@ -237,6 +306,16 @@ export default function mountCareer(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // G2: append one business-impact link (manual). Full array is also editable via POST /config (AUTHORED).
+  app.post('/api/career/kpi-link', (req, res) => {
+    try {
+      const cfg = store.read()
+      const e = { id: 'kpi' + Date.now(), at: Date.now(), direction: 'up', ...(req.body.link || req.body || {}) }
+      store.write({ kpiLinks: [...(cfg.kpiLinks || []), e] }); cache = null
+      res.json({ ok: true, id: e.id })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.get('/api/career/brag', (req, res) => res.json({ candidates: bragCandidates(), entries: store.read().brag }))
   app.post('/api/career/brag', (req, res) => { const cfg = store.read(); const e = { id: 'b' + Date.now(), date: Date.now(), source: 'manual', ...req.body.entry }; store.write({ brag: [...cfg.brag, e] }); cache = null; res.json({ ok: true }) })
   app.post('/api/career/retro', (req, res) => { const cfg = store.read(); store.write({ retros: [...cfg.retros, { id: 'r' + Date.now(), ...req.body }] }); res.json({ ok: true }) })
@@ -251,6 +330,20 @@ export default function mountCareer(app, deps = {}) {
       const cfg = store.read()
       const { xpLedger } = awardXp(cfg, [krClosed({ id: krId, text })])
       store.write({ xpLedger }); cache = null
+      res.json({ ok: true, xp: xpLedger.reduce((a, e) => a + e.xp, 0) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Mark a quest done → award its outcome XP (idempotent via awardXp seen-set) and flip quests[i].done.
+  app.post('/api/career/quest/:id/done', (req, res) => {
+    try {
+      const cfg = store.read()
+      const quests = [...(cfg.quests || [])]
+      const i = quests.findIndex(q => q.id === req.params.id)
+      if (i < 0) return res.status(404).json({ error: 'quest not found' })
+      const { xpLedger } = awardXp(cfg, [questDone(quests[i])])
+      quests[i] = { ...quests[i], done: true }
+      store.write({ xpLedger, quests }); cache = null
       res.json({ ok: true, xp: xpLedger.reduce((a, e) => a + e.xp, 0) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })

@@ -1,6 +1,6 @@
 // career.json store: default shape, ordered migrations, versioned read/write.
 // version bump checklist: add a migration entry, bump CONFIG_VERSION, extend defaultConfig().
-export const CONFIG_VERSION = 2
+export const CONFIG_VERSION = 3
 
 export function defaultConfig() {
   return {
@@ -19,6 +19,7 @@ export function defaultConfig() {
     rollup: { activityDays: [], streaks: {}, personalBests: {}, quarterlyBugRatio: {} },
     imports: {}, lessons: [], ticketLinks: {},
     focusActed: {},
+    kpiLinks: [],                 // G2 business-impact links {id, ticket, kpi, metric, baseline, current, direction, at, note}
   }
 }
 
@@ -30,6 +31,8 @@ const MIGRATIONS = [
     rollup: { ...d.rollup, ...(cfg.rollup || {}) } } },
   // v1 -> v2: backfill focusActed (Task 13, introduced mid-phase via version-bump route)
   (cfg) => ({ ...cfg, version: 2, focusActed: cfg.focusActed || {} }),
+  // v2 -> v3: backfill kpiLinks (G2 business-impact linkage)
+  (cfg) => ({ ...cfg, version: 3, kpiLinks: cfg.kpiLinks || [] }),
 ]
 
 export function migrate(cfg) {
