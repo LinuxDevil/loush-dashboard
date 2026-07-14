@@ -142,6 +142,7 @@ function pctl(arr, p) {
 }
 const median = a => pctl(a, 0.5)
 const round1 = v => (v == null ? null : +v.toFixed(1))
+const round2 = v => (v == null ? null : +v.toFixed(2))   // null in → null out: never turn "not measured" into 0
 const monthKey = t => new Date(t).toISOString().slice(0, 7)
 // ISO-ish week key (Sunday-start, matching the KSA work week)
 function weekKey(t) { const d = Math.floor((t + KSA) / DAY); const sun = d - (((d % 7) + 4) % 7); return new Date(sun * DAY).toISOString().slice(0, 10) }
@@ -317,8 +318,9 @@ function statusSegments(issue) {
   const endT = liveAt || Date.now()
   // cycle excludes time parked in On Hold / Paused — those don't count against the team
   const pausedMs = Object.entries(days).reduce((a, [k, v]) => a + (PAUSED.includes(norm(k)) ? v : 0), 0)
-  const spanMs = firstInProg != null ? workMs(firstInProg, endT) : 0
-  const delivery = Math.max(0, spanMs - pausedMs) / WORKDAY_MS
+  // A ticket that never entered In Progress has NO delivery duration — it is null, not 0. A 0 is a measured
+  // duration; a null is an absent one. Emitting 0 dragged every median (and the OKR ring) to zero.
+  const delivery = firstInProg == null ? null : Math.max(0, workMs(firstInProg, endT) - pausedMs) / WORKDAY_MS
   return { daysIn, delivery, firstInProg, liveAt, curStatus: cur, curSince, qaCycles: qaEntries, rework: reworkN + reopenN, fixer, sprintEvents }
 }
 const idList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean)
@@ -361,8 +363,10 @@ function recFor(status, pts, curSince) {
 function computeIssue(issue, F, prsByTicket, cfg) {
   const f = issue.fields
   const seg = statusSegments(issue)
-  const dev = seg.daysIn['In Progress'] || Object.entries(seg.daysIn).find(([k]) => norm(k) === 'in progress')?.[1] || 0
-  const cr = Object.entries(seg.daysIn).find(([k]) => norm(k) === 'in code review')?.[1] || 0
+  // null = the ticket never entered that status (no measurement exists). 0 = it did, and the clock read ~0.
+  const dwell = want => { const e = Object.entries(seg.daysIn).find(([k]) => norm(k) === want); return e ? e[1] : null }
+  const dev = dwell('in progress')
+  const cr = dwell('in code review')
   const pts = num(f[F.sp])
   const est = estDaysFromPts(pts)           // working-day estimate from story points
   const actual = dev || seg.delivery
@@ -376,8 +380,8 @@ function computeIssue(issue, F, prsByTicket, cfg) {
   const anyMerged = prs.some(p => p.state === 'Merged')
   const stale = REVIEWY.includes(norm(status)) && anyMerged
   const staleNote = stale ? `PR #${prs.find(p => p.state === 'Merged')?.num} merged — status out of date` : ''
-  let activeDays = 0, waitDays = 0
-  for (const [k, v] of Object.entries(seg.daysIn)) { const kk = kindOf(k); if (kk === 'active') activeDays += v; else if (kk === 'wait') waitDays += v }
+  let activeDays = 0, waitDays = 0, sawActive = false
+  for (const [k, v] of Object.entries(seg.daysIn)) { const kk = kindOf(k); if (kk === 'active') { activeDays += v; sawActive = true } else if (kk === 'wait') waitDays += v }
   const isBug = /bug|defect/i.test(f.issuetype?.name || '')
   const area = f.components?.[0]?.name || null // component only — labels aren't reliable enough
   const assignee = f.assignee ? { name: f.assignee.displayName, email: f.assignee.emailAddress || '', id: f.assignee.accountId } : null
@@ -403,10 +407,13 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     reporter: f.reporter ? { name: f.reporter.displayName, email: f.reporter.emailAddress || '', id: f.reporter.accountId } : null, qaReported: false,
     // bug ownership — owner = who has the bug (default assignee), fixer = who moved it to QA-ready. Resolved/overridden in snapshot.
     owner: assignee, ownerId: assignee?.id || null, fixer: seg.fixer, fixerId: seg.fixer?.id || null, linkedKey,
-    pts, est: +est.toFixed(2), dev: +dev.toFixed(2), cr: +cr.toFixed(2), delivery: +seg.delivery.toFixed(2),
+    // dev / cr / delivery / activeDays are null when the ticket never entered the status they measure —
+    // an absent duration, not a zero one. Anything averaging them must drop nulls, never coerce to 0.
+    pts, est: +est.toFixed(2), dev: round2(dev), cr: round2(cr), delivery: round2(seg.delivery),
     estAcc: estAcc == null ? null : +estAcc.toFixed(1), qaCycles: seg.qaCycles, rework: seg.rework,
     daysIn: Object.fromEntries(Object.entries(seg.daysIn).map(([k, v]) => [k, +v.toFixed(2)])),
-    activeDays: +activeDays.toFixed(2), waitDays: +waitDays.toFixed(2),
+    activeDays: sawActive ? +activeDays.toFixed(2) : null, waitDays: +waitDays.toFixed(2),
+    started: seg.firstInProg != null,
     live, active: kind === 'active', month: d.getMonth(), year: d.getFullYear(),
     created: f.created, closedAt: f.resolutiondate || (seg.liveAt ? new Date(seg.liveAt).toISOString() : null),
     curSince: new Date(seg.curSince).toISOString(),
@@ -464,6 +471,31 @@ function gh(args, timeout = 60000) {
   return r.stdout.toString()
 }
 function ghAvailable() { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
+// the operator's own GitHub login — for the UI's "Mine" filter, which was falling back to a hand-typed
+// localStorage field. Cached; NEVER throws — an unauthed gh degrades to null, it does not break the page.
+let ghLoginMemo
+function ghLogin() {
+  if (ghLoginMemo !== undefined) return ghLoginMemo
+  try {
+    const r = spawnSync('gh', ['api', 'user', '--jq', '.login'], { timeout: 8000 })
+    ghLoginMemo = r.status === 0 ? (r.stdout.toString().trim() || null) : null
+  } catch { ghLoginMemo = null }
+  return ghLoginMemo
+}
+// login + the JIRA identity behind the creds already in use. Self-identification only — this is the
+// operator asking "who am I", never "who is that". No other person's identity is reachable here.
+let meMemo
+async function whoAmI() {
+  if (meMemo) return meMemo
+  let email = creds().email || null, accountId = null
+  try {
+    const me = await jira(await jiraAuth(cfgFor(null)), '/myself')
+    accountId = me.accountId || null
+    email = me.emailAddress || email
+  } catch {} // no JIRA creds → login still resolves
+  meMemo = { login: ghLogin(), email, accountId }
+  return meMemo
+}
 
 // §4/§11: three fields ADDED to the query we already run — no extra request.
 //   reviewRequests   → who was ASKED and never responded (invisible today)
@@ -832,39 +864,58 @@ function sprintNamesAt(i, t) {
   if (evs.length) return nameList(evs[0].from)                 // never changed before t → the pre-first-event set
   return (i.sprints || []).map(s => s.name)                    // no Sprint history at all → whatever it is in now
 }
+// A sprint belongs to the PROJECT of the issues in it — never to a regex over its name. Half the boards
+// run sprints called "Sprint 5 - Week 10/11", which is not project-prefixed and (keyed by name alone)
+// merged two boards into one phantom team. Keyed by project+name, every sprint has a real owner.
 function sprintStats(issues) {
   const reg = {}
   for (const i of issues) for (const s of i.sprints || []) if (s.name) {
-    const e = (reg[s.name] ||= { ...s })
+    const e = (reg[`${i.project}§${s.name}`] ||= { ...s, project: i.project })
     for (const k of ['startDate', 'endDate', 'completeDate', 'id', 'state']) if (!e[k] && s[k]) e[k] = s[k]
   }
-  const sprints = Object.values(reg).filter(s => s.startDate).sort((a, b) => Date.parse(b.startDate) - Date.parse(a.startDate)).slice(0, 6)
+  const byProject = {}
+  for (const s of Object.values(reg)) if (s.startDate) (byProject[s.project] ||= []).push(s)
+  const issuesOf = {}
+  for (const i of issues) (issuesOf[i.project] ||= []).push(i)
+  // 6 most recent sprints PER PROJECT (a global top-6 starves the second board)
+  const sprints = Object.values(byProject).flatMap(a => a.sort((x, y) => Date.parse(y.startDate) - Date.parse(x.startDate)).slice(0, 6))
   return sprints.map(s => {
     const start = Date.parse(s.startDate)
     const end = Date.parse(s.completeDate || s.endDate || new Date().toISOString())
-    const committed = [], added = [], delivered = [], carried = []
-    for (const i of issues) {
+    const committed = [], added = [], delivered = [], addedDelivered = [], carried = [], preDone = []
+    for (const i of issuesOf[s.project] || []) {
       const inNow = (i.sprints || []).some(x => x.name === s.name)
       const everIn = inNow || (i.sprintEvents || []).some(e => nameList(e.to).includes(s.name) || nameList(e.from).includes(s.name))
       if (!everIn) continue
+      const liveAt = i.liveAt ? Date.parse(i.liveAt) : null
+      // A ticket that shipped BEFORE the sprint opened is sprint-tagged history, not a commitment and not
+      // a delivery. It was landing in both sets — that is where "delivered 4 months ago" came from.
+      if (liveAt != null && liveAt < start) { preDone.push(i); continue }
       const atStart = sprintNamesAt(i, start).includes(s.name)
       const atEnd = sprintNamesAt(i, end).includes(s.name)
-      if (atStart) committed.push(i); else if (atEnd || inNow) added.push(i)
-      const done = i.liveAt && Date.parse(i.liveAt) <= end
-      if (done && (atStart || atEnd || inNow)) delivered.push(i)
-      else if (atEnd && !done) carried.push(i)
+      const done = liveAt != null && liveAt <= end   // ⇒ start ≤ liveAt ≤ end, by the guard above
+      if (atStart) { committed.push(i); (done ? delivered : carried).push(i) }
+      else if (atEnd || inNow) { added.push(i); if (done) addedDelivered.push(i) }
     }
     const pts = a => +a.reduce((x, i) => x + (i.pts || 0), 0).toFixed(1)
-    const cpts = pts(committed)
+    const cpts = pts(committed), dpts = pts(delivered), adpts = pts(addedDelivered)
     return {
-      id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate, completeDate: s.completeDate,
+      id: s.id, name: s.name, project: s.project, state: s.state, startDate: s.startDate, endDate: s.endDate, completeDate: s.completeDate,
       committed: committed.length, committedPts: cpts,
       added: added.length, addedPts: pts(added),
-      delivered: delivered.length, deliveredPts: pts(delivered),
+      // delivered ⊆ committed, ALWAYS — say/do is "of what we committed, what shipped", so the numerator
+      // must be a subset of the denominator. It was not, and that is why sayDoPct read 2900%.
+      delivered: delivered.length, deliveredPts: dpts,
+      addedDelivered: addedDelivered.length, addedDeliveredPts: adpts,
+      shipped: delivered.length + addedDelivered.length, shippedPts: +(dpts + adpts).toFixed(1), // velocity: committed + injected
       carriedOver: carried.length, carriedOverPts: pts(carried),
+      preDone: preDone.length, // already-Live tickets still tagged with this sprint — excluded from every number above
+      // n: the points-based ratio only speaks for the pointed tickets. Most are not pointed — show n, always.
+      committedPointed: committed.filter(i => i.pts > 0).length,
       injectionPct: cpts ? +(pts(added) / cpts * 100).toFixed(1) : null,
-      sayDoPct: cpts ? +(pts(delivered) / cpts * 100).toFixed(1) : null,
-      keys: { committed: committed.map(i => i.key), added: added.map(i => i.key), delivered: delivered.map(i => i.key), carriedOver: carried.map(i => i.key) },
+      sayDoPct: cpts ? +(dpts / cpts * 100).toFixed(1) : null,                                   // ≤ 100 by construction
+      sayDoCountPct: committed.length ? +(delivered.length / committed.length * 100).toFixed(1) : null, // the honest one when nothing is pointed
+      keys: { committed: committed.map(i => i.key), added: added.map(i => i.key), delivered: delivered.map(i => i.key), carriedOver: carried.map(i => i.key), preDone: preDone.map(i => i.key) },
     }
   })
 }
@@ -1151,6 +1202,8 @@ export default function mountEng(app) {
     res.json({ ok: true, projects: projectList() })
   })
   app.get('/api/eng/creds', (req, res) => { const { email, token } = creds(); res.json({ hasCreds: !!(email && token), email }) })
+  // who is running this dashboard: {login, email, accountId}. Any field may be null; it never 500s.
+  app.get('/api/eng/me', async (req, res) => { try { res.json(await whoAmI()) } catch { res.json({ login: null, email: null, accountId: null }) } })
   app.post('/api/eng/creds', (req, res) => {
     const { email, token } = req.body || {}
     if (!email || !token) return res.status(400).json({ error: 'email and API token both required' })

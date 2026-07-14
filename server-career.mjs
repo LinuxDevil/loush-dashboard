@@ -497,7 +497,9 @@ export default function mountCareer(app, deps = {}) {
         .sort((a, b) => b.rate - a.rate)
       res.json({
         days, spend: { total: +spend.toFixed(2), byDay: costs.byDay || {}, byProject: costs.byProj || {}, byModel: costs.byModel || {}, alerts: costs.costAlerts || costs.alerts || null },
-        block: usage.block || usage.currentBlock || null,   // the live 5h window, if /api/usage exposes it
+        // /api/usage names the live 5h window `activeBlock` — it always has. `block`/`currentBlock` never
+        // existed, so this was hard-null and the UI was re-fetching /api/usage to paper over it.
+        block: usage.activeBlock || usage.block || usage.currentBlock || null,
         breakage, compactions: fails.compactions || 0, retries: fails.retries || 0, byHour: fails.byHour || {},
         worst: breakage[0] ? `${breakage[0].tool} fails ${Math.round(breakage[0].rate * 100)}% of the time (${breakage[0].errors}/${breakage[0].uses}) — that is a lying CLAUDE.md, not bad luck.` : null,
         plane: 'self-only',

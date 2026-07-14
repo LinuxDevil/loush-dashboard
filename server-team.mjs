@@ -204,8 +204,12 @@ export function stageFunnel(snap, { since = Date.now() - 90 * DAY } = {}) {
   const stages = Object.entries(dwell).map(([stage, d]) => ({
     stage, p50: pct(d, 50), p75: pct(d, 75), p90: pct(d, 90), n: d.length, depth: depth[stage] || 0,
   })).sort((a, b) => b.n - a.n)
-  const lead = closed.map(i => Object.values(i.daysIn || {}).reduce((a, b) => a + b, 0))
-  const cycle = closed.map(i => i.activeDays || 0)
+  // daysIn keeps accruing into the TERMINAL status (a ticket live for a year has ~250 days in "Live"), so
+  // summing it is not a lead time — it read p90 = 1676 days. server-eng already computes created→live.
+  const lead = closed.map(i => i.leadDays).filter(v => v != null)
+  // activeDays is null for a ticket that never entered an active status — an absent measurement. Coercing
+  // it to 0 (the old `|| 0`) buried the real cycle time under a pile of fake zeros.
+  const cycle = closed.map(i => i.activeDays).filter(v => v != null)
   const wait = closed.map(i => i.waitDays || 0)
   const p75By = Object.fromEntries(stages.map(s => [s.stage, s.p75]))
   // RADAR — tickets parked longer than the team's own p75 for THAT status
@@ -356,21 +360,37 @@ export function commitments(snap, { sprintHistory = 6, throughputWeeks = 6 } = {
 // The real thing: predictability + epic forecast + scope ledger, straight off server-eng.mjs's own
 // changelog replay. Nothing is recomputed — this only reshapes it and attaches the copyable lines.
 function commitmentsFromEng(snap, { sprintHistory = 6 } = {}) {
-  const teamOf = s => s.project || (String(s.name || '').match(/^([A-Z]{2,10})\b/) || [])[1] || 'all'
-  const teams = [...new Set((snap.sprints || []).map(teamOf))].sort()
+  // server-eng.mjs attributes every sprint to the project of the issues in it. A sprint with no project is
+  // a data bug upstream — drop it. NEVER invent a team called "all" out of an unparseable sprint name.
+  const teamOf = s => s.project || null
+  const teams = [...new Set((snap.sprints || []).map(teamOf).filter(Boolean))].sort()
   const predictability = teams.map(team => {
     const rows = (snap.sprints || []).filter(s => teamOf(s) === team)
       .sort((a, b) => Date.parse(a.startDate || 0) - Date.parse(b.startDate || 0)).slice(-sprintHistory)
     const rs = rows.map(r => r.sayDoPct).filter(v => v != null)
+    // MEDIAN, not mean: say/do is a ratio over a tiny, wildly varying pointed base (most tickets carry no
+    // story points), so one thin sprint owns the mean. bandPts/bandPp is a spread of PERCENTAGES —
+    // percentage points, never story points. It was being printed as "±2879 pts", which is not a unit.
+    const mid = pct(rs, 50)
     const mean = rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null
     const band = rs.length ? Math.round(Math.max(...rs) - Math.min(...rs)) : null
+    const pointed = rows.reduce((a, s) => a + (s.committedPointed || 0), 0)
+    const cnt = pct(rows.map(r => r.sayDoCountPct).filter(v => v != null), 50)
     return { team, sprints: rows.map(s => ({ sprint: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate,
-      committed: s.committed, committedPts: s.committedPts, added: s.added, addedPts: s.addedPts,
-      delivered: s.delivered, deliveredPts: s.deliveredPts, carriedOver: s.carriedOver,
-      injectionPct: s.injectionPct, sayDoPct: s.sayDoPct, keys: s.keys })),
-      meanSayDoPct: mean == null ? null : Math.round(mean), bandPts: band, red: band != null && band > 25,
-      line: mean == null ? `${team}: no sprint history yet.`
-        : `${team}: mean sprint completion ${Math.round(mean)}% over ${rs.length} sprints, spread ±${band} pts${band > 25 ? ' — unpredictable-but-average is still unpredictable' : ''}.` }
+      committed: s.committed, committedPts: s.committedPts, committedPointed: s.committedPointed, added: s.added, addedPts: s.addedPts,
+      delivered: s.delivered, deliveredPts: s.deliveredPts, addedDelivered: s.addedDelivered, shipped: s.shipped, shippedPts: s.shippedPts,
+      carriedOver: s.carriedOver, preDone: s.preDone,
+      injectionPct: s.injectionPct, sayDoPct: s.sayDoPct, sayDoCountPct: s.sayDoCountPct, keys: s.keys })),
+      medianSayDoPct: mid == null ? null : Math.round(mid), medianSayDoCountPct: cnt == null ? null : Math.round(cnt),
+      n: rs.length, pointedTickets: pointed,
+      meanSayDoPct: mean == null ? null : Math.round(mean),   // kept for the committed UI contract — do not read it for a review
+      bandPts: band, bandPp: band, red: band != null && band > 25,
+      line: mid != null
+        ? `${team}: median say/do ${Math.round(mid)}% of committed points over n=${rs.length} sprints (${pointed} pointed tickets)` +
+          `${cnt == null ? '' : `, ${Math.round(cnt)}% by ticket count`}, spread ${band}pp${band > 25 ? ' — unpredictable' : ''}.`
+        // a sprint with no pointed ticket has no points-based say/do — say that, rather than "no history"
+        : cnt != null ? `${team}: no story points on any committed ticket in ${rows.length} sprint(s) — say/do by ticket count is ${Math.round(cnt)}%.`
+        : `${team}: no sprint history yet.` }
   })
   const forecasts = (snap.epics || []).map(e => ({
     key: e.key, summary: e.summary, team: e.project, url: e.url, total: e.total, done: e.done, pctComplete: e.pctComplete,
