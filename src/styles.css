@@ -163,10 +163,11 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .kpi.ring { flex-direction: row; align-items: center; gap: 16px; }
 .spark { width: 100%; height: 26px; margin-top: 2px; }
 
-/* The gamification strip (.gami-*), the achievement badges (.badges/.badge-card) and the topbar's
-   "Lv N · 🔥Nd" chip are DELETED. XP was all-time assistant message count — the metric rewarded exactly
-   the behaviour the tool exists to reduce. .xp-track/.xp-fill survive only because ProjectsSection reuses
-   them as an honest progress bar (tasks done / total). */
+/* The OLD gamification strip (.gami-*, .badges/.badge-card, the "Lv N · 🔥Nd" topbar chip) stays deleted:
+   its XP was all-time assistant MESSAGE COUNT, so it paid you for exactly the behaviour the tool exists to
+   reduce. The layer that replaced it lives at the bottom of this file under "game" — same idea, but every
+   point comes from a shipped ticket, a review given, a green main, a reclaimed token. Different metric,
+   different incentive. .xp-track/.xp-fill are shared: ProjectsSection uses them as a plain progress bar. */
 .xp-track { height: 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .xp-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent-light), var(--accent)); box-shadow: 0 0 12px rgba(217, 119, 87, 0.6); transition: width 0.4s; }
 
@@ -342,3 +343,150 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .chat-atts { display: flex; gap: 6px; flex-wrap: wrap; }
 .chat-att { display: inline-flex; align-items: center; gap: 6px; font: 400 11px var(--mono); color: #c8bdb4; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 3px 8px; }
 .chat-att button { border: none; padding: 0 2px; font-size: 11px; color: var(--ink-3); }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════
+   GAME + MICRO-ANIMATIONS
+   Drives src/game/*. Two halves:
+     1. the game blocks (.game-stats, .ach-*, .unlock-toast, .xp-*, .streak, .lvl-*)
+     2. generic animation primitives any panel in any of the four dashboards can drop in:
+          .enter        panel/card/list-item entrance (Stagger sets --enter-delay)
+          @keyframes draw   SVG chart draw-in (anim.jsx <Draw/> sets the real dash length)
+          .lift .press  hover / active states
+          .skel         shimmer skeleton (already above)
+          .spark-burst  the unlock spark
+   Durations 150–400ms, cubic-bezier(0.22,1,0.36,1). Crisp, not bouncy.
+   THE REDUCED-MOTION BLOCK AT THE BOTTOM IS LOAD-BEARING — it is an accessibility requirement, not a
+   nicety. Under `prefers-reduced-motion: reduce` everything here snaps to its final state. Anything you
+   add above it must be safe to hard-stop; anything driven by rAF must check useReducedMotion() in JS.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════ */
+@keyframes draw { to { stroke-dashoffset: 0 } }
+@keyframes pop { 0% { transform: scale(0.4); opacity: 0 } 60% { transform: scale(1.08) } 100% { transform: scale(1); opacity: 1 } }
+@keyframes sparkOut { from { transform: translate(0, 0) scale(1); opacity: 1 } to { transform: translate(var(--dx), var(--dy)) scale(0.2); opacity: 0 } }
+@keyframes toastIn { from { transform: translateY(14px) scale(0.97); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes flicker { 0%, 100% { transform: scale(1) rotate(-1deg); filter: drop-shadow(0 0 5px rgba(217, 119, 87, 0.55)) }
+  35% { transform: scale(1.1) rotate(2deg); filter: drop-shadow(0 0 11px rgba(232, 160, 106, 0.8)) }
+  70% { transform: scale(1.04) rotate(-2deg); filter: drop-shadow(0 0 8px rgba(217, 119, 87, 0.7)) } }
+@keyframes ringIn { from { stroke-dashoffset: var(--c, 200) } }
+
+/* generic entrance — <Stagger> sets --enter-delay per child */
+.enter { animation: fadeUp 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: var(--enter-delay, 0ms); }
+.lift { transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.18s, box-shadow 0.18s; }
+.lift:hover { transform: translateY(-2px); border-color: rgba(217, 119, 87, 0.28); }
+.press:active { transform: translateY(1px) scale(0.985); }
+.ring-fill { transition: stroke-dashoffset 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* ---------- XP bar ---------- */
+.xp-block { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.xp-head { display: flex; justify-content: space-between; align-items: baseline; font: 600 12px var(--head); color: #c8bdb4; }
+.xp-nums { font: 500 12px var(--mono); color: var(--ink); }
+.xp-nums i { font-style: normal; color: #7a716a; }
+.xp-bar { position: relative; width: 100%; border-radius: 6px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.xp-bar .xp-fill { transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1); }
+.xp-sub { font-size: 11px; color: #8a807a; }
+.xp-sub b { color: #c8bdb4; font-weight: 600; }
+
+/* ---------- streak ---------- */
+.streak { display: flex; align-items: baseline; gap: 7px; }
+.streak .streak-flame { font-size: 19px; line-height: 1; }
+.streak.alive .streak-flame { animation: flicker 2.6s ease-in-out infinite; }
+.streak.cold { opacity: 0.5; }
+.streak.cold .streak-flame { font-size: 15px; color: var(--ink-3); }
+.streak-n { font: 600 25px var(--head); letter-spacing: -0.02em; color: var(--ink); }
+.streak-unit { font: 500 12px var(--mono); color: #8a807a; }
+.streak-best { font-size: 11px; color: #6a615a; margin-left: 4px; }
+.streak.sm .streak-n { font-size: 16px; } .streak.sm .streak-flame { font-size: 14px; }
+
+/* ---------- level badge ---------- */
+.lvl-badge { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.lvl-ring { width: 58px; height: 58px; border-radius: 18px; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark)); box-shadow: 0 0 26px -6px rgba(217, 119, 87, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  animation: pop 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.lvl-n { font: 700 25px var(--head); color: #fff; letter-spacing: -0.02em; }
+.lvl-name { font: 600 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: #8a807a; white-space: nowrap; }
+.lvl-badge.sm .lvl-ring { width: 34px; height: 34px; border-radius: 11px; } .lvl-badge.sm .lvl-n { font-size: 15px; }
+
+/* ---------- GameStats (main page of every dashboard) ---------- */
+.game-stats { padding: 20px 22px; }
+.gs-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 26px; align-items: center; }
+.gs-streak { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.gs-streak-cap, .gs-cap { font: 600 10px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: #6a615a; }
+.gs-split { display: grid; grid-template-columns: 1.5fr 1fr; gap: 20px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--panel-border); }
+.gs-cap { margin-bottom: 10px; }
+.gs-list { display: flex; flex-direction: column; gap: 6px; }
+.gs-ev { display: flex; align-items: center; gap: 11px; padding: 7px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.04); transition: border-color 0.18s; }
+.gs-ev:hover { border-color: rgba(217, 119, 87, 0.22); }
+.gs-ev-icon { font-size: 15px; flex-shrink: 0; }
+.gs-ev-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gs-ev-body b { font: 500 12.5px var(--body); color: #eee3da; }
+.gs-ev-body i { font-style: normal; font-size: 11px; color: #7a716a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-ev-xp { font: 600 12px var(--mono); color: var(--green); flex-shrink: 0; }
+.gs-ev-at { font-size: 10.5px; color: #6a615a; flex-shrink: 0; width: 54px; text-align: right; }
+.gs-next-card { display: flex; gap: 13px; align-items: center; padding: 13px; border-radius: 13px; background: linear-gradient(135deg, rgba(217, 119, 87, 0.09), rgba(217, 119, 87, 0.02)); border: 1px solid rgba(217, 119, 87, 0.2); }
+.gs-next-ring { position: relative; width: 54px; height: 54px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.gs-next-ring .ring { position: absolute; inset: 0; }
+.gs-next-emoji { font-size: 21px; }
+.gs-next-emoji.locked { filter: grayscale(1); opacity: 0.6; }
+.gs-next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gs-next-body b { font: 600 13.5px var(--head); color: var(--ink); }
+.gs-next-body .small { margin-top: 0; line-height: 1.45; }
+.gs-next-prog { font-size: 11.5px; color: var(--accent-light); font-weight: 600; margin-top: 3px; }
+.gs-next-prog i { font-style: normal; color: #7a716a; font-weight: 400; }
+
+/* ---------- achievement wall ---------- */
+.ach-filters { display: flex; gap: 6px; }
+.ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 12px; }
+.ach { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 14px; border: 1px solid var(--panel-border); background: rgba(255, 255, 255, 0.02); transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.18s; }
+.ach:hover { transform: translateY(-2px); border-color: rgba(217, 119, 87, 0.3); }
+.ach.got { background: linear-gradient(150deg, color-mix(in srgb, var(--tier) 13%, transparent), rgba(255, 255, 255, 0.015)); border-color: color-mix(in srgb, var(--tier) 32%, transparent); }
+.ach-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.ach-emoji-wrap { position: relative; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; }
+.ach-emoji-wrap .ring { position: absolute; inset: 0; }
+.ach-emoji { font-size: 22px; line-height: 1; }
+.ach.got .ach-emoji { filter: drop-shadow(0 0 9px color-mix(in srgb, var(--tier) 60%, transparent)); }
+.ach.locked .ach-emoji { filter: grayscale(1); opacity: 0.45; }
+.ach-tier { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tier); opacity: 0.85; }
+.ach.locked .ach-tier { color: #6a615a; }
+.ach-name { font: 600 13.5px var(--head); color: var(--ink); }
+.ach.locked .ach-name { color: #a89f97; }
+.ach-desc { font: 400 11.5px var(--body); color: #8a807a; line-height: 1.45; flex: 1; }
+.ach-foot { font-size: 11px; padding-top: 4px; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.ach-when { color: var(--tier); font-weight: 600; }
+.ach-prog { color: var(--accent-light); font-weight: 600; }
+.ach-prog i { font-style: normal; color: #6a615a; font-weight: 400; }
+
+/* ---------- unlock toast ---------- */
+.unlock-toast { position: fixed; right: 24px; bottom: 24px; z-index: 60; display: flex; gap: 14px; align-items: center; cursor: pointer;
+  padding: 15px 20px 15px 16px; border-radius: 15px; background: linear-gradient(135deg, rgba(40, 30, 25, 0.97), rgba(22, 18, 16, 0.97));
+  border: 1px solid rgba(217, 119, 87, 0.42); box-shadow: 0 22px 50px -18px rgba(0, 0, 0, 0.85), 0 0 34px -14px rgba(217, 119, 87, 0.6);
+  backdrop-filter: blur(12px); animation: toastIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; max-width: 380px; }
+.ut-emoji { position: relative; width: 46px; height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 13px; background: rgba(217, 119, 87, 0.14); }
+.ut-emoji > span { font-size: 24px; animation: pop 0.45s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both; }
+.ut-kicker { font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--accent-light); }
+.ut-name { font: 600 15px var(--head); color: var(--ink); margin-top: 2px; }
+.ut-desc { font-size: 11.5px; color: #8a807a; margin-top: 2px; line-height: 1.4; }
+
+/* spark burst — 14 shards, no canvas, no library */
+.spark-burst { position: absolute; inset: 0; pointer-events: none; }
+.spark-burst i { position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; border-radius: 50%; background: var(--accent-light);
+  box-shadow: 0 0 6px var(--accent); animation: sparkOut 0.9s cubic-bezier(0.22, 1, 0.36, 1) var(--sd, 0ms) both; }
+
+/* ══════════════════════════════════════════════════════════════════════════════════════════════════
+   REDUCED MOTION — everything snaps to its final state. Not negotiable.
+   ══════════════════════════════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* things whose FINAL state is what we want, but whose start state is the animation */
+  .enter, .panel, .kpi, .proj-card, .overview, .lvl-ring, .ut-emoji > span { opacity: 1 !important; transform: none !important; }
+  .bar-fill { transform: scaleX(1) !important; }
+  .ring-fill, .spark path, .spark polyline { stroke-dashoffset: 0 !important; stroke-dasharray: none !important; }
+  .spark-burst { display: none !important; }         /* a burst with no motion is just dots */
+  .streak.alive .streak-flame { animation: none !important; }
+  .lift:hover { transform: none !important; }
+}

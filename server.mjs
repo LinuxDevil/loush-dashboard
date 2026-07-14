@@ -12,6 +12,7 @@ import mountEng from './server-eng.mjs'
 import mountCareer from './server-career.mjs'
 import mountMemory from './server-memory.mjs'
 import mountMindwalk from './server-mindwalk.mjs'
+import mountGame from './server-game.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -44,6 +45,7 @@ mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + 
 mountCareer(app, { track: (...a) => track(...a), readJson: (...a) => readJson(...a) }) // /api/career/* — personal Career dashboard
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 mountMindwalk(app) // /api/mindwalk/* — runs the mindwalk binary (Claude sessions, or transcoded Cursor ones)
+mountGame(app) // /api/game — XP/levels/achievements from outcome events. Self-only: no cross-person leaderboard, ever
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
