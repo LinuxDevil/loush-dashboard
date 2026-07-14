@@ -621,25 +621,47 @@ app.get('/api/projects', (req, res) => {
 // ponytail: sessions live in server memory — a dashboard restart orphans the view, but the
 // CLI session persists on disk and can be resumed. Add persistence if that ever hurts.
 const chats = new Map() // chatId -> {child, cwd, sessionId, alive, events: [], listeners: Set<res>}
+// Force execution plans into a machine-parseable DAG so the dashboard can render them (see src/PlanGraph.jsx).
+const PLAN_SCHEMA_RULE = `When asked to create an execution plan, you MUST output a JSON array inside a \`\`\`json code block — not a markdown list. Every element uses exactly this schema:
+{"step_id": 1, "description": "short action", "dependencies": [], "expected_skill": [], "active_rules": [], "mcp_server": null, "tool_to_call": "Edit", "expected_params": {"name": "value or 'TBD based on step N'"}}
+dependencies is an array of step_ids that must finish first. Use null/[] where a field does not apply. This rule applies only when an execution plan is requested; answer normally otherwise.`
 function chatBroadcast(chat, ev) {
   chat.events.push(ev)
   const line = `data: ${JSON.stringify(ev)}\n\n`
   for (const l of chat.listeners) l.write(line)
 }
 // past conversation history from the on-disk transcript (resumed CLI sessions emit nothing until the first new message)
-function historyEvents(cwd, sessionId) {
+const readTranscript = (file, parentId) => {
   const out = []
   try {
-    for (const line of fs.readFileSync(path.join(CLAUDE, 'projects', mangle(cwd), sessionId + '.jsonl'), 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
       try {
         const j = JSON.parse(line)
         if ((j.type !== 'user' && j.type !== 'assistant') || j.isMeta || !j.message) continue
         if (typeof j.message.content === 'string' && j.message.content.startsWith('<')) continue
-        out.push({ type: j.type, message: j.message, parent_tool_use_id: j.parent_tool_use_id || null })
+        out.push({ type: j.type, message: j.message, parent_tool_use_id: parentId || j.parent_tool_use_id || null })
       } catch {}
     }
   } catch {}
-  return out.slice(-200)
+  return out
+}
+function historyEvents(cwd, sessionId) {
+  const dir = path.join(CLAUDE, 'projects', mangle(cwd))
+  const main = readTranscript(path.join(dir, sessionId + '.jsonl')).slice(-200)
+  // stitch in subagent transcripts (stored under <sessionId>/subagents/, linked by meta.toolUseId)
+  // so resumed sessions show what each subagent actually did, nested under its Task node
+  const taskIds = new Set()
+  for (const e of main) if (e.type === 'assistant' && Array.isArray(e.message?.content))
+    for (const c of e.message.content) if (c.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent')) taskIds.add(c.id)
+  try {
+    const subDir = path.join(dir, sessionId, 'subagents')
+    for (const meta of fs.readdirSync(subDir).filter(f => f.endsWith('.meta.json'))) {
+      let link; try { link = JSON.parse(fs.readFileSync(path.join(subDir, meta), 'utf8')) } catch { continue }
+      if (!taskIds.has(link.toolUseId)) continue // only stitch children whose Task node is in view
+      main.push(...readTranscript(path.join(subDir, meta.replace('.meta.json', '.jsonl')), link.toolUseId))
+    }
+  } catch {}
+  return main
 }
 app.post('/api/chat', (req, res) => {
   const { cwd, resume, model } = req.body
@@ -648,7 +670,7 @@ app.post('/api/chat', (req, res) => {
     const existing = [...chats.entries()].find(([, c]) => c.alive && c.cwd === cwd && c.resume === resume)
     if (existing) return res.json({ id: existing[0] })
   }
-  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', PLAN_SCHEMA_RULE]
   if (resume) args.push('--resume', resume)
   if (model) args.push('--model', model)
   const child = spawn('claude', args, { cwd, env: process.env, shell: WIN }) // shell resolves claude.cmd on Windows

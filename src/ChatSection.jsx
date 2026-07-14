@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { api, fmtDate } from './api.js'
+import { extractPlan, blocksToPlan, diagnoseSession } from './plan.js'
+import PlanGraph from './PlanGraph.jsx'
 
 const short = (v, n = 200) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v)
@@ -221,6 +223,7 @@ export default function ChatSection() {
   const [prefill, setPrefill] = useState('')
   const [model, setModel] = useState('')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState('chat')
   const esRef = useRef(null)
   const endRef = useRef(null)
 
@@ -242,7 +245,7 @@ export default function ChatSection() {
   const attach = (id, chatCwd) => {
     esRef.current?.close()
     if (chatCwd) setCwd(chatCwd)
-    setEvents([]); setChatId(id)
+    setEvents([]); setChatId(id); setView('chat')
     const es = new EventSource(`/api/chat/${id}/events`)
     es.onmessage = m => {
       const ev = JSON.parse(m.data)
@@ -274,6 +277,8 @@ export default function ChatSection() {
   }
 
   const blocks = buildBlocks(events)
+  const realPlan = extractPlan(blocks)
+  const plan = realPlan || (blocks.some(b => b.kind === 'tool') ? blocksToPlan(blocks) : null)
   const ended = blocks.some(b => b.kind === 'closed')
   const liveModel = events.find(e => e.type === 'system' && e.subtype === 'init')?.model
 
@@ -344,13 +349,18 @@ export default function ChatSection() {
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
           {liveModel && <span className="dim" style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
         </span>
-        <button className="mini" onClick={stop}>{ended ? 'close' : 'stop session'}</button>
+        <span style={{ display: 'flex', gap: 8 }}>
+          {plan && <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? '#d97757' : undefined }} onClick={() => setView(view === 'plan' ? 'chat' : 'plan')}>{view === 'plan' ? 'chat' : `${realPlan ? 'plan' : 'activity'} graph (${plan.length})`}</button>}
+          <button className="mini" style={{ marginTop: 0 }} onClick={stop}>{ended ? 'close' : 'stop session'}</button>
+        </span>
       </div>
-      <div className="chat-log">
+      {view === 'plan' && plan
+        ? <div className="chat-log"><PlanGraph steps={plan} cwd={cwd} derived={!realPlan} diagnostics={diagnoseSession(blocks)} /></div>
+        : <div className="chat-log">
         {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text') ? <Cap key={i} text={b.text}><Block b={b} /></Cap> : <Block key={i} b={b} />)}
         {busy && <div className="chat-line dim">✦ working…</div>}
         <div ref={endRef} />
-      </div>
+      </div>}
       <InputBar cwd={cwd} ended={ended} onSend={send} initial={prefill} />
     </div>
   )
