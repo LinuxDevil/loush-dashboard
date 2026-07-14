@@ -17,16 +17,23 @@ export function buildBlocks(events) {
   for (const ev of events) {
     if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
       for (const c of ev.message.content)
-        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) byToolId[c.tool_use_id].result = short(c.content, 400)
+        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
+          const b = byToolId[c.tool_use_id]
+          b.result = short(c.content, 400)
+          b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
+          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult // structuredPatch / stdout / stderr / filePath
+        }
         else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
         else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+      let usageLeft = ev.message?.usage || null // attach the message's token usage to its first tool (avoids double-count)
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text })
         else if (c.type === 'tool_use') {
-          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
+          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, ts: ev.timestamp || null, usage: usageLeft, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
+          usageLeft = null
           byToolId[c.id] = b
           target(ev).push(b)
         }

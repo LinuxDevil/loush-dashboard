@@ -1,4 +1,4 @@
-import { parseUsageData, deriveSessionsFromTranscripts, groupByProject } from './career-insights.mjs'
+import { parseUsageData, deriveSessionsFromTranscripts, groupByProject, ticketLinksFrom } from './career-insights.mjs'
 import { parseReportNarrative } from './career-insights-report.mjs'
 import { attributeBugs, attributeBugsWithBlame } from './career-attribution.mjs'
 import { focusItems } from './career-heuristics.mjs'
@@ -34,13 +34,32 @@ export function kpiMoved(link) {
   if (Number.isNaN(b) || Number.isNaN(c)) return false
   return (link.direction === 'down') ? c < b : c > b
 }
-// Current-year period window. period = '' | 'YYYY' (year-to-date) → whole year; 'YYYYQn' → one quarter.
-// Year is always clamped to the CURRENT year: no previous-year data is ever served.
+// Period window. period = '' (current year to date) | 'YYYY' | 'Qn' (current year) | 'YYYYQn'.
+// The current-year CLAMP IS GONE (item 4): a prior-year quarter is now expressible, which is what
+// makes every QoQ/YoY delta in the app possible. `isYear` still means "the CURRENT year, to date" —
+// it is the only window allowed to mutate the rollup, so a historical view stays read-only.
 export function periodWindow(period, now = Date.now()) {
-  const y = new Date(now).getUTCFullYear()
-  const m = /Q([1-4])$/.exec(period || '')
-  if (m) { const sm = (+m[1] - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(now, Date.UTC(y, sm + 3, 1)), isYear: false, label: `Q${m[1]}` } }
-  return { start: Date.UTC(y, 0, 1), end: now, isYear: true, label: String(y) }
+  const curY = new Date(now).getUTCFullYear()
+  const s = String(period || '').trim()
+  const m = /^(\d{4})?(?:Q([1-4]))?$/.exec(s)
+  const y = m && m[1] ? +m[1] : curY
+  const q = m && m[2] ? +m[2] : null
+  if (q) { const sm = (q - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(now, Date.UTC(y, sm + 3, 1)), isYear: false, year: y, quarter: q, label: `${y}Q${q}` } }
+  return { start: Date.UTC(y, 0, 1), end: Math.min(now, Date.UTC(y + 1, 0, 1)), isYear: y === curY, year: y, quarter: null, label: String(y) }
+}
+// The period BEFORE this one — the denominator of every delta chip. Crosses the year boundary.
+export function priorPeriod(period, now = Date.now()) {
+  const w = periodWindow(period, now)
+  if (!w.quarter) return String(w.year - 1)
+  return w.quarter === 1 ? `${w.year - 1}Q4` : `${w.year}Q${w.quarter - 1}`
+}
+// direction-of-good aware delta, for the tile chips. dir: 'up' = higher is better.
+export function delta(cur, prev, dir = 'up') {
+  if (cur == null || prev == null || !Number.isFinite(cur) || !Number.isFinite(prev)) return null
+  const abs = +(cur - prev).toFixed(4)
+  const pct = prev === 0 ? null : +((cur - prev) / Math.abs(prev) * 100).toFixed(1)
+  const good = abs === 0 ? null : (dir === 'down' ? abs < 0 : abs > 0)
+  return { cur, prev, abs, pct, good }
 }
 // keep a session iff its start_time falls in the window; undated sessions count only in the full-year view.
 const inPeriod = (iso, w) => { const t = Date.parse(iso); return Number.isNaN(t) ? w.isYear : (t >= w.start && t < w.end) }
@@ -152,6 +171,10 @@ export function buildSnapshot(deps) {
       harness: harnessScore({ project: path, sessionsForProject: v.sessions, baselineFrictionRate,
         repoProbe: probeRepo ? probeRepo(path) : {} }) })),
   }
+  // item 13 — the session↔ticket↔PR join, built from the Bash command strings + real message.usage
+  // tokens. SELF-PLANE: these sessions are this laptop's. Nothing here is ever keyed by another person.
+  snap.ticketJoin = ticketLinksFrom(sessions)
+
   // hydrate the acted-on mark (guarded — `focusActed` is introduced in Task 13; guard keeps this correct before/after)
   snap.focus = focusItems(snap).map(f => ({ ...f, actedOn: (config.focusActed || {})[f.id] || null }))
 

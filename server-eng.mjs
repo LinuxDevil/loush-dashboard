@@ -1,3 +1,26 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// TWO DATA PLANES — structural, enforced here, not by policy. Read before editing.
+//
+//   PLANE A (this file) = WORK ARTIFACTS: JIRA issues, GitHub PRs/reviews, CI runs, bugs.
+//     Already team-visible — every engineer can open every underlying artifact about
+//     themselves. Per-person OPERATIONAL facts are therefore allowed (who owns a ticket,
+//     whose review a PR waits on, what is stuck). Per-person EVALUATIVE scores are NOT:
+//     no composite score, no ranking, no "delivery skills" radar, no bugs-caused counter.
+//
+//   PLANE B (server.mjs / server-cursor.mjs) = HARNESS TELEMETRY: transcripts, tokens,
+//     cost, session times, active hours. One machine's private data, self-only, forever.
+//
+//   HARD RULES for /api/eng/*:
+//     · Never emit a per-person token count, cost, session time, active-hours or any
+//       transcript-derived field. Guarded by test/eng-privacy.test.js.
+//     · No endpoint accepts a user/machine parameter for telemetry.
+//     · Sustainable-pace / load data is TEAM-AGGREGATE ONLY: min-N=5 suppression is applied
+//       IN THE ENDPOINT (cells return null below that), weekly buckets, no per-person rows,
+//       no drilldown. Sourced from PR createdAt/mergedAt — never transcripts.
+//     · Every write action (JIRA transition, gh pr comment) is gated on a projects.json
+//       `"writes": true` flag and uses the operator's own credentials. The default action
+//       everywhere is copy-to-clipboard. Never an auto-ping.
+// ─────────────────────────────────────────────────────────────────────────────
 // Engineering Metrics dashboard — fully separate read-only routes under /api/eng/*.
 // Multi-project: each project = a JIRA board (project key) + a GitHub repo. Defaults ship two
 //   (AIR, TRN); more can be added at runtime via POST /api/eng/projects -> projects.json (gitignored).
@@ -43,9 +66,12 @@ function normalizeProject(p) {
     devEmails: (p.devEmails && p.devEmails.length ? p.devEmails : DEV_EMAILS).map(e => e.toLowerCase()),
     qaEmails: (p.qaEmails || []).map(e => e.toLowerCase()),
     productEmails: (p.productEmails || []).map(e => e.toLowerCase()),
+    writes: p.writes === true, // §writes: JIRA transitions / gh pr comment stay behind this. Default: copy-to-clipboard.
   }
 }
-function extraProjects() { try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) } catch { return [] } }
+// projects.json is either a bare array (legacy) or {projects:[…], effortBuckets:{…}} (§7).
+function projectsFile() { try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) } catch { return null } }
+function extraProjects() { const j = projectsFile(); return Array.isArray(j) ? j : (j?.projects || []) }
 function loadProjects() {
   const map = new Map()
   for (const p of DEFAULT_PROJECTS) map.set(p.key.toUpperCase(), p)
@@ -53,12 +79,14 @@ function loadProjects() {
   return [...map.values()].map(normalizeProject)
 }
 function upsertProject(rec) {
+  const j = projectsFile()
   const extra = extraProjects()
   const k = (rec.key || '').toUpperCase()
   const idx = extra.findIndex(p => (p.key || p.jiraProjectKey || '').toUpperCase() === k)
   if (idx >= 0) extra[idx] = { ...extra[idx], ...rec, key: k }
   else extra.push({ ...rec, key: k })
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(extra, null, 2))
+  const out = Array.isArray(j) || !j ? extra : { ...j, projects: extra } // keep the effortBuckets block intact
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(out, null, 2))
 }
 // members editor from the UI: [{email, role}] -> role email lists (only when members supplied)
 function rostersFrom(members) {
@@ -100,6 +128,23 @@ function addWorkTime(from, budgetMs) {
   }
   return from + budgetMs // fallback
 }
+// true when an instant falls outside 10:00–18:00 Sun–Thu (a PR opened then is "off hours")
+const offHours = t => workMs(t, t + 60_000) === 0
+const isWeekend = t => { const dow = ((Math.floor((t + KSA) / DAY) % 7) + 4) % 7; return dow === 5 || dow === 6 }
+
+// ---------- percentiles (§2 — the client does its own too; these are the ones the server needs) ----------
+function pctl(arr, p) {
+  const a = arr.filter(v => v != null && !Number.isNaN(v)).sort((x, y) => x - y)
+  if (!a.length) return null
+  const i = (a.length - 1) * p
+  const lo = Math.floor(i), hi = Math.ceil(i)
+  return +(a[lo] + (a[hi] - a[lo]) * (i - lo)).toFixed(2)
+}
+const median = a => pctl(a, 0.5)
+const round1 = v => (v == null ? null : +v.toFixed(1))
+const monthKey = t => new Date(t).toISOString().slice(0, 7)
+// ISO-ish week key (Sunday-start, matching the KSA work week)
+function weekKey(t) { const d = Math.floor((t + KSA) / DAY); const sun = d - (((d % 7) + 4) % 7); return new Date(sun * DAY).toISOString().slice(0, 10) }
 
 // ---------- story points -> estimated working-days (org reference table) ----------
 const SP_DAYS = [[1, 0.4], [2, 0.8], [3, 1.5], [5, 3], [8, 6], [13, 10], [21, 22]] // 21 ≈ a month of working days
@@ -217,7 +262,7 @@ async function pickPopulated(a, cfg, ids) {
 async function jiraIssues(cfg) {
   const a = await jiraAuth(cfg)
   const F = await resolveFields(a, cfg)
-  const fields = ['summary', 'issuetype', 'status', 'assignee', 'reporter', 'labels', 'components', 'issuelinks', 'parent', 'created', 'updated', 'resolutiondate', F.sp, F.sprint].filter(Boolean)
+  const fields = ['summary', 'issuetype', 'status', 'assignee', 'reporter', 'labels', 'components', 'issuelinks', 'parent', 'created', 'updated', 'resolutiondate', 'duedate', 'fixVersions', F.sp, F.sprint].filter(Boolean)
   const out = []
   let token = null
   do {
@@ -246,10 +291,14 @@ async function mapLimit(arr, n, fn) {
 function statusSegments(issue) {
   const created = Date.parse(issue.fields.created)
   const changes = []
+  const sprintEvents = [] // §8: the Sprint items sit right next to the status ones — keep them.
   for (const h of issue.changelog?.histories || [])
-    for (const it of h.items || [])
+    for (const it of h.items || []) {
       if (it.field === 'status') changes.push({ at: Date.parse(h.created), from: it.fromString, to: it.toString, author: h.author ? { id: h.author.accountId, name: h.author.displayName } : null })
+      else if (it.field === 'Sprint') sprintEvents.push({ at: Date.parse(h.created), from: it.fromString || '', to: it.toString || '', fromIds: idList(it.from), toIds: idList(it.to), author: h.author?.displayName || '' })
+    }
   changes.sort((a, b) => a.at - b.at)
+  sprintEvents.sort((a, b) => a.at - b.at)
   const days = {}; let firstInProg = null, liveAt = null, qaEntries = 0, reworkN = 0, reopenN = 0, inProgEntries = 0, fixer = null
   let cur = changes.length ? changes[0].from : issue.fields.status.name
   let t0 = created, curSince = created
@@ -270,22 +319,28 @@ function statusSegments(issue) {
   const pausedMs = Object.entries(days).reduce((a, [k, v]) => a + (PAUSED.includes(norm(k)) ? v : 0), 0)
   const spanMs = firstInProg != null ? workMs(firstInProg, endT) : 0
   const delivery = Math.max(0, spanMs - pausedMs) / WORKDAY_MS
-  return { daysIn, delivery, firstInProg, liveAt, curStatus: cur, curSince, qaCycles: qaEntries, rework: reworkN + reopenN, fixer }
+  return { daysIn, delivery, firstInProg, liveAt, curStatus: cur, curSince, qaCycles: qaEntries, rework: reworkN + reopenN, fixer, sprintEvents }
 }
+const idList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean)
+const nameList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean)
 
 function num(v) { if (v == null) return 0; if (typeof v === 'number') return v; if (typeof v === 'object') return v.value ?? 0; return Number(v) || 0 }
-function parseSprint(raw) {
-  if (!raw) return null
-  const arr = Array.isArray(raw) ? raw : [raw]
-  const last = arr[arr.length - 1]
-  if (!last) return null
-  if (typeof last === 'object') return last.name ? { id: last.id ?? null, name: last.name, state: last.state || '' } : null
-  const s = String(last)
-  const name = (s.match(/name=([^,\]]+)/) || [])[1]
-  const state = (s.match(/state=([^,\]]+)/) || [])[1]
-  const id = (s.match(/id=(\d+)/) || [])[1]
-  return name ? { id: id ? +id : null, name, state: state || '' } : null
+// §8: BOTH forms carry startDate/endDate/completeDate — they were being thrown away.
+function parseSprintOne(one) {
+  if (!one) return null
+  if (typeof one === 'object') return one.name ? { id: one.id ?? null, name: one.name, state: one.state || '', startDate: one.startDate || null, endDate: one.endDate || null, completeDate: one.completeDate || null, boardId: one.boardId ?? null } : null
+  const s = String(one)
+  const g = re => (s.match(re) || [])[1] || null
+  const name = g(/name=([^,\]]+)/)
+  const iso = v => (v && v !== '<null>' ? v : null)
+  return name ? {
+    id: g(/id=(\d+)/) ? +g(/id=(\d+)/) : null, name, state: g(/state=([^,\]]+)/) || '',
+    startDate: iso(g(/startDate=([^,\]]+)/)), endDate: iso(g(/endDate=([^,\]]+)/)), completeDate: iso(g(/completeDate=([^,\]]+)/)),
+    boardId: g(/boardId=(\d+)/) ? +g(/boardId=(\d+)/) : null,
+  } : null
 }
+const parseSprints = raw => (raw ? (Array.isArray(raw) ? raw : [raw]) : []).map(parseSprintOne).filter(Boolean)
+function parseSprint(raw) { const a = parseSprints(raw); return a.length ? a[a.length - 1] : null }
 
 // hover recommendation: when to move to the next step to keep a good metric score
 function recFor(status, pts, curSince) {
@@ -329,13 +384,21 @@ function computeIssue(issue, F, prsByTicket, cfg) {
   // bug linked to a parent story (AIR happy path: the bug hangs off the ticket it belongs to)
   let linkedKey = f.parent?.key || null
   if (isBug && !linkedKey) for (const l of f.issuelinks || []) { const o = l.outwardIssue || l.inwardIssue; if (o) { linkedKey = o.key; break } }
+  // issuelinks are fetched today and used only to resolve linkedKey — keep the whole graph (blocker matrix)
+  const links = (f.issuelinks || []).map(l => {
+    const o = l.outwardIssue || l.inwardIssue
+    if (!o) return null
+    return { key: o.key, dir: l.outwardIssue ? 'outward' : 'inward', type: l.type?.name || '', rel: (l.outwardIssue ? l.type?.outward : l.type?.inward) || '', status: o.fields?.status?.name || '' }
+  }).filter(Boolean)
   // assignee changelog → resolve dev/QA assignee by role in resolveRoles
   const assigneeHistory = []
   for (const h of issue.changelog?.histories || []) for (const it of h.items || []) if (it.field === 'assignee' && it.to) assigneeHistory.push({ id: it.to, name: it.toString || '' })
   if (assignee) assigneeHistory.push({ id: assignee.id, name: assignee.name })
   return {
     key: issue.key, project: cfg.key, host: cfg.jiraHost, type: f.issuetype?.name || 'Task', summary: f.summary, isBug, area,
-    status, statusKind: kind, statusColor: colorFor(status), sprint: parseSprint(f[F.sprint]),
+    labels: f.labels || [], duedate: f.duedate || null, fixVersions: (f.fixVersions || []).map(v => v.name), links,
+    url: `https://${cfg.jiraHost}/browse/${issue.key}`,
+    status, statusKind: kind, statusColor: colorFor(status), sprint: parseSprint(f[F.sprint]), sprints: parseSprints(f[F.sprint]), sprintEvents: seg.sprintEvents,
     assignee, assigneeHistory, devAssignee: null, qaAssignee: null, inCurrent: +workDays(seg.curSince, Date.now()).toFixed(2),
     reporter: f.reporter ? { name: f.reporter.displayName, email: f.reporter.emailAddress || '', id: f.reporter.accountId } : null, qaReported: false,
     // bug ownership — owner = who has the bug (default assignee), fixer = who moved it to QA-ready. Resolved/overridden in snapshot.
@@ -347,6 +410,9 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     live, active: kind === 'active', month: d.getMonth(), year: d.getFullYear(),
     created: f.created, closedAt: f.resolutiondate || (seg.liveAt ? new Date(seg.liveAt).toISOString() : null),
     curSince: new Date(seg.curSince).toISOString(),
+    firstInProg: seg.firstInProg ? new Date(seg.firstInProg).toISOString() : null, // §12: computed since day one, never exposed
+    liveAt: seg.liveAt ? new Date(seg.liveAt).toISOString() : null,
+    leadDays: +workDays(Date.parse(f.created), seg.liveAt || Date.now()).toFixed(2), // created → live (the queue half #11)
     rec: live ? null : recFor(status, pts, seg.curSince),
     parent: f.parent ? { key: f.parent.key, summary: f.parent.fields?.summary || '' } : null,
     prNums: prs.map(p => p.num), stale, staleNote,
@@ -399,10 +465,20 @@ function gh(args, timeout = 60000) {
 }
 function ghAvailable() { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
 
+// §4/§11: three fields ADDED to the query we already run — no extra request.
+//   reviewRequests   → who was ASKED and never responded (invisible today)
+//   timelineItems    → REVIEW_REQUESTED_EVENT, so first-review latency starts at the REQUEST,
+//                      not at PR-open (the old firstReviewDays blames the author for the reviewer's queue)
+//   commits(last:1)  → statusCheckRollup, a per-PR checks state
+const prQuery = (owner, name) => `query($cur:String){repository(owner:"${owner}",name:"${name}"){defaultBranchRef{name} pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}} reviewRequests(first:10){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name}}}} timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],first:20){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login} ... on Team{name}}}}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`
+const GQL = prQuery('<owner>', '<name>') // §13: shipped in the snapshot so the UI can offer "copy the gh command"
+const ghCommandFor = repo => `gh api graphql -f query='${prQuery(...String(repo).split('/'))}'`
+const reviewerLogin = r => r?.login || r?.name || ''
+
 function fetchPRs(cfg) {
   const [owner, name] = cfg.githubRepo.split('/')
   if (!owner || !name) return []
-  const q = `query($cur:String){repository(owner:"${owner}",name:"${name}"){pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}}}}}}`
+  const q = prQuery(owner, name)
   const prs = []; let cur = ''
   for (let page = 0; page < 6; page++) { // ponytail: 300 most-recent PRs; bump the cap if history matters
     const args = ['api', 'graphql', '-f', `query=${q}`]
@@ -425,17 +501,33 @@ function fetchPRs(cfg) {
       else if (approved) state = 'Approved'
       else if (changesReq > 0) state = 'Changes requested'
       const reviewers = [...new Set(realReviews.map(r => r.login))]
+      // asked-but-never-responded + the honest clock: request → first review, per reviewer
+      const requested = (p.reviewRequests?.nodes || []).map(n => reviewerLogin(n.requestedReviewer)).filter(l => l && !BOT(l))
+      const reviewRequests = (p.timelineItems?.nodes || [])
+        .map(n => ({ login: reviewerLogin(n.requestedReviewer), at: n.createdAt }))
+        .filter(r => r.login && r.at && !BOT(r.login))
+      const firstReqAt = reviewRequests.map(r => Date.parse(r.at)).sort((a, b) => a - b)[0]
+      const checks = p.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state || null // SUCCESS | FAILURE | PENDING | ERROR | EXPECTED | null
+      const approvedAt = reviews.filter(r => r.state === 'APPROVED' && r.at).map(r => Date.parse(r.at)).sort((a, b) => a - b)[0]
       prs.push({
         num: p.number, project: cfg.key, repo: cfg.githubRepo, ticket, title: p.title, branch: p.headRefName, state,
+        url: `https://github.com/${cfg.githubRepo}/pull/${p.number}`, checks,
         author: p.author?.login || '', createdAt: p.createdAt, mergedAt: p.mergedAt, closedAt: p.closedAt,
         additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles,
         comments: (p.comments?.totalCount || 0) + (p.reviewThreads?.totalCount || 0),
         firstReviewDays: firstReview ? +workDays(created, firstReview).toFixed(2) : null,
+        // the honest wait: clock starts when a reviewer was asked, not when the author pushed
+        firstReviewFromRequestDays: firstReview && firstReqAt && firstReview >= firstReqAt ? +workDays(firstReqAt, firstReview).toFixed(2) : null,
         mergeDays: p.mergedAt ? +workDays(created, Date.parse(p.mergedAt)).toFixed(2) : null,
         openDays: +workDays(created, p.mergedAt ? Date.parse(p.mergedAt) : Date.now()).toFixed(1),
-        cycles: 1 + changesReq, reviewers, assignees: (p.assignees?.nodes || []).map(a => a.login).filter(Boolean),
+        approvedAt: approvedAt ? new Date(approvedAt).toISOString() : null,
+        approvedUnmergedDays: !p.mergedAt && p.state !== 'CLOSED' && approvedAt ? +workDays(approvedAt, Date.now()).toFixed(2) : null,
+        cycles: 1 + changesReq, changesRequested: changesReq, reviewers, assignees: (p.assignees?.nodes || []).map(a => a.login).filter(Boolean),
         files: (p.files.nodes || []).map(f => ({ path: f.path, add: f.additions, del: f.deletions })),
         reviewEvents: realReviews.map(r => ({ state: r.state, login: r.login, at: r.at })),
+        requestedReviewers: [...new Set(requested)], reviewRequests,
+        // requested, never answered — the set nobody can see today
+        unanswered: [...new Set(requested)].filter(l => !reviewers.includes(l)),
       })
     }
     if (!conn.pageInfo.hasNextPage) break
@@ -444,13 +536,440 @@ function fetchPRs(cfg) {
   return prs
 }
 
+// ---------- CI health (§11) — NEW gh calls, existing auth. Cached separately, shorter TTL. ----------
+const CI_FILE_TTL = 30 * 60_000
+const ciCache = new Map() // project key -> {at, data}
+const ghJSON = (pathQ, timeout = 30000) => JSON.parse(gh(['api', pathQ], timeout))
+function ciFor(cfg, errs) {
+  const hit = ciCache.get(cfg.key)
+  if (hit && Date.now() - hit.at < CI_FILE_TTL) return hit.data
+  if (!cfg.githubRepo || !ghAvailable()) return null
+  const data = safe(() => {
+    const repo = ghJSON(`/repos/${cfg.githubRepo}`)
+    const branch = repo.default_branch || 'main'
+    const runs = (ghJSON(`/repos/${cfg.githubRepo}/actions/runs?branch=${branch}&per_page=50`).workflow_runs || [])
+      .filter(r => r.conclusion)
+      .map(r => ({
+        id: r.id, name: r.name || r.workflow_id, sha: r.head_sha, actor: r.actor?.login || '', attempt: r.run_attempt || 1,
+        conclusion: r.conclusion, at: r.created_at, done: r.updated_at, url: r.html_url,
+        mins: +(((Date.parse(r.updated_at) - Date.parse(r.created_at)) / 60000) || 0).toFixed(1),
+      }))
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    const fails = runs.filter(r => r.conclusion === 'failure')
+    // time-to-green: each red→next-green transition, in WORKING hours
+    const greens = []
+    let redAt = null
+    for (const r of runs) {
+      if (r.conclusion === 'failure' && redAt == null) redAt = Date.parse(r.at)
+      else if (r.conclusion === 'success' && redAt != null) { greens.push(+(workMs(redAt, Date.parse(r.at)) / H).toFixed(2)); redAt = null }
+    }
+    // flaky = the SAME headSha produced both a failure and a success
+    const bySha = {}
+    for (const r of runs) (bySha[r.sha] ||= []).push(r)
+    const flakyShas = Object.entries(bySha).filter(([, rs]) => rs.some(r => r.conclusion === 'failure') && rs.some(r => r.conclusion === 'success'))
+    const jobCount = {}
+    for (const [sha, rs] of flakyShas.slice(0, 8)) { // ponytail: cap the per-run jobs fan-out
+      for (const r of rs.filter(x => x.conclusion === 'failure')) {
+        const jobs = safe(() => ghJSON(`/repos/${cfg.githubRepo}/actions/runs/${r.id}/jobs`).jobs || [], [], errs)
+        for (const j of jobs.filter(j => j.conclusion === 'failure')) {
+          const k = j.name
+          const e = (jobCount[k] ||= { job: k, workflow: r.name, flakes: 0, shas: [], lastUrl: j.html_url })
+          e.flakes++; if (!e.shas.includes(sha)) e.shas.push(sha.slice(0, 7))
+        }
+      }
+    }
+    const last = runs[runs.length - 1] || null
+    return {
+      project: cfg.key, repo: cfg.githubRepo, branch, runs: runs.slice(-20).reverse(),
+      total: runs.length, failures: fails.length,
+      failureRate: runs.length ? +(fails.length / runs.length * 100).toFixed(1) : null,
+      medianTimeToGreenHours: median(greens), medianRunMins: median(runs.map(r => r.mins)),
+      red: !!last && last.conclusion === 'failure',
+      brokeIt: last && last.conclusion === 'failure' ? last.actor : null,
+      lastRun: last,
+      flaky: Object.values(jobCount).sort((a, b) => b.flakes - a.flakes).slice(0, 10),
+      flakyShaCount: flakyShas.length,
+    }
+  }, null, errs)
+  ciCache.set(cfg.key, { at: Date.now(), data })
+  return data
+}
+
+// ---------- triage (§1) — one pass, typed risk records. 100% of it is already-computed signal. ----------
+const TRIAGE_FILE = path.join(HERE, 'eng-triage.json')
+function readTriage() { try { return JSON.parse(fs.readFileSync(TRIAGE_FILE, 'utf8')) } catch { return {} } }
+function writeTriage(o) { fs.writeFileSync(TRIAGE_FILE, JSON.stringify(o, null, 2)) } // same versioned-write pattern as bug-ownership.json
+const jiraLink = i => i.url || `https://${i.host}/browse/${i.key}`
+
+function triage(issues, prs, ci = []) {
+  const out = []
+  const push = r => out.push({ id: `${r.kind}:${r.subjectKey}`, overBudgetBy: null, ageWorkDays: null, owner: null, ...r })
+  // sev 0 — red main. One red main blocks the whole team at once.
+  for (const c of ci) if (c?.red) push({
+    kind: 'red-main', severity: 0, subject: `${c.repo}@${c.branch} is red`, subjectKey: c.repo, project: c.project,
+    owner: c.brokeIt ? { name: c.brokeIt } : null, deepLink: c.lastRun?.url || `https://github.com/${c.repo}/actions`,
+    ageWorkDays: c.lastRun ? +workDays(Date.parse(c.lastRun.at), Date.now()).toFixed(2) : null,
+    detail: c.lastRun ? `${c.lastRun.name} failed` : '',
+  })
+  for (const i of issues) {
+    if (i.live) continue
+    const age = i.inCurrent
+    if (i.rec?.atRisk) push({
+      kind: 'over-budget', severity: 1, subject: `${i.key} ${i.summary}`, subjectKey: i.key, project: i.project, owner: i.assignee,
+      ageWorkDays: age, overBudgetBy: +(-i.rec.remaining).toFixed(2), deepLink: jiraLink(i),
+      detail: `${i.status} ${age}d — budget ${i.rec.budget}d, move to ${i.rec.next}`,
+    })
+    if (i.stale) push({
+      kind: 'stale-status', severity: 1, subject: `${i.key} ${i.summary}`, subjectKey: i.key, project: i.project, owner: i.assignee,
+      ageWorkDays: age, deepLink: jiraLink(i), detail: i.staleNote,
+    })
+    if (norm(i.status) === 'qa blocked') push({
+      kind: 'qa-blocked', severity: 1, subject: `${i.key} ${i.summary}`, subjectKey: i.key, project: i.project, owner: i.assignee,
+      ageWorkDays: age, deepLink: jiraLink(i), detail: `QA Blocked ${age}d`,
+    })
+    if (i.active && !i.prNums.length && age > 1) push({
+      kind: 'no-pr', severity: 2, subject: `${i.key} ${i.summary}`, subjectKey: i.key, project: i.project, owner: i.assignee,
+      ageWorkDays: age, deepLink: jiraLink(i), detail: `active ${age}d, no PR`,
+    })
+    if (i.qaCycles >= 3) push({
+      kind: 'qa-loops', severity: 2, subject: `${i.key} ${i.summary}`, subjectKey: i.key, project: i.project, owner: i.assignee,
+      ageWorkDays: age, deepLink: jiraLink(i), detail: `${i.qaCycles} QA cycles`,
+    })
+  }
+  for (const p of prs) {
+    if (p.state === 'Merged' || p.state === 'Closed') continue
+    const owner = p.author ? { name: p.author, login: p.author } : null
+    if (p.openDays > 2 && !p.reviewEvents.length) push({
+      kind: 'pr-no-review', severity: 1, subject: `#${p.num} ${p.title}`, subjectKey: `${p.repo}#${p.num}`, project: p.project, owner,
+      ageWorkDays: p.openDays, overBudgetBy: +(p.openDays - 2).toFixed(2), deepLink: p.url,
+      detail: p.requestedReviewers.length ? `open ${p.openDays}d, requested ${p.requestedReviewers.join(', ')} — zero reviews` : `open ${p.openDays}d, no reviewer requested`,
+      waitingOn: p.requestedReviewers,
+    })
+    if (p.approvedUnmergedDays != null && p.approvedUnmergedDays > 1) push({
+      kind: 'pr-approved-unmerged', severity: 2, subject: `#${p.num} ${p.title}`, subjectKey: `${p.repo}#${p.num}`, project: p.project, owner,
+      ageWorkDays: p.approvedUnmergedDays, overBudgetBy: +(p.approvedUnmergedDays - 1).toFixed(2), deepLink: p.url,
+      detail: `approved ${p.approvedUnmergedDays}d ago, still not merged`,
+    })
+    if (p.changesRequested >= 2) push({
+      kind: 'pr-rework', severity: 2, subject: `#${p.num} ${p.title}`, subjectKey: `${p.repo}#${p.num}`, project: p.project, owner,
+      ageWorkDays: p.openDays, deepLink: p.url, detail: `${p.changesRequested} rounds of changes requested`,
+    })
+    if (p.checks === 'FAILURE' || p.checks === 'ERROR') push({
+      kind: 'pr-red-checks', severity: 2, subject: `#${p.num} ${p.title}`, subjectKey: `${p.repo}#${p.num}`, project: p.project, owner,
+      ageWorkDays: p.openDays, deepLink: p.url, detail: 'checks failing',
+    })
+  }
+  // WIP > 2 per engineer — an operational fact about the queue, not a score about the person
+  const wip = {}
+  for (const i of issues) if (i.active && i.assignee) (wip[i.assignee.id] ||= { who: i.assignee, keys: [], project: i.project }).keys.push(i.key)
+  for (const w of Object.values(wip)) if (w.keys.length > 2) push({
+    kind: 'wip-overload', severity: 2, subject: `${w.who.name} has ${w.keys.length} tickets in flight`, subjectKey: w.who.id,
+    project: w.project, owner: w.who, ageWorkDays: null, deepLink: null, detail: w.keys.join(', '), keys: w.keys,
+  })
+  const dis = readTriage()
+  const now = Date.now()
+  const live = out.filter(r => { const d = dis[r.id]; return !(d && (!d.until || Date.parse(d.until) > now)) })
+  live.sort((a, b) => a.severity - b.severity || (b.ageWorkDays || 0) - (a.ageWorkDays || 0))
+  return live
+}
+
+// ---------- review flow, keyed on REVIEWER (§4) — never a slowest-reviewer leaderboard ----------
+function reviewFlow(prs) {
+  const now = Date.now()
+  const within = (at, d) => at && now - Date.parse(at) < d * DAY
+  const R = {}
+  const rec = login => (R[login] ||= { login, awaiting: 0, oldestWaitDays: null, given30: 0, given90: 0, received30: 0, received90: 0, lat30: [], lat90: [] })
+  for (const p of prs) {
+    const open = p.state !== 'Merged' && p.state !== 'Closed'
+    // PRs sitting on a reviewer right now = requested and not yet reviewed by them
+    if (open) for (const l of p.unanswered) {
+      const r = rec(l)
+      const askedAt = p.reviewRequests.filter(x => x.login === l).map(x => Date.parse(x.at)).sort((a, b) => a - b)[0] || Date.parse(p.createdAt)
+      const wait = +workDays(askedAt, now).toFixed(2)
+      r.awaiting++
+      if (r.oldestWaitDays == null || wait > r.oldestWaitDays) r.oldestWaitDays = wait
+    }
+    // reviews GIVEN + request→first-review latency, per reviewer
+    const seen = new Set()
+    for (const e of p.reviewEvents) {
+      if (seen.has(e.login)) continue
+      seen.add(e.login)
+      const r = rec(e.login)
+      if (within(e.at, 90)) r.given90++
+      if (within(e.at, 30)) r.given30++
+      const askedAt = p.reviewRequests.filter(x => x.login === e.login).map(x => Date.parse(x.at)).sort((a, b) => a - b)[0] || Date.parse(p.createdAt)
+      const lat = Date.parse(e.at) >= askedAt ? +workDays(askedAt, Date.parse(e.at)).toFixed(2) : null
+      if (lat != null && within(e.at, 90)) r.lat90.push(lat)
+      if (lat != null && within(e.at, 30)) r.lat30.push(lat)
+    }
+    // reviews RECEIVED, credited to the author
+    if (p.author && !BOT(p.author)) {
+      const a = rec(p.author)
+      if (within(p.createdAt, 90)) a.received90 += p.reviewEvents.length
+      if (within(p.createdAt, 30)) a.received30 += p.reviewEvents.length
+    }
+  }
+  const reviewers = Object.values(R).map(r => ({
+    login: r.login, awaiting: r.awaiting, oldestWaitDays: r.oldestWaitDays,
+    given30: r.given30, given90: r.given90, received30: r.received30, received90: r.received90,
+    p50_30: pctl(r.lat30, 0.5), p90_30: pctl(r.lat30, 0.9), p50_90: pctl(r.lat90, 0.5), p90_90: pctl(r.lat90, 0.9),
+    n30: r.lat30.length, n90: r.lat90.length,
+  })).sort((a, b) => b.awaiting - a.awaiting || b.given90 - a.given90)
+  // team-level CONCENTRATION — the two seniors reviewing everything are the two people who will quit
+  const totals = reviewers.map(r => r.given90).sort((a, b) => b - a)
+  const sum = totals.reduce((a, b) => a + b, 0)
+  const share = n => (sum ? +(totals.slice(0, n).reduce((a, b) => a + b, 0) / sum * 100).toFixed(1) : null)
+  const openPrs = prs.filter(p => p.state !== 'Merged' && p.state !== 'Closed')
+  return {
+    reviewers,
+    concentration: { total90: sum, reviewerCount: reviewers.filter(r => r.given90 > 0).length, top1Share: share(1), top2Share: share(2), flagged: (share(2) || 0) > 60 },
+    noReviewerRequested: openPrs.filter(p => !p.requestedReviewers.length && !p.reviewEvents.length).map(p => ({ num: p.num, repo: p.repo, title: p.title, openDays: p.openDays, author: p.author, url: p.url })),
+    unanswered: openPrs.filter(p => p.unanswered.length).map(p => ({ num: p.num, repo: p.repo, title: p.title, openDays: p.openDays, author: p.author, url: p.url, waitingOn: p.unanswered })),
+    firstReview: { p50: pctl(prs.map(p => p.firstReviewFromRequestDays), 0.5), p90: pctl(prs.map(p => p.firstReviewFromRequestDays), 0.9) },
+    mergeTime: { p50: pctl(prs.map(p => p.mergeDays), 0.5), p90: pctl(prs.map(p => p.mergeDays), 0.9) },
+  }
+}
+
+// ---------- quality (§5) — escape rate, area hotspots, ownership concentration. No blame panel. ----------
+const top2Seg = p => String(p).split('/').slice(0, 2).join('/')
+function quality(issues, prs) {
+  const byKey = {}; for (const i of issues) byKey[i.key] = i
+  const prByNum = {}; for (const p of prs) prByNum[`${p.project}#${p.num}`] = p
+  const bugs = issues.filter(i => i.isBug)
+  const escaped = [], caught = []
+  for (const b of bugs) {
+    const parent = b.linkedKey ? byKey[b.linkedKey] : null
+    const parentLive = parent?.liveAt ? Date.parse(parent.liveAt) : null
+    const isEscaped = !!parentLive && Date.parse(b.created) > parentLive
+    b.escaped = isEscaped // escaped = filed AFTER the thing it belongs to went Live/Closed
+    ;(isEscaped ? escaped : caught).push(b)
+  }
+  const shippedBy = {}
+  for (const i of issues) if (i.live && !i.isBug && i.liveAt) (shippedBy[monthKey(Date.parse(i.liveAt))] ||= []).push(i)
+  const months = [...new Set([...Object.keys(shippedBy), ...bugs.map(b => monthKey(Date.parse(b.created)))])].sort().slice(-12)
+  const escapeRate = months.map(m => {
+    const shipped = (shippedBy[m] || []).length
+    const esc = escaped.filter(b => monthKey(Date.parse(b.created)) === m).length
+    const qa = caught.filter(b => monthKey(Date.parse(b.created)) === m).length
+    return { month: m, shipped, escaped: esc, qaCaught: qa, rate: shipped ? +(esc / shipped * 100).toFixed(1) : null }
+  })
+  // hotspots: bug → linkedKey → that ticket's prNums → prs[].files[].path, rolled up by the top-2 path segments
+  const areaBugs = {}, areaShipped = {}
+  const pathsOf = i => {
+    const set = new Set()
+    for (const n of i?.prNums || []) for (const f of prByNum[`${i.project}#${n}`]?.files || []) set.add(top2Seg(f.path))
+    return [...set]
+  }
+  for (const i of issues) if (i.live && !i.isBug) for (const a of pathsOf(i)) areaShipped[a] = (areaShipped[a] || 0) + 1
+  for (const b of bugs) {
+    const parent = b.linkedKey ? byKey[b.linkedKey] : null
+    for (const a of [...new Set([...pathsOf(parent), ...pathsOf(b)])]) (areaBugs[a] ||= { area: a, bugs: 0, escaped: 0, keys: [] }).bugs++
+    for (const a of [...new Set([...pathsOf(parent), ...pathsOf(b)])]) { if (b.escaped) areaBugs[a].escaped++; areaBugs[a].keys.push(b.key) }
+  }
+  const hotspots = Object.values(areaBugs).map(a => ({
+    ...a, keys: a.keys.slice(0, 20), shipped: areaShipped[a.area] || 0,
+    bugsPerShipped: areaShipped[a.area] ? +(a.bugs / areaShipped[a.area]).toFixed(2) : null,
+  })).sort((a, b) => b.bugs - a.bugs).slice(0, 10)
+  // ownership concentration / bus factor — component × engineer, flagged at ≥70% from one person
+  const comp = {}
+  for (const i of issues) {
+    if (!i.area || !i.live || !i.assignee) continue
+    const c = (comp[i.area] ||= { area: i.area, total: 0, by: {} })
+    c.total++; c.by[i.assignee.name] = (c.by[i.assignee.name] || 0) + 1
+  }
+  const ownership = Object.values(comp).map(c => {
+    const rows = Object.entries(c.by).map(([who, n]) => ({ who, n, share: +(n / c.total * 100).toFixed(1) })).sort((a, b) => b.n - a.n)
+    return { area: c.area, total: c.total, contributors: rows.length, rows, top: rows[0] || null, busFactor: rows.length === 1 || (rows[0]?.share || 0) >= 70 }
+  }).sort((a, b) => b.total - a.total)
+  return {
+    escapeRate, hotspots, ownership,
+    totals: { bugs: bugs.length, escaped: escaped.length, qaCaught: caught.length, reopens: issues.filter(i => i.rework > 0).length },
+  }
+}
+
+// ---------- investment mix (§7) — delivered points AND activeDays, bucketed. Rules from projects.json. ----------
+const DEFAULT_BUCKETS = {
+  bug: { types: ['bug', 'defect'] },
+  ai: { labels: ['ai', 'ai-experiment', 'ai-experimentation', 'claude', 'cursor', 'genai', 'llm'] },
+  toil: { types: ['task', 'chore', 'support', 'maintenance', 'sub-task'], labels: ['tech-debt', 'techdebt', 'tech_debt', 'toil', 'ktlo', 'ops', 'refactor', 'chore'] },
+  feature: { types: ['story', 'epic', 'feature', 'improvement', 'new feature'] },
+}
+const effortBuckets = () => { const j = projectsFile(); return (!Array.isArray(j) && j?.effortBuckets) || DEFAULT_BUCKETS }
+function bucketOf(i, B) {
+  const type = norm(i.type), labels = (i.labels || []).map(norm)
+  const hits = b => (B[b]?.types || []).some(t => type.includes(norm(t))) || (B[b]?.labels || []).some(l => labels.includes(norm(l)))
+  if (i.isBug || hits('bug')) return i.escaped ? 'bug-escaped' : 'bug-qa'
+  if (hits('ai')) return 'ai'
+  if (hits('toil')) return 'toil'
+  if (hits('feature')) return 'feature'
+  return 'feature' // sane default when no rule matches
+}
+const BUCKETS = ['feature', 'bug-escaped', 'bug-qa', 'toil', 'ai']
+function investment(issues) {
+  const B = effortBuckets()
+  const byMonth = {}
+  for (const i of issues) {
+    if (!i.live || !i.liveAt) continue
+    const m = monthKey(Date.parse(i.liveAt))
+    const row = (byMonth[m] ||= { month: m, pts: 0, days: 0, reworkPts: 0, reworkDays: 0, buckets: Object.fromEntries(BUCKETS.map(b => [b, { pts: 0, days: 0, n: 0 }])) })
+    const b = bucketOf(i, B)
+    row.buckets[b].pts += i.pts; row.buckets[b].days += i.activeDays; row.buckets[b].n++
+    row.pts += i.pts; row.days += i.activeDays
+    if (i.rework > 0) { row.reworkPts += i.pts; row.reworkDays += i.activeDays } // work we paid for twice
+  }
+  const months = Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)).slice(-6)
+  for (const m of months) { m.pts = +m.pts.toFixed(1); m.days = +m.days.toFixed(1); m.reworkPts = +m.reworkPts.toFixed(1); m.reworkDays = +m.reworkDays.toFixed(1); for (const b of BUCKETS) { m.buckets[b].pts = +m.buckets[b].pts.toFixed(1); m.buckets[b].days = +m.buckets[b].days.toFixed(1) } }
+  const cur = months[months.length - 1], prev = months[months.length - 2]
+  const tax = m => (m && m.pts ? +((m.buckets['bug-escaped'].pts + m.buckets['bug-qa'].pts + m.buckets.toil.pts) / m.pts * 100).toFixed(1) : null)
+  return { buckets: BUCKETS, months, rules: B, bugTaxPct: tax(cur), bugTaxPrevPct: tax(prev) }
+}
+
+// ---------- sprint predictability (§8) — from the Sprint changelog items statusSegments now keeps ----------
+function sprintNamesAt(i, t) {
+  const evs = i.sprintEvents || []
+  const before = evs.filter(e => e.at <= t)
+  if (before.length) return nameList(before[before.length - 1].to)
+  if (evs.length) return nameList(evs[0].from)                 // never changed before t → the pre-first-event set
+  return (i.sprints || []).map(s => s.name)                    // no Sprint history at all → whatever it is in now
+}
+function sprintStats(issues) {
+  const reg = {}
+  for (const i of issues) for (const s of i.sprints || []) if (s.name) {
+    const e = (reg[s.name] ||= { ...s })
+    for (const k of ['startDate', 'endDate', 'completeDate', 'id', 'state']) if (!e[k] && s[k]) e[k] = s[k]
+  }
+  const sprints = Object.values(reg).filter(s => s.startDate).sort((a, b) => Date.parse(b.startDate) - Date.parse(a.startDate)).slice(0, 6)
+  return sprints.map(s => {
+    const start = Date.parse(s.startDate)
+    const end = Date.parse(s.completeDate || s.endDate || new Date().toISOString())
+    const committed = [], added = [], delivered = [], carried = []
+    for (const i of issues) {
+      const inNow = (i.sprints || []).some(x => x.name === s.name)
+      const everIn = inNow || (i.sprintEvents || []).some(e => nameList(e.to).includes(s.name) || nameList(e.from).includes(s.name))
+      if (!everIn) continue
+      const atStart = sprintNamesAt(i, start).includes(s.name)
+      const atEnd = sprintNamesAt(i, end).includes(s.name)
+      if (atStart) committed.push(i); else if (atEnd || inNow) added.push(i)
+      const done = i.liveAt && Date.parse(i.liveAt) <= end
+      if (done && (atStart || atEnd || inNow)) delivered.push(i)
+      else if (atEnd && !done) carried.push(i)
+    }
+    const pts = a => +a.reduce((x, i) => x + (i.pts || 0), 0).toFixed(1)
+    const cpts = pts(committed)
+    return {
+      id: s.id, name: s.name, state: s.state, startDate: s.startDate, endDate: s.endDate, completeDate: s.completeDate,
+      committed: committed.length, committedPts: cpts,
+      added: added.length, addedPts: pts(added),
+      delivered: delivered.length, deliveredPts: pts(delivered),
+      carriedOver: carried.length, carriedOverPts: pts(carried),
+      injectionPct: cpts ? +(pts(added) / cpts * 100).toFixed(1) : null,
+      sayDoPct: cpts ? +(pts(delivered) / cpts * 100).toFixed(1) : null,
+      keys: { committed: committed.map(i => i.key), added: added.map(i => i.key), delivered: delivered.map(i => i.key), carriedOver: carried.map(i => i.key) },
+    }
+  })
+}
+
+// ---------- epic rollup + forecast (§10) ----------
+const EPIC_FILE = path.join(HERE, 'eng-epic-targets.json')
+function readEpicTargets() { try { return JSON.parse(fs.readFileSync(EPIC_FILE, 'utf8')) } catch { return {} } }
+function writeEpicTargets(o) { fs.writeFileSync(EPIC_FILE, JSON.stringify(o, null, 2)) }
+function epicRollup(issues) {
+  const byKey = {}; for (const i of issues) byKey[i.key] = i
+  const targets = readEpicTargets()
+  // trailing-8-week velocity, in points per working day
+  const since = Date.now() - 56 * DAY
+  const vel = issues.filter(i => i.live && i.liveAt && Date.parse(i.liveAt) >= since).reduce((a, i) => a + (i.pts || 0), 0)
+  const perDay = vel / Math.max(1, workDays(since, Date.now()))
+  const groups = {}
+  for (const i of issues) if (i.parent?.key) (groups[i.parent.key] ||= { key: i.parent.key, summary: i.parent.summary, kids: [] }).kids.push(i)
+  const bugsByParent = {}
+  for (const i of issues) if (i.isBug && i.linkedKey) (bugsByParent[i.linkedKey] ||= []).push(i)
+  return Object.values(groups)
+    .filter(g => g.kids.some(k => !k.live)) // in flight only
+    .map(g => {
+      const done = g.kids.filter(k => k.live)
+      const ptsDone = +done.reduce((a, k) => a + (k.pts || 0), 0).toFixed(1)
+      const ptsRemaining = +g.kids.filter(k => !k.live).reduce((a, k) => a + (k.pts || 0), 0).toFixed(1)
+      const starts = g.kids.map(k => Date.parse(k.firstInProg || k.created)).filter(Boolean)
+      const startedAt = starts.length ? Math.min(...starts) : null
+      const escapedBugs = g.kids.flatMap(k => bugsByParent[k.key] || []).filter(b => b.escaped)
+      const forecast = perDay > 0 && ptsRemaining > 0 ? new Date(addWorkTime(Date.now(), (ptsRemaining / perDay) * WORKDAY_MS)).toISOString() : (ptsRemaining === 0 ? new Date().toISOString() : null)
+      const epic = byKey[g.key]
+      const due = targets[g.key]?.targetDate || epic?.duedate || null
+      const slipDays = due && forecast ? +workDays(Date.parse(due), Date.parse(forecast)).toFixed(1) : null
+      return {
+        key: g.key, summary: g.summary, project: epic?.project || g.kids[0]?.project || null,
+        url: epic ? jiraLink(epic) : null,
+        total: g.kids.length, done: done.length, pctComplete: g.kids.length ? +(done.length / g.kids.length * 100).toFixed(1) : 0,
+        ptsDone, ptsRemaining,
+        daysInFlight: startedAt ? +workDays(startedAt, Date.now()).toFixed(1) : null,
+        escapedBugs: escapedBugs.length, escapedBugKeys: escapedBugs.map(b => b.key),
+        velocityPtsPerDay: +perDay.toFixed(2), forecastDate: forecast, targetDate: due,
+        targetManual: !!targets[g.key]?.targetDate,
+        slipDays, risk: slipDays == null ? 'unknown' : slipDays > 5 ? 'red' : slipDays > 0 ? 'amber' : 'green',
+        keys: g.kids.map(k => k.key),
+      }
+    })
+    .sort((a, b) => (b.slipDays ?? -99) - (a.slipDays ?? -99))
+}
+
+// ---------- sustainable pace (§14) — TEAM AGGREGATE ONLY. min-N=5 enforced HERE, not in the UI. ----------
+const MIN_N = 5
+function loadStats(prs, issues, members) {
+  const weeks = {}
+  for (const p of prs) {
+    if (!p.createdAt || BOT(p.author)) continue
+    const t = Date.parse(p.createdAt)
+    const w = (weeks[weekKey(t)] ||= { week: weekKey(t), n: 0, off: 0, weekend: 0, authors: new Set() })
+    w.n++; if (offHours(t)) w.off++; if (isWeekend(t)) w.weekend++
+    if (p.author) w.authors.add(p.author)
+  }
+  const rows = Object.values(weeks).sort((a, b) => a.week.localeCompare(b.week)).slice(-12).map(w => {
+    const suppressed = w.authors.size < MIN_N // below the floor the cell renders "—", server-side. There is no drilldown.
+    return {
+      week: w.week, prs: suppressed ? null : w.n, contributors: w.authors.size, suppressed,
+      offHoursPct: suppressed ? null : +(w.off / w.n * 100).toFixed(1),
+      weekendPct: suppressed ? null : +(w.weekend / w.n * 100).toFixed(1),
+    }
+  })
+  const active = issues.filter(i => i.active).length
+  const heads = members.length
+  return {
+    minN: MIN_N, weeks: rows,
+    wipPerEngineer: heads >= MIN_N ? +(active / heads).toFixed(2) : null,
+    headcount: heads, note: 'Team aggregate only. No per-person rows exist in this payload, by construction.',
+  }
+}
+
 // ---------- snapshot (cached per project, TTL) ----------
 const snaps = new Map() // key -> {at, data}
 const SNAP_TTL = 2 * 3600_000 // cache the JIRA+GitHub aggregate for 2 hours
+// §3: the REAL error text, not console.error. A swallowed gh failure renders a confident zero-PR dashboard.
+function safe(fn, dflt, errs) {
+  try { return fn() } catch (e) {
+    console.error('[eng]', e.message)
+    if (errs) errs.push({ source: 'gh', message: String(e.message).slice(0, 400), at: new Date().toISOString() })
+    return dflt
+  }
+}
+// everything derived, computed once, over whatever issue/PR set it is handed (one project or all of them)
+const derive = (issues, prs, members, ci) => ({
+  triage: triage(issues, prs, ci),
+  review: reviewFlow(prs),
+  quality: quality(issues, prs),     // sets i.escaped as a side-effect — investment() reads it
+  investment: investment(issues),
+  sprints: sprintStats(issues),
+  epics: epicRollup(issues),
+  load: loadStats(prs, issues, members),
+  ci,
+})
 async function snapshot(cfg) {
   const hit = snaps.get(cfg.key)
   if (hit && Date.now() - hit.at < SNAP_TTL) return hit.data
-  const prs = ghAvailable() ? safe(() => fetchPRs(cfg), []) : []
+  const errors = []
+  const gh0 = ghAvailable()
+  if (!gh0) errors.push({ source: 'gh', message: 'gh CLI not authenticated (`gh auth status` failed) — PR, review and CI panels are empty, not zero', at: new Date().toISOString() })
+  const prs = gh0 ? safe(() => fetchPRs(cfg), [], errors) : []
   const prsByTicket = {}; for (const p of prs) (prsByTicket[p.ticket] ||= []).push(p)
   const { issues: raw, F } = await jiraIssues(cfg)
   const issues = raw.map(is => computeIssue(is, F, prsByTicket, cfg))
@@ -462,31 +981,50 @@ async function snapshot(cfg) {
   const allMembers = Object.values(memMap).sort((a, b) => b.count - a.count)
   const devMembers = allMembers.filter(m => dev.has((m.email || '').toLowerCase()))
   const members = devMembers.length ? devMembers : allMembers // ponytail: fall back if JIRA hides emails
+  const ci = [ciFor(cfg, errors)].filter(Boolean)
   const data = {
     available: true, team: projectPill(cfg), projects: projectList(),
-    generatedAt: new Date().toISOString(), ghAvailable: prs.length > 0 || ghAvailable(),
+    generatedAt: new Date().toISOString(), ghAvailable: prs.length > 0 || gh0,
     issues, prs, members, okrs: OKRS,
+    byProject: [{ key: cfg.key, name: cfg.name, issues, prs }],
+    errors, writes: cfg.writes,
+    provenance: { jql: cfg.jql, graphql: cfg.githubRepo ? prQuery(...cfg.githubRepo.split('/')) : GQL, ghCommand: cfg.githubRepo ? ghCommandFor(cfg.githubRepo) : null, workingTime: '10:00–18:00 Sun–Thu, Asia/Riyadh', ttlMs: SNAP_TTL },
+    ...derive(issues, prs, members, ci),
   }
   snaps.set(cfg.key, { at: Date.now(), data })
   return data
 }
 async function snapshotAll() {
   const projs = loadProjects()
-  const parts = await Promise.all(projs.map(p => snapshot(p).catch(e => ({ available: false, error: e.message }))))
+  const parts = await Promise.all(projs.map(p => snapshot(p).catch(e => ({ available: false, key: p.key, name: p.name, error: e.message }))))
   const avail = parts.filter(p => p.available)
-  if (!avail.length) { const e = new Error('no-jira-creds'); throw e }
+  if (!avail.length) { const e = new Error(parts.every(p => p.error === 'no-jira-creds') ? 'no-jira-creds' : (parts[0]?.error || 'no-jira-creds')); throw e }
   const issues = avail.flatMap(p => p.issues)
   const prs = avail.flatMap(p => p.prs)
   const mm = {}
   for (const p of avail) for (const m of p.members) { (mm[m.id] ||= { ...m, count: 0 }).count += m.count }
   const members = Object.values(mm).sort((a, b) => b.count - a.count)
+  const ci = avail.flatMap(p => p.ci || [])
+  const errors = [
+    ...avail.flatMap(p => p.errors || []),
+    ...parts.filter(p => !p.available).map(p => ({ source: 'project', project: p.key, message: `${p.name || p.key}: ${p.error}`, at: new Date().toISOString() })),
+  ]
   return {
     available: true, team: { key: 'all', name: 'All projects', jiraProjectKey: 'ALL', githubRepo: '' },
     projects: projectList(), generatedAt: new Date().toISOString(),
     ghAvailable: avail.some(p => p.ghAvailable), issues, prs, members, okrs: OKRS,
+    // §9: keep the project boundaries the old flatMap destroyed
+    byProject: avail.map(p => ({ key: p.team.key, name: p.team.name, issues: p.issues, prs: p.prs })),
+    errors, writes: avail.some(p => p.writes),
+    provenance: { jql: loadProjects().map(p => ({ project: p.key, jql: p.jql })), graphql: GQL, ghCommand: loadProjects().filter(p => p.githubRepo).map(p => ({ project: p.key, cmd: ghCommandFor(p.githubRepo) })), workingTime: '10:00–18:00 Sun–Thu, Asia/Riyadh', ttlMs: SNAP_TTL },
+    ...derive(issues, prs, members, ci),
   }
 }
-function safe(fn, dflt) { try { return fn() } catch (e) { console.error('[eng]', e.message); return dflt } }
+async function snapFor(key) {
+  if (key === 'all') return snapshotAll()
+  const projs = loadProjects()
+  return snapshot(projs.find(p => p.key === (key || '').toUpperCase()) || projs[0])
+}
 
 // ---------- OKRs (§4) — every measure is AUTO, computed by the UI from live aggregates ----------
 const OKRS = {
@@ -586,6 +1124,10 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
   return { md, model: out.model || 'claude' }
 }
 
+// Named exports for the other data-plane-A modules (server.mjs inbox, server-team.mjs, server-cursor-join.mjs).
+// Nothing here reads a transcript, a token count or a session — and nothing that does may import from it.
+export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
+
 // ---------- routes ----------
 export default function mountEng(app) {
   app.get('/api/eng/projects', (req, res) => res.json(projectList()))
@@ -627,13 +1169,8 @@ export default function mountEng(app) {
     res.json({ ok: true, ownership: o[key] || null })
   })
   app.get('/api/eng/snapshot', async (req, res) => {
-    const key = req.query.project
-    try {
-      if (key === 'all') return res.json(await snapshotAll())
-      const projs = loadProjects()
-      const cfg = projs.find(p => p.key === (key || '').toUpperCase()) || projs[0]
-      res.json(await snapshot(cfg))
-    } catch (e) {
+    try { res.json(await snapFor(req.query.project)) }
+    catch (e) {
       const projs = projectList()
       if (e.message === 'no-jira-creds') return res.json({ available: false, reason: 'no-jira-token', projects: projs, team: projs[0] })
       res.status(500).json({ available: false, error: e.message, projects: projs, team: projs[0] })
@@ -642,12 +1179,93 @@ export default function mountEng(app) {
   app.post('/api/eng/refresh', async (req, res) => {
     const key = req.query.project
     try {
-      if (key === 'all' || !key) snaps.clear()
-      else snaps.delete((key || '').toUpperCase())
-      if (key === 'all') return res.json(await snapshotAll())
-      const projs = loadProjects()
-      const cfg = projs.find(p => p.key === (key || '').toUpperCase()) || projs[0]
-      res.json(await snapshot(cfg))
+      if (key === 'all' || !key) { snaps.clear(); ciCache.clear() }
+      else { snaps.delete((key || '').toUpperCase()); ciCache.delete((key || '').toUpperCase()) }
+      res.json(await snapFor(key))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ---- §1 attention queue: the same records the snapshot carries, plus the dismissal store ----
+  app.get('/api/eng/triage', async (req, res) => {
+    try {
+      const s = await snapFor(req.query.project)
+      res.json({ generatedAt: s.generatedAt, items: s.triage, dismissed: readTriage(), errors: s.errors, writes: s.writes })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  // dismiss-for-today (or forever). `until` is an ISO string; omit for a 1-working-day snooze.
+  app.post('/api/eng/triage/dismiss', (req, res) => {
+    const { id, until, forever } = req.body || {}
+    if (!id) return res.status(400).json({ error: 'id required' })
+    const o = readTriage()
+    o[id] = { at: new Date().toISOString(), until: forever ? null : (until || new Date(addWorkTime(Date.now(), WORKDAY_MS)).toISOString()) }
+    writeTriage(o)
+    res.json({ ok: true, dismissed: o[id] })
+  })
+  app.delete('/api/eng/triage/dismiss/:id', (req, res) => {
+    const o = readTriage(); delete o[req.params.id]; writeTriage(o)
+    res.json({ ok: true })
+  })
+
+  // ---- §11 CI health (its own route so a red main can be polled without the whole snapshot) ----
+  app.get('/api/eng/ci', (req, res) => {
+    const key = (req.query.project || 'all').toUpperCase()
+    const errors = []
+    const projs = loadProjects().filter(p => key === 'ALL' || p.key === key)
+    const repos = projs.map(p => ciFor(p, errors)).filter(Boolean)
+    res.json({ ghAvailable: ghAvailable(), repos, errors, generatedAt: new Date().toISOString() })
+  })
+
+  // ---- §14 sustainable pace — TEAM AGGREGATE. min-N=5 applied above; no user/machine param exists. ----
+  app.get('/api/eng/load', async (req, res) => {
+    try { const s = await snapFor(req.query.project); res.json(s.load) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ---- §10 epic target-date overrides ----
+  app.get('/api/eng/epic-targets', (req, res) => res.json(readEpicTargets()))
+  app.post('/api/eng/epic-targets', (req, res) => {
+    const { key, targetDate } = req.body || {}
+    if (!key) return res.status(400).json({ error: 'key required' })
+    const o = readEpicTargets()
+    if (targetDate) o[key] = { targetDate, at: new Date().toISOString() }
+    else delete o[key]
+    writeEpicTargets(o); snaps.clear() // the forecast delta is computed in the snapshot
+    res.json({ ok: true, targets: o })
+  })
+
+  // ---- writes (§writes) — gated on projects.json "writes": true, operator's own credentials, one call each.
+  // The DEFAULT everywhere in the UI is copy-to-clipboard. These exist so an opt-in team can act in one click.
+  app.post('/api/eng/pr/:num/comment', (req, res) => {
+    const cfg = cfgFor(req.query.project || req.body?.project)
+    if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
+    const body = (req.body?.body || '').trim()
+    if (!body) return res.status(400).json({ error: 'body required' })
+    try { gh(['pr', 'comment', String(req.params.num), '--repo', cfg.githubRepo, '--body', body], 30000); res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/eng/pr/:num/request-review', (req, res) => {
+    const cfg = cfgFor(req.query.project || req.body?.project)
+    if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
+    const login = (req.body?.login || '').trim()
+    if (!login) return res.status(400).json({ error: 'login required' })
+    try { gh(['pr', 'edit', String(req.params.num), '--repo', cfg.githubRepo, '--add-reviewer', login], 30000); snaps.delete(cfg.key); res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/eng/ticket/:key/transition', async (req, res) => {
+    const cfg = cfgFor(req.query.project || req.body?.project)
+    if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
+    const to = (req.body?.to || '').trim()
+    if (!to) return res.status(400).json({ error: 'to (status name) required' })
+    try {
+      const a = await jiraAuth(cfg)
+      const key = req.params.key.toUpperCase()
+      const { transitions } = await jira(a, `/issue/${encodeURIComponent(key)}/transitions`)
+      const t = (transitions || []).find(t => norm(t.to?.name) === norm(to) || norm(t.name) === norm(to))
+      if (!t) return res.status(400).json({ error: `no transition to "${to}"`, available: (transitions || []).map(t => t.to?.name) })
+      const r = await fetch(`${a.base}/issue/${encodeURIComponent(key)}/transitions`, { method: 'POST', headers: { ...a.headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ transition: { id: t.id } }) })
+      if (!r.ok) throw new Error(`jira ${r.status}: ${(await r.text()).slice(0, 180)}`)
+      snaps.delete(cfg.key); ticketCache.delete(key)
+      res.json({ ok: true, to: t.to?.name })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

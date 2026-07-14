@@ -4,7 +4,8 @@ import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { makeStore } from './career-config.mjs'
 import { resolveIdentity, warnIfNoMatch } from './career-identity.mjs'
-import { buildSnapshot, updateRollup, periodWindow } from './career-snapshot.mjs'
+import { buildSnapshot, updateRollup, periodWindow, priorPeriod } from './career-snapshot.mjs'
+import mountTeam, { engSnapshot, teamBoard, reviewFlow } from './server-team.mjs'
 import { importGithub } from './career-import-github.mjs'
 import { importJira } from './career-import-jira.mjs'
 import { blameMapForBugs } from './career-blame.mjs'
@@ -45,7 +46,14 @@ function writeDrop(source, data) {
 // authored sections the config POST is allowed to touch (never derived/rollup)
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
   'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
-  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed', 'quests', 'kpiLinks'])
+  'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed', 'quests', 'kpiLinks',
+  'effortTaxonomy', 'oneOnOneAgenda', 'oneOnOnesByPerson'])
+
+// Same-process loopback to endpoints that already exist in server.mjs (/api/flow, /api/harness,
+// /api/gov/*, /api/memory/search) and server-eng.mjs (/api/eng/ticket/:key). They are all SELF-PLANE
+// or Plane-A reads of this machine; calling them is strictly cheaper than duplicating their walkers.
+const PORT = Number(process.env.DASH_PORT) || 5178
+const local = async (p) => { const r = await fetch(`http://127.0.0.1:${PORT}${p}`); if (!r.ok) throw new Error(`${p} → ${r.status}`); return r.json() }
 
 export const __test = { AUTHORED }
 
@@ -133,13 +141,34 @@ export default function mountCareer(app, deps = {}) {
     return out
   })
 
-  function bragCandidates() {
+  // item 16 — harvest brag lines from where the work actually lives: merged PRs, the review footprint
+  // and the ownership map. Everything stays a DRAFT: nothing is written without a click (POST /brag).
+  function bragCandidates(snap = cache) {
     const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
     const cands = []
     for (const t of board.tickets || []) if (t.stage === 'released')
       cands.push({ id: 'tkt:' + t.id, date: t.updatedAt || Date.now(), title: `Shipped ${t.id}: ${t.title || ''}`.trim(), impact: '', evidence: t.id, source: 'auto' })
-    const nar = cache?.insights?.narrative
+    const nar = snap?.insights?.narrative
     for (const w of (nar?.wins || [])) cands.push({ id: 'win:' + w.title, date: Date.now(), title: w.title, impact: w.desc, evidence: '/insights', source: 'auto' })
+    // merged PRs from the GitHub drop — the real shipped ledger
+    const drop = latestDrop('github')
+    for (const p of (drop?.prs || []).filter(p => p.mergedAt)) {
+      const files = Array.isArray(p.files) ? p.files.length : (p.files || 0)
+      cands.push({ id: 'pr:' + p.number, date: Date.parse(p.mergedAt), source: 'auto',
+        title: `Shipped "${p.title}"`,
+        impact: `+${p.additions || 0}/−${p.deletions || 0} across ${files} file${files === 1 ? '' : 's'}`,
+        evidence: p.url || `PR #${p.number}` })
+    }
+    // review footprint — mentorship/unblocking is work, and it is invisible in every ticket system
+    const forOthers = snap?.github?.reviewFootprint?.reviewedForOthers || {}
+    const revN = Object.values(forOthers).reduce((a, b) => a + (b || 0), 0)
+    if (revN > 0) cands.push({ id: 'rev:footprint', date: Date.now(), source: 'auto',
+      title: `Reviewed ${revN} PRs for ${Object.keys(forOthers).length} teammates`,
+      impact: 'Review load carried for the team', evidence: 'github review footprint' })
+    // keystone areas from the ownership map
+    for (const k of (snap?.domain?.keystones || []))
+      cands.push({ id: 'own:' + k, date: Date.now(), source: 'auto',
+        title: `Sole maintainer of \`${k}\``, impact: 'Ownership / bus-factor evidence', evidence: 'domain map (git log, 1y)' })
     return cands
   }
   const storyMd = (cfg) => {
@@ -163,6 +192,9 @@ export default function mountCareer(app, deps = {}) {
       const patch = updateRollup(config, snap, new Date().toISOString().slice(0, 10))
       store.write(patch)
       snap.rollup = { ...config.rollup, ...patch.rollup }
+      // item 13 — persist the session↔ticket↔PR join into the sink that already existed (career.json
+      // `ticketLinks`, already read by the retro route). Only the full-year build writes.
+      if (Object.keys(snap.ticketJoin?.links || {}).length) store.write({ ticketLinks: snap.ticketJoin.links })
       // auto-graduate active lessons whose STRUCTURED check cleared (idempotent: internalized never re-fires)
       const graduated = (config.lessons || []).map(l =>
         l.status === 'active' && evaluateLesson(l, snap).graduate ? { ...l, status: 'internalized', graduatedAt: Date.now() } : l)
@@ -171,14 +203,24 @@ export default function mountCareer(app, deps = {}) {
     } else {
       snap.rollup = { ...config.rollup }
     }
-    snap.bragCandidates = bragCandidates()
+    snap.bragCandidates = bragCandidates(snap)
     return snap
+  }
+  // item 4 — the prior period, trimmed to the comparable metrics. This is the denominator of every
+  // delta chip in the UI; a single-period number cannot tell anyone whether an intervention worked.
+  const COMPARABLE = ['quality', 'ai', 'impact', 'flow', 'workflow', 'allocation', 'meetings', 'period', 'me']
+  const priorOf = (period) => {
+    const p = priorPeriod(period)
+    const s = build(p)   // never isYear (a past period) → read-only, mutates nothing
+    return Object.fromEntries([['period', p], ...COMPARABLE.map(k => [k, s[k]])])
   }
 
   app.get('/api/career/snapshot', (req, res) => {
     try {
       const period = req.query?.period || ''
-      res.json(periodWindow(period).isYear ? (cache || build(period)) : build(period))
+      const snap = periodWindow(period).isYear ? (cache || build(period)) : build(period)
+      if (String(req.query?.compare || '') === '1') snap.prior = priorOf(period)
+      res.json(snap)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
   app.post('/api/career/refresh', (req, res) => {
@@ -384,16 +426,116 @@ export default function mountCareer(app, deps = {}) {
   app.get('/api/career/retro/:ticketId', (req, res) => {
     try {
       const board = readJson(path.join(CLAUDE, 'taskboard.json'), { tickets: [] })
-      const ticket = (board.tickets || []).find(t => t.id === req.params.ticketId)
-      if (!ticket) return res.status(404).json({ error: 'ticket not found' })
+      const ticket = (board.tickets || []).find(t => t.id === req.params.ticketId) || { id: req.params.ticketId, history: [] }
       const prs = latestDrop('github')?.prs || []
-      res.json(ticketRetro({ ticket, prs, bugs: (readBugs().bugs) || [], sessions: [], ticketLinks: store.read().ticketLinks || {} }))
+      const snap = cache || build()
+      res.json(ticketRetro({ ticket, prs, bugs: (readBugs().bugs) || [], sessions: [],
+        ticketLinks: snap.ticketJoin?.links || store.read().ticketLinks || {}, coverage: snap.ticketJoin?.coverage ?? null }))
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // ═══ item 13 — cost per ticket + honest AI ROI (SELF-ONLY: these sessions are this laptop's) ═══
+  app.get('/api/career/ticket-economics', (req, res) => {
+    try {
+      const snap = cache || build()
+      const j = snap.ticketJoin || { links: {}, coverage: 0, linkedSessions: 0, totalSessions: 0 }
+      const rows = Object.values(j.links).map(l => ({
+        ticket: l.ticket, sessions: l.sessions.length, tokens: l.tokens, usd: l.usd, prs: l.prs,
+        firstAt: l.sessions.map(s => s.at).filter(Boolean).sort()[0] || null,
+        resume: l.sessions[0] ? `claude --resume ${l.sessions[0].id}` : null,
+      })).sort((a, b) => b.usd - a.usd)
+      const usd = rows.reduce((a, r) => a + r.usd, 0)
+      res.json({ rows, coverage: j.coverage, linkedSessions: j.linkedSessions, totalSessions: j.totalSessions,
+        totals: { tickets: rows.length, usd: +usd.toFixed(2), usdPerTicket: rows.length ? +(usd / rows.length).toFixed(2) : null },
+        caveat: `Computable only for this laptop's sessions — ${Math.round((j.coverage || 0) * 100)}% of them carry a ticket key. Never a per-engineer AI score.` })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ═══ item 8 — harness ROI: what fires, what is dead weight. SELF-ONLY BY CONSTRUCTION —
+  // this page reads one machine's ~/.claude and structurally cannot be rolled up to a manager. ═══
+  app.get('/api/career/harness-roi', async (req, res) => {
+    try {
+      // /api/overview carries the token inventory (descTokens = the tax paid on EVERY prompt,
+      // fullTokens = paid on invoke); /api/flow carries the observed invocation counts from the
+      // transcripts. The join between them has existed in two endpoints and was never made.
+      const [ov, flow] = await Promise.all([local('/api/overview'), local('/api/flow')])
+      const fires = new Map()   // singular kind ("skill:foo") -> {count, last}
+      for (const n of flow.nodes || []) fires.set(n.id, { count: n.count || 0, last: n.last || null })
+      const DIR = { skill: 'skills', agent: 'agents', command: 'commands' }
+      const rows = (ov.items || []).map(i => {
+        const kind = String(i.kind || '').replace(/s$/, '')          // 'skills' -> 'skill'
+        const f = fires.get(`${kind}:${i.name}`) || { count: 0, last: null }
+        const always = i.descTokens || 0, onInvoke = i.fullTokens || 0
+        return { name: i.name, kind, scope: i.scope || 'user',
+          alwaysOnTokens: always, onInvokeTokens: onInvoke, fires: f.count, lastFired: f.last,
+          tokensPerFire: f.count ? Math.round(onInvoke / f.count) : null,
+          verdict: f.count === 0 && always > 0 ? 'DEAD' : f.count === 0 ? 'COLD' : 'HOT',
+          rm: DIR[kind] ? `rm -rf ~/.claude/${DIR[kind]}/${i.name}` : null }
+      })
+      const hot = [...rows].sort((a, b) => b.fires - a.fires).slice(0, 10).map(r => r.name)
+      for (const r of rows) if (r.verdict === 'HOT' && !hot.includes(r.name)) r.verdict = 'WARM'
+      const ghosts = (flow.nodes || []).filter(n => n.ghost).map(n => ({ name: n.name, kind: n.kind, fires: n.count || 0, verdict: 'GHOST' }))
+      const dead = rows.filter(r => r.verdict === 'DEAD')
+      const tax = dead.reduce((a, r) => a + r.alwaysOnTokens, 0)
+      rows.sort((a, b) => (a.verdict === 'DEAD' ? 0 : 1) - (b.verdict === 'DEAD' ? 0 : 1) || b.alwaysOnTokens - a.alwaysOnTokens)
+      res.json({ rows, ghosts, dead: dead.length,
+        headline: `You pay ${tax.toLocaleString()} tok on every session for ${dead.length} capabilities that have never fired.`,
+        alwaysOnTax: tax, rmList: dead.map(r => r.rm).filter(Boolean).join('\n'),
+        plane: 'self-only' })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ═══ item 9 — run economics + failure forensics (replaces "cost saved"). SELF-ONLY. ═══
+  app.get('/api/career/run-economics', async (req, res) => {
+    try {
+      const days = Number(req.query.days) || 30
+      const [costs, fails, usage] = await Promise.all([
+        local(`/api/gov/costs?days=${days}`), local(`/api/gov/failures?days=${days}`), local('/api/usage').catch(() => ({})),
+      ])
+      const spend = Object.values(costs.byDay || {}).reduce((a, d) => a + (d.usd || 0), 0)
+      const breakage = (fails.tools || []).map(t => ({ tool: t.name, uses: t.uses, errors: t.errors, rate: +(t.rate || 0).toFixed(3) }))
+        .sort((a, b) => b.rate - a.rate)
+      res.json({
+        days, spend: { total: +spend.toFixed(2), byDay: costs.byDay || {}, byProject: costs.byProj || {}, byModel: costs.byModel || {}, alerts: costs.costAlerts || costs.alerts || null },
+        block: usage.block || usage.currentBlock || null,   // the live 5h window, if /api/usage exposes it
+        breakage, compactions: fails.compactions || 0, retries: fails.retries || 0, byHour: fails.byHour || {},
+        worst: breakage[0] ? `${breakage[0].tool} fails ${Math.round(breakage[0].rate * 100)}% of the time (${breakage[0].errors}/${breakage[0].uses}) — that is a lying CLAUDE.md, not bad luck.` : null,
+        plane: 'self-only',
+      })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ═══ item 10 — omnibox: ticket/epic lookup (Plane A) OR precedent search (self-plane) ═══
+  app.get('/api/career/lookup', async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim()
+      if (!q) return res.json({ kind: 'empty', hits: [] })
+      const key = (q.match(/\b([A-Z]{2,10}-\d+)\b/i) || [])[1]
+      if (key) {
+        const t = await local(`/api/eng/ticket/${key.toUpperCase()}`)
+        const summary = `${key.toUpperCase()} — ${t.summary || ''} · ${t.status || '?'}${t.assignee?.name ? ` · ${t.assignee.name}` : ''}${t.daysIn != null ? ` · ${t.daysIn}d in status` : ''}${(t.prs || []).length ? ` · PR ${(t.prs || []).map(p => '#' + p.num).join(', ')}` : ''}`
+        return res.json({ kind: 'ticket', key: key.toUpperCase(), ticket: t, copy: summary })
+      }
+      const m = await local(`/api/memory/search?q=${encodeURIComponent(q)}&sources=memory,transcript`)
+      const hits = (m.results || m.hits || []).slice(0, 15).map(h => ({
+        source: h.source || 'transcript', project: h.project || null, date: h.date || h.at || null,
+        excerpt: (h.excerpt || h.text || '').slice(0, 240), sessionId: h.sessionId || h.id || null,
+        resume: (h.sessionId || h.id) ? `claude --resume ${h.sessionId || h.id}` : null,
+      }))
+      res.json({ kind: 'precedent', q, hits })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // oneOnOnes is a flat array historically ("me → my manager"). Item 11 re-keys it by accountId while
+  // keeping the old array readable: `self` is the legacy lane.
+  const oneOnOnesFor = (cfg, pid) => pid === 'self'
+    ? (Array.isArray(cfg.oneOnOnes) ? cfg.oneOnOnes : [])
+    : ((cfg.oneOnOnesByPerson || {})[pid] || [])
+
   function brief() {
     const cfg = store.read()
-    const last = cfg.oneOnOnes[cfg.oneOnOnes.length - 1]
+    const list = oneOnOnesFor(cfg, 'self')
+    const last = list[list.length - 1]
     const sinceTs = last ? last.date : 0
     const winsSinceLast = (cfg.brag || []).filter(b => (b.date || 0) >= sinceTs).map(b => b.title)
     const blockers = (cache?.focus || []).filter(f => f.severity === 'high').map(f => f.message)
@@ -406,16 +548,108 @@ export default function mountCareer(app, deps = {}) {
       growthTopic: topFocus ? topFocus.message : '',
     }
   }
+
+  // ═══ item 11 — per-person 1:1 packet. THE SYMMETRY RULE IS THE FEATURE: this packet is built
+  // ONLY from Plane-A work artifacts (JIRA tickets, PRs, reviews, escaped bugs) via server-team.mjs,
+  // so the engineer can render the identical packet about themselves from the same UI. No token, cost,
+  // hours, session or transcript field can reach it — server-team.mjs cannot emit one. ═══
+  async function packet(personId) {
+    const cfg = store.read()
+    const snap = await engSnapshot()
+    const board = teamBoard(snap)
+    const row = board.rows.find(r => r.id === personId)
+    if (!row) return null
+    const list = oneOnOnesFor(cfg, personId)
+    const last = list[list.length - 1]
+    const since = last?.date || Date.now() - 30 * 86400000
+    const shipped = (snap.issues || []).filter(i => i.assignee?.id === personId && i.live && !i.isBug && i.closedAt && Date.parse(i.closedAt) >= since)
+      .map(i => ({ key: i.key, summary: i.summary, closedAt: i.closedAt, activeDays: i.activeDays, url: `https://${i.host}/browse/${i.key}` }))
+    const bugs = (snap.issues || []).filter(i => i.isBug && i.ownerId === personId && Date.parse(i.created) >= since)
+      .map(i => ({ key: i.key, summary: i.summary, status: i.status, url: `https://${i.host}/browse/${i.key}` }))
+    // GitHub identity is a login, JIRA identity is an accountId — match on the email local-part, the only
+    // bridge that exists without a new mapping table. Missing match degrades to an empty review lane.
+    const localPart = (row.name || '').split(' ')[0].toLowerCase()
+    const rf = reviewFlow(snap, { me: localPart })
+    const reviewLoad = rf.load.find(l => l.login.toLowerCase().includes(localPart)) || null
+    const stuck = row.tickets.filter(t => t.atRisk || t.parked)
+    const talkingPoints = [
+      shipped.length ? `Wins since we last spoke: ${shipped.slice(0, 3).map(s => s.key).join(', ')}${shipped.length > 3 ? ` (+${shipped.length - 3} more)` : ''}.` : 'No tickets closed since our last 1:1 — worth asking what has been absorbing the time.',
+      stuck.length ? `${stuck.length} item(s) stuck: ${stuck.slice(0, 2).map(t => `${t.key} in "${t.status}" ${t.inCurrent}d`).join('; ')}. What is the block?` : 'Nothing is parked or at risk right now.',
+      reviewLoad ? `Carrying ${reviewLoad.reviews} reviews in 30d${reviewLoad.p90FirstReview != null ? ` (p90 first review ${reviewLoad.p90FirstReview}d)` : ''}.` : 'No review activity in the window — worth a nudge either way.',
+    ]
+    return {
+      person: { id: row.id, name: row.name },
+      plane: 'work-artifacts-only',
+      symmetry: 'This is the same packet the subject can render about themselves. It contains no token, cost, hours, session or transcript field — by construction.',
+      wip: row.wip, open: row.open, atRisk: row.atRisk, flags: row.flags,
+      shipped, stuck, bugs, reviewLoad,
+      lastOneOnOneAt: last?.date || null,
+      lastAgreed: (last?.agreedActions || []).map(a => ({ action: a, doneNow: shipped.some(s => String(a).includes(s.key)) })),
+      agendaItems: (cfg.oneOnOneAgenda || {})[personId] || [],
+      talkingPoints,
+      markdown: `# 1:1 — ${row.name}\n\n## Since last time\n${shipped.map(s => `- ${s.key} ${s.summary}`).join('\n') || '- (nothing closed)'}\n\n## Stuck\n${stuck.map(t => `- ${t.key} — "${t.status}" for ${t.inCurrent}d`).join('\n') || '- (nothing parked)'}\n\n## Talking points\n${talkingPoints.map(t => `- ${t}`).join('\n')}\n`,
+    }
+  }
+  app.get('/api/career/packet', async (req, res) => {
+    try {
+      const pid = String(req.query.person || '')
+      if (!pid) return res.status(400).json({ error: 'person (accountId) required — self is the default view in the UI' })
+      const p = await packet(pid)
+      if (!p) return res.status(404).json({ error: 'no open work for that person in the snapshot' })
+      res.json(p)
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  // "+ 1:1 agenda" — push a ticket/PR from the team board or review flow into a person's packet.
+  app.post('/api/career/packet/agenda', (req, res) => {
+    try {
+      const { person, item } = req.body || {}
+      if (!person || !item) return res.status(400).json({ error: 'person and item required' })
+      const cfg = store.read()
+      const agenda = cfg.oneOnOneAgenda || {}
+      agenda[person] = [...(agenda[person] || []), { at: Date.now(), ...(typeof item === 'string' ? { text: item } : item) }]
+      store.write({ oneOnOneAgenda: agenda }); cache = null
+      res.json({ ok: true, items: agenda[person].length })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  // CONSENT MODEL: the export a manager receives is exactly the export the engineer can pull about
+  // themselves. It leaves this laptop only on a click, and it never scrapes a colleague's career.json.
+  app.post('/api/career/packet/export', async (req, res) => {
+    try {
+      const pid = String(req.body?.person || '')
+      const p = pid ? await packet(pid) : null
+      if (!p) return res.status(400).json({ error: 'person required (and must have work in the snapshot)' })
+      const at = Date.now()
+      const file = writeDrop('packets', { at, exportedBy: 'self', packet: p })
+      res.json({ ok: true, at, path: file, packet: p })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  // The manager side reads only packets that were exported INTO the drop directory — a pull, never a scrape.
+  app.get('/api/career/packets', (req, res) => {
+    try {
+      const dir = path.join(IMPORTS, 'packets')
+      let files = []; try { files = fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort().reverse() } catch {}
+      res.json({ packets: files.slice(0, 20).map(f => { try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) } catch { return null } }).filter(Boolean) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  mountTeam(app)   // /api/team/* — the Plane-A cross-person surface. It imports only server-eng.mjs.
   // manual quick-add for "a decision I need from my manager" — inherently something you type
   app.post('/api/career/pending-decision', (req, res) => {
     try { const cfg = store.read(); store.write({ pendingDecisions: [...(cfg.pendingDecisions || []), String(req.body.text || '').slice(0, 300)] }); cache = null; res.json({ ok: true }) }
     catch (e) { res.status(500).json({ error: e.message }) }
   })
   app.get('/api/career/brief', (req, res) => res.json(brief()))
+  // Closing a 1:1 records what was agreed. With `person`, it is keyed by accountId (item 11); without,
+  // it stays on the legacy self lane. agreedActions become the next period's did-it-happen check.
   app.post('/api/career/one-on-one', (req, res) => {
     const cfg = store.read()
-    const rec = { id: 'o' + Date.now(), date: Date.now(), agreedActions: req.body.agreedActions || [], managerFeedback: req.body.managerFeedback || '', growthTopic: req.body.growthTopic || '', briefSnapshot: brief() }
-    store.write({ oneOnOnes: [...cfg.oneOnOnes, rec] }); cache = null
-    res.json({ ok: true })
+    const pid = String(req.body?.person || '')
+    const rec = { id: 'o' + Date.now(), date: Date.now(), agreedActions: req.body.agreedActions || [], managerFeedback: req.body.managerFeedback || '', growthTopic: req.body.growthTopic || '' }
+    if (!pid) { store.write({ oneOnOnes: [...(Array.isArray(cfg.oneOnOnes) ? cfg.oneOnOnes : []), { ...rec, briefSnapshot: brief() }] }); cache = null; return res.json({ ok: true }) }
+    const byPerson = Array.isArray(cfg.oneOnOnes) ? {} : { ...(cfg.oneOnOnes || {}) }
+    byPerson[pid] = [...(byPerson[pid] || []), rec]
+    // keep the legacy self array intact alongside the keyed map
+    store.write({ oneOnOnesByPerson: byPerson }); cache = null
+    res.json({ ok: true, person: pid })
   })
 }

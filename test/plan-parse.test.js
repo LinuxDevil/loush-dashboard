@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractPlan, planLayout, blocksToPlan, diagnoseSession } from '../src/plan.js'
+import { extractPlan, planLayout, blocksToPlan, diagnoseSession, turnMetrics, filesTouched } from '../src/plan.js'
 
 const wrap = json => ({ kind: 'text', text: 'Here is the plan:\n```json\n' + JSON.stringify(json) + '\n```\nDone.' })
 
@@ -114,10 +114,86 @@ test('blocksToPlan caps long sessions with a truncation step', () => {
   assert.match(steps[60].description, /session continues/)
 })
 
+test('blocksToPlan carries result/isError/toolResult, diagnosis uses the real error flag', () => {
+  const blocks = [
+    { kind: 'user', text: 'go' },
+    { kind: 'tool', name: 'Bash', input: { command: 'npm run build' }, result: 'Build succeeded', isError: false },
+    { kind: 'tool', name: 'Write', input: { file_path: '/a.ts', content: 'x' }, isError: true, result: 'ok looks fine', toolResult: { structuredPatch: [] } },
+  ]
+  const steps = blocksToPlan(blocks)
+  assert.equal(steps[0].result, 'Build succeeded')
+  assert.equal(steps[1].isError, true)
+  assert.deepEqual(steps[1].toolResult, { structuredPatch: [] })
+  // step 2 has NO error-ish text in result, so only the is_error flag can catch it
+  const errFinding = diagnoseSession(blocks).find(d => /hit errors/.test(d.title))
+  assert.ok(errFinding, 'error finding present via isError flag')
+  assert.deepEqual(errFinding.stepIds, [2])
+})
+
 test('planLayout survives a dependency cycle', () => {
   const { depth } = planLayout([
     { step_id: 1, dependencies: [2] },
     { step_id: 2, dependencies: [1] },
   ])
   assert.ok(depth.has(1) && depth.has(2)) // no infinite loop / throw
+})
+
+test('turnMetrics counts fresh tokens and spans seconds per turn', () => {
+  const m = turnMetrics([
+    { column: 0, ts: '2026-07-14T10:00:00Z', usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 20, cache_read_input_tokens: 100 } },
+    { column: 0, ts: '2026-07-14T10:00:12Z' },
+    { column: 1, ts: '2026-07-14T10:01:00Z', usage: { input_tokens: 3, output_tokens: 2 } },
+  ])
+  assert.equal(m.get(0).tokens, 35) // input + output + cache creation
+  assert.equal(m.get(0).ms, 12000)
+  assert.equal(m.get(1).tokens, 5)
+  assert.equal(m.get(1).ms, 0)
+})
+
+// cache_read is the same prefix replayed per message; summing it into the headline inflated a 36-action
+// turn to ~8.9M "tokens". It must stay out of `tokens` and be reported separately.
+test('turnMetrics keeps replayed cache reads out of the fresh-token headline', () => {
+  const m = turnMetrics(Array.from({ length: 36 }, () => (
+    { column: 0, usage: { output_tokens: 100, cache_read_input_tokens: 250_000 } }
+  )))
+  assert.equal(m.get(0).tokens, 3600)
+  assert.equal(m.get(0).cached, 9_000_000)
+})
+
+test('turnMetrics leaves ms null when steps carry no timestamp (live stream)', () => {
+  assert.equal(turnMetrics([{ column: 0, usage: { output_tokens: 7 } }]).get(0).ms, null)
+})
+
+test('filesTouched counts reads, writes and patch line deltas', () => {
+  const files = filesTouched([
+    { tool_to_call: 'Read', expected_params: { file_path: 'a.js' } },
+    { tool_to_call: 'Read', expected_params: { file_path: 'a.js' } },
+    {
+      tool_to_call: 'Edit', expected_params: { file_path: 'b.js' },
+      toolResult: { structuredPatch: [{ lines: ['-old', '+new', '+extra', ' ctx'] }] },
+    },
+  ])
+  assert.deepEqual(files[0], { path: 'b.js', reads: 0, writes: 1, added: 2, removed: 1 })
+  assert.deepEqual(files[1], { path: 'a.js', reads: 2, writes: 0, added: 0, removed: 0 })
+})
+
+// A long path tail-clipped at 60 chars renders as ".../src/Governa" — the basename, the only part worth
+// reading, gets eaten. Paths must clip from the head instead.
+test('blocksToPlan keeps the basename when a file path is too long to show', () => {
+  const long = '/Users/ali.mohammad/learnspace/loushai/dashboard/src/GovernanceSection.jsx'
+  const [step] = blocksToPlan([
+    { kind: 'user', text: 'go' },
+    { kind: 'tool', name: 'Edit', input: { file_path: long } },
+  ])
+  assert.match(step.description, /GovernanceSection\.jsx$/)
+  assert.ok(step.description.includes('…/'), 'head is elided')
+  assert.equal(step.expected_params.file_path, long, 'raw path is preserved for the detail panel')
+})
+
+test('blocksToPlan still clips commands from the tail (they read left-to-right)', () => {
+  const [step] = blocksToPlan([
+    { kind: 'user', text: 'go' },
+    { kind: 'tool', name: 'Bash', input: { command: 'npm run build -- ' + 'x'.repeat(100) } },
+  ])
+  assert.match(step.description, /npm run build/)
 })

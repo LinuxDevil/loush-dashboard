@@ -13,6 +13,20 @@ import mountCareer from './server-career.mjs'
 import mountMemory from './server-memory.mjs'
 import mountMindwalk from './server-mindwalk.mjs'
 
+// ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
+// PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
+//   team-visible — every engineer can open the underlying artifact — so per-person views are allowed there.
+// PLANE B (this file: transcripts, tokens, cost, session times) is SELF-ONLY, FOREVER.
+//   * server.mjs only ever reads the local ~/.claude of the person running the dashboard.
+//   * No endpoint here accepts a machine/user/engineer parameter for transcript data. Ever.
+//   * No aggregate over plane-B data is keyed by a person other than the viewer. No tokens-per-engineer,
+//     no cost-per-engineer, no active-hours, no leaderboard. This is a boundary, not a preference.
+//   * The ONLY permitted cross-plane join is /api/roi, at COHORT level: it drops the author/assignee field
+//     BEFORE aggregating and never emits a per-person token, cost or session-time field.
+//   * No auto-nudge / auto-ping: every "nudge" this server emits is a line of text for a human to send.
+// Inbox items therefore carry `plane: 'work' | 'harness'` so the boundary is visible in the payload itself.
+// =============================================================================================================
+
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 const CLAUDE_JSON = path.join(HOME, '.claude.json')
@@ -39,6 +53,8 @@ const HEAVY_TTL = {
   '/api/chatstats': 600_000, '/api/dupes': 600_000, '/api/flow': 600_000, '/api/search': 600_000,
   '/api/hub': 300_000, '/api/reviews': 600_000, '/api/hooks/health': 600_000, '/api/gov/failures': 600_000,
   '/api/gov/costs': 120_000, '/api/digest': 300_000, '/api/board/analytics': 120_000,
+  '/api/inbox': 60_000, '/api/capabilities': 300_000, '/api/forensics': 600_000, '/api/sessions': 120_000,
+  '/api/roi': 600_000, '/api/ci/health': 600_000, '/api/gov/team': 300_000,
 }
 const respCache = new Map() // url -> {at, body}
 app.use((req, res, next) => {
@@ -383,7 +399,7 @@ function groupOf(name, kind) {
   return ['gsd', 'loush', 'ticket', 'figma', 'notion', 'ctx'].includes(prefix) ? prefix : kind
 }
 
-app.get('/api/overview', (req, res) => {
+function overviewItems() {
   const meta = readMeta()
   const items = []
   const push = (kind, name, extra) => items.push({ kind, name, tags: meta.tags?.[`${kind}:${name}`] || [], ...extra })
@@ -424,8 +440,9 @@ app.get('/api/overview', (req, res) => {
     for (const [name, on] of Object.entries(settings.enabledPlugins || {}))
       if (on) push('plugins', name.split('@')[0], { scope: 'user', group: 'plugins', descTokens: 0, fullTokens: 0, score: null, level: null, specificity: null })
   } catch {}
-  res.json({ items })
-})
+  return items
+}
+app.get('/api/overview', (req, res) => res.json({ items: overviewItems() }))
 
 app.put('/api/tags', (req, res) => {
   const { key, tags: t } = req.body // key = "<kind>:<name>"
@@ -449,8 +466,9 @@ function collectUsage() {
     const st = fs.statSync(f)
     const proj = path.relative(base, f).split(path.sep)[0]
     let rec = usageCache.get(f)
-    if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      rec = { mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0 }
+    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      // v2: also keeps cwd + gitBranch + per-file $ / token / span totals (session ledger + /api/roi)
+      rec = { v: 2, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
       try {
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (line.includes('"usage"')) {
@@ -461,8 +479,16 @@ function collectUsage() {
               let tc = 0
               if (Array.isArray(j.message.content))
                 for (const c of j.message.content) if (c.type === 'tool_use') { tc++; rec.tools[c.name] = (rec.tools[c.name] || 0) + 1 }
-              rec.entries.push({ t: Date.parse(j.timestamp), model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0, tc })
-              rec.out += u.output_tokens || 0; rec.msgs++; rec.toolCalls += tc
+              const t = Date.parse(j.timestamp)
+              const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0, tc }
+              rec.entries.push(e)
+              rec.out += e.out; rec.in += e.in; rec.cc += e.cc; rec.cr += e.cr; rec.msgs++; rec.toolCalls += tc
+              rec.cost += entryCost(e)
+              rec.first ||= t; rec.last = Math.max(rec.last, t)
+              if (j.cwd) rec.cwd = j.cwd
+              const br = j.gitBranch || ''
+              const b = (rec.branches[br] ||= { cost: 0, out: 0, msgs: 0, first: 0, last: 0, cwd: j.cwd || '' })
+              b.cost += entryCost(e); b.out += e.out; b.msgs++; b.first ||= t; b.last = Math.max(b.last, t)
             } catch {}
           } else if (line.includes('"structuredPatch"')) {
             try {
@@ -481,7 +507,10 @@ function collectUsage() {
     all.entries.push(...rec.entries)
     all.lineEvents.push(...rec.lines)
     for (const [k, v] of Object.entries(rec.tools)) all.toolTotals[k] = (all.toolTotals[k] || 0) + v
-    all.files.push({ path: f, proj, isAgent: f.includes('subagents'), mtime: st.mtimeMs, out: rec.out, msgs: rec.msgs, toolCalls: rec.toolCalls })
+    all.files.push({
+      path: f, proj, isAgent: f.includes('subagents'), mtime: st.mtimeMs, out: rec.out, msgs: rec.msgs, toolCalls: rec.toolCalls,
+      in: rec.in, cc: rec.cc, cr: rec.cr, cost: rec.cost, first: rec.first, last: rec.last, cwd: rec.cwd, branches: rec.branches,
+    })
   }
   all.entries.sort((a, b) => a.t - b.t)
   return all
@@ -639,7 +668,7 @@ const readTranscript = (file, parentId) => {
         const j = JSON.parse(line)
         if ((j.type !== 'user' && j.type !== 'assistant') || j.isMeta || !j.message) continue
         if (typeof j.message.content === 'string' && j.message.content.startsWith('<')) continue
-        out.push({ type: j.type, message: j.message, parent_tool_use_id: parentId || j.parent_tool_use_id || null })
+        out.push({ type: j.type, message: j.message, parent_tool_use_id: parentId || j.parent_tool_use_id || null, toolUseResult: j.toolUseResult, timestamp: j.timestamp })
       } catch {}
     }
   } catch {}
@@ -1558,15 +1587,23 @@ function failStats() {
   for (const f of files) {
     const st = fs.statSync(f)
     let rec = failCache.get(f)
-    if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      rec = { mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0], toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, retries: 0, last: 0 }
+    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      // v2 (item 9 — session forensics): the walker already had the tool_use→name map, the is_error detector
+      // and the compaction counter; it threw the error TEXT and the result SIZE away. Same loop, now it keeps both.
+      rec = {
+        v: 2, mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0],
+        sessionId: path.basename(f, '.jsonl'), file: f,
+        toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, retries: 0, last: 0,
+        errs: [], bytes: {}, sizes: {}, big: [],
+      }
       const idName = {}
       let lastErrTool = null
+      const RESULT_TEXT = c => (typeof c.content === 'string' ? c.content : Array.isArray(c.content) ? c.content.map(x => x?.text || (typeof x === 'string' ? x : '')).join('\n') : c.content ? JSON.stringify(c.content) : '')
       try {
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (!line) continue
           const isErr = line.includes('"is_error":true')
-          if (!isErr && !line.includes('"tool_use"') && !line.includes('isCompactSummary') && !line.includes('"type":"summary"')) continue
+          if (!isErr && !line.includes('"tool_use"') && !line.includes('tool_result') && !line.includes('isCompactSummary') && !line.includes('"type":"summary"')) continue
           try {
             const j = JSON.parse(line)
             const t = Date.parse(j.timestamp) || 0
@@ -1584,21 +1621,40 @@ function failStats() {
               }
             }
             if (j.type === 'user' && Array.isArray(j.message?.content))
-              for (const c of j.message.content) if (c.type === 'tool_result' && c.is_error) {
+              for (const c of j.message.content) {
+                if (c.type !== 'tool_result') continue
                 const name = idName[c.tool_use_id] || '?'
+                const chars = RESULT_TEXT(c).length
+                // (b) context pressure: bytes into context, per tool + the biggest single results
+                rec.bytes[name] = (rec.bytes[name] || 0) + chars
+                const s = (rec.sizes[name] ||= [])
+                if (s.length < 300) s.push(chars) // sample cap — medians only, not a full census
+                if (chars >= 20000) {
+                  rec.big.push({ tool: name, chars, t })
+                  if (rec.big.length > 40) { rec.big.sort((a, b) => b.chars - a.chars); rec.big.length = 20 }
+                }
+                if (!c.is_error) continue
                 rec.toolErrs[name] = (rec.toolErrs[name] || 0) + 1
                 lastErrTool = name
                 if (t) { const d = new Date(t); const k = d.getDay() + ':' + d.getHours(); rec.byHour[k] = (rec.byHour[k] || 0) + 1 }
+                // (a) failure signatures: keep the first 240 chars of the error verbatim + when + how big
+                if (rec.errs.length < 400) rec.errs.push({ t, tool: name, text: RESULT_TEXT(c).replace(/\s+/g, ' ').trim().slice(0, 240), chars })
               }
           } catch {}
         }
       } catch {}
+      rec.big.sort((a, b) => b.chars - a.chars); rec.big.length = Math.min(rec.big.length, 20)
       failCache.set(f, rec)
     }
     out.push(rec)
   }
   return out
 }
+// normalized failure signature: strip the varying parts (paths, ids, numbers, quotes) so the same bug groups
+const errSig = (tool, text) => tool + ': ' + text
+  .replace(/\/[\w./~-]+/g, '<path>').replace(/\b[0-9a-f]{8,}\b/gi, '<id>').replace(/\b\d+\b/g, '<n>')
+  .replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '<str>').replace(/\s+/g, ' ').trim().slice(0, 120)
+const median = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2 }
 app.get('/api/gov/failures', (req, res) => {
   const days = Number(req.query.days) || 30
   const proj = req.query.project ? mangle(req.query.project) : null
@@ -1813,14 +1869,7 @@ function driftFor(project) {
   if (!bFile) return { baseline: null, drifts: [] }
   const b = readJson(path.join(LIBRARY_DIR, path.basename(bFile)), null)
   if (!b) return { baseline: bFile, error: 'baseline bundle missing', drifts: [] }
-  const cur = exportBundle(project, 'current', '')
-  const drifts = []
-  const cmp = (field, a, c) => { const A = JSON.stringify(a ?? null), C = JSON.stringify(c ?? null); if (A !== C) drifts.push({ field, baseline: A.slice(0, 400), current: C.slice(0, 400), syncable: true }) }
-  cmp('settings.harness', b.settings?.harness, cur.settings?.harness)
-  cmp('settings.permissions', b.settings?.permissions, cur.settings?.permissions)
-  for (const k of new Set([...Object.keys(b.rules || {}), ...Object.keys(cur.rules || {})])) cmp('rules/' + k, b.rules?.[k], cur.rules?.[k])
-  for (const k of new Set([...Object.keys(b.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, b.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
-  return { baseline: bFile, provenance: b.provenance, drifts }
+  return { baseline: bFile, provenance: b.provenance, drifts: driftVs(b, project) } // driftVs is shared with the team baseline (item 14)
 }
 app.get('/api/gov/drift', (req, res) => res.json(driftFor(req.query.project)))
 function syncDriftField(project, field) {
@@ -1969,15 +2018,23 @@ function scanTranscripts() {
   const files = []
   const walkS = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walkS(p); else if (e.name.endsWith('.jsonl')) files.push(p) } } catch {} }
   walkS(base)
-  const all = { prompts: [], invocations: [], sessions: [], hooks: {}, hookBlocks: 0, reviews: [] }
+  const all = { prompts: [], invocations: [], sessions: [], hooks: {}, hookBlocks: 0, reviews: [], hookEvents: [], edits: [], cmds: [], texts: [] }
   const HOOK_RE = /(PreToolUse|PostToolUse|UserPromptSubmit|SessionStart|SessionEnd|Stop|SubagentStop|PreCompact|Notification)(?::[\w./ -]+)? hook/
+  const PATH_KEYS = ['file_path', 'path', 'notebook_path', 'filePath']
   for (const f of files) {
     let st; try { st = fs.statSync(f) } catch { continue }
     const proj = path.relative(base, f).split(path.sep)[0]
     const sessionId = path.basename(f, '.jsonl')
     let rec = scanCache.get(f)
-    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      rec = { v: 2, mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], reviews: [], hooks: {}, hookBlocks: 0, userMsgs: 0, toolCalls: 0, first: 0, last: 0 }
+    if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      // v3 (items 9c + 16): same single walk now also keeps structured hook attachments, assistant text,
+      // tool_use inputs (paths touched, bash commands) and Edit structuredPatch hunks — the search index.
+      rec = {
+        v: 3, mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], reviews: [], hooks: {}, hookBlocks: 0,
+        userMsgs: 0, toolCalls: 0, first: 0, last: 0, cwd: '', branch: '',
+        hookEvents: [], edits: [], cmds: [], texts: [], files: [],
+      }
+      const touched = new Set()
       // ponytail: "src" attribution = last Skill invoked since the user's prompt — a heuristic, not a real call graph
       let lastSkill = null
       try {
@@ -1991,14 +2048,50 @@ function scanTranscripts() {
           let j; try { j = JSON.parse(line) } catch { continue }
           const t = j.timestamp ? Date.parse(j.timestamp) : 0
           if (t) { rec.first ||= t; rec.last = Math.max(rec.last, t) }
+          if (j.cwd) rec.cwd = j.cwd
+          if (j.gitBranch) rec.branch = j.gitBranch
+          // hook blast radius: hooks are logged as attachments carrying name/event/exitCode/durationMs/stdout
+          const at = j.attachment
+          if (at && typeof at.type === 'string' && at.type.startsWith('hook_') && at.hookName) {
+            const std = String(at.stdout || '') + String(at.content || '')
+            const blocked = at.exitCode === 2 || at.type === 'hook_blocked' || /"permissionDecision"\s*:\s*"(deny|ask)"|"decision"\s*:\s*"block"/.test(std)
+            const reason = blocked ? (/"(?:permissionDecisionReason|reason)"\s*:\s*"((?:[^"\\]|\\.){0,200})"/.exec(std)?.[1] || String(at.stderr || '').trim() || '').slice(0, 200) : ''
+            const hookEv = {
+              t, hook: at.hookName, event: at.hookEvent || at.hookName.split(':')[0],
+              tool: at.hookName.includes(':') ? at.hookName.split(':').slice(1).join(':') : null,
+              ms: typeof at.durationMs === 'number' ? at.durationMs : null,
+              exit: typeof at.exitCode === 'number' ? at.exitCode : null,
+              blocked, reason, cancelled: at.type === 'hook_cancelled',
+            }
+            if (rec.hookEvents.length < 800) rec.hookEvents.push(hookEv)
+            if (blocked) rec.hookBlocks++
+          }
+          // Edit/Write structuredPatch hunks — searchable diff text, and the "files edited" index
+          const tur = j.toolUseResult
+          if (tur && typeof tur === 'object' && Array.isArray(tur.structuredPatch) && tur.filePath) {
+            touched.add(tur.filePath)
+            let add = 0, del = 0
+            const hunk = []
+            for (const h of tur.structuredPatch) for (const l of h.lines || []) {
+              if (l[0] === '+') add++; else if (l[0] === '-') del++
+              if (hunk.length < 24) hunk.push(l)
+            }
+            if (rec.edits.length < 400) rec.edits.push({ t, file: tur.filePath, add, del, hunk: hunk.join('\n').slice(0, 600) })
+          }
           if (j.type === 'user' && !j.isMeta && j.message) {
             const c = j.message.content
             const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(x => x.type === 'text').map(x => x.text).join(' ') : ''
             if (text.trim() && !text.startsWith('<') && !text.startsWith('[Request interrupted')) { rec.prompts.push({ t, text: text.slice(0, 500) }); rec.userMsgs++; lastSkill = null }
           } else if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
             for (const c of j.message.content) {
+              if (c.type === 'text' && c.text?.trim() && rec.texts.length < 400) { rec.texts.push({ t, text: c.text.replace(/\s+/g, ' ').trim().slice(0, 400) }); continue }
               if (c.type !== 'tool_use') continue
               rec.toolCalls++
+              if (c.input && typeof c.input === 'object') {
+                for (const k of PATH_KEYS) if (typeof c.input[k] === 'string' && c.input[k].startsWith('/')) touched.add(c.input[k])
+                if (c.name === 'Bash' && typeof c.input.command === 'string' && rec.cmds.length < 400)
+                  rec.cmds.push({ t, cmd: c.input.command.replace(/\s+/g, ' ').trim().slice(0, 240) })
+              }
               if (c.name === 'Skill' && c.input?.skill) { rec.invocations.push({ t, kind: 'skill', name: String(c.input.skill), src: lastSkill }); lastSkill = 'skill:' + c.input.skill }
               else if ((c.name === 'Task' || c.name === 'Agent') && c.input?.subagent_type) rec.invocations.push({ t, kind: 'agent', name: String(c.input.subagent_type), src: lastSkill })
               else if (c.name.startsWith('mcp__')) rec.invocations.push({ t, kind: 'mcp', name: c.name.slice(5).split('__')[0], src: lastSkill })
@@ -2011,6 +2104,7 @@ function scanTranscripts() {
           }
         }
       } catch {}
+      rec.files = [...touched].slice(0, 500)
       scanCache.set(f, rec)
     }
     for (const p of rec.prompts) all.prompts.push({ ...p, proj, sessionId })
@@ -2018,7 +2112,11 @@ function scanTranscripts() {
     for (const r of rec.reviews) all.reviews.push({ ...r, proj, sessionId, isAgent: f.includes('subagents') })
     for (const [ev, n] of Object.entries(rec.hooks)) all.hooks[ev] = (all.hooks[ev] || 0) + n
     all.hookBlocks += rec.hookBlocks
-    all.sessions.push({ proj, sessionId, userMsgs: rec.userMsgs, toolCalls: rec.toolCalls, first: rec.first, last: rec.last, isAgent: f.includes('subagents') })
+    for (const h of rec.hookEvents) all.hookEvents.push({ ...h, proj, sessionId })
+    for (const e of rec.edits) all.edits.push({ ...e, proj, sessionId })
+    for (const c of rec.cmds) all.cmds.push({ ...c, proj, sessionId })
+    for (const x of rec.texts) all.texts.push({ ...x, proj, sessionId })
+    all.sessions.push({ proj, sessionId, userMsgs: rec.userMsgs, toolCalls: rec.toolCalls, first: rec.first, last: rec.last, isAgent: f.includes('subagents'), cwd: rec.cwd, branch: rec.branch, files: rec.files })
   }
   all.prompts.sort((a, b) => a.t - b.t)
   return all
@@ -2185,22 +2283,132 @@ app.get('/api/chatstats', (req, res) => {
   })
 })
 
-// ---------- 16: global search (palette) ----------
+// ---------- 16: search my past self (palette) ----------
+// Indexes prompts + assistant text + tool_use inputs (bash commands, files touched) + Edit hunks.
+// `?file=<substr>` is the killer filter: only sessions that EDITED (or touched) that path.
+// Plane B: self-only. There is deliberately no machine/user parameter and there never will be.
 app.get('/api/search', (req, res) => {
   const q = String(req.query.q || '').toLowerCase()
-  if (q.length < 3) return res.json([])
-  const { prompts } = scanTranscripts()
-  const out = []
-  for (let i = prompts.length - 1; i >= 0 && out.length < 15; i--) {
-    const p = prompts[i]
-    const idx = p.text.toLowerCase().indexOf(q)
-    if (idx >= 0) out.push({ proj: p.proj, sessionId: p.sessionId, t: p.t, snippet: p.text.slice(Math.max(0, idx - 40), idx + 120) })
+  const file = String(req.query.file || '').toLowerCase()
+  const kinds = new Set(String(req.query.kind || 'all').split(',').map(s => s.trim()))
+  const wants = k => kinds.has('all') || kinds.has(k)
+  const limit = Math.min(100, Number(req.query.limit) || 25)
+  if (q.length < 3 && !file) return res.json([])
+  const { prompts, texts, cmds, edits, sessions } = scanTranscripts()
+  const meta = {}   // sessionId -> {cwd, branch, files}
+  for (const s of sessions) meta[s.sessionId] = s
+  // "only sessions that edited <path>" — the query the IC most wants and cannot express today
+  const okSession = sid => !file || (meta[sid]?.files || []).some(p => p.toLowerCase().includes(file))
+  const hits = []
+  const snip = (text, at) => text.slice(Math.max(0, at - 60), at + 160)
+  const scan = (list, kind, field, extra = () => ({})) => {
+    if (!wants(kind)) return
+    for (let i = list.length - 1; i >= 0; i--) {
+      const r = list[i]
+      const hay = String(r[field] || '')
+      const idx = q ? hay.toLowerCase().indexOf(q) : 0
+      if (q && idx < 0) continue
+      if (!okSession(r.sessionId)) continue
+      if (file && kind === 'edit' && !String(r.file || '').toLowerCase().includes(file)) continue // an edit row must be an edit TO that file
+      const s = meta[r.sessionId]
+      hits.push({
+        kind, proj: r.proj, sessionId: r.sessionId, t: r.t, snippet: snip(hay, idx),
+        cwd: s?.cwd || null, branch: s?.branch || null,
+        files: (s?.files || []).filter(p => !file || p.toLowerCase().includes(file)).slice(0, 5),
+        resume: s?.cwd ? `cd ${s.cwd} && claude --resume ${r.sessionId}` : `claude --resume ${r.sessionId}`,
+        ...extra(r),
+      })
+    }
   }
-  res.json(out)
+  scan(prompts, 'prompt', 'text')
+  scan(texts, 'assistant', 'text')
+  scan(cmds, 'bash', 'cmd')
+  scan(edits, 'edit', 'hunk', e => ({ file: e.file, add: e.add, del: e.del }))
+  // file-only query (no q): one row per session that touched the path
+  if (!q && file)
+    for (const s of sessions) {
+      const f = (s.files || []).filter(p => p.toLowerCase().includes(file))
+      if (!f.length) continue
+      hits.push({ kind: 'session', proj: s.proj, sessionId: s.sessionId, t: s.last, snippet: `${f.length} file(s) touched · ${s.userMsgs} prompts`, cwd: s.cwd || null, branch: s.branch || null, files: f.slice(0, 5), resume: s.cwd ? `cd ${s.cwd} && claude --resume ${s.sessionId}` : `claude --resume ${s.sessionId}` })
+    }
+  res.json(hits.sort((a, b) => b.t - a.t).slice(0, limit))
 })
 
+// ---------- plane-A bridge: the eng snapshot (server-eng.mjs OWNS it — we only read it) ----------
+// Zero new API calls, zero new auth: server-eng.mjs already caches the JIRA+GitHub aggregate for 2h.
+let engMod = null
+const engSnap = { at: 0, data: null, p: null }
+const ENG_TTL = 10 * 60_000
+async function loadEngSnapshot() {
+  engMod ||= await import('./server-eng.mjs')
+  if (typeof engMod.snapshotAll === 'function') return await engMod.snapshotAll() // in-process, once server-eng exports it
+  const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/snapshot?project=all`)   // fallback: its own route, same cache
+  return await r.json()
+}
+// wait=false: never block the caller on a cold snapshot (the inbox polls every 60s — it can wait a poll)
+async function engSnapshot(wait = true) {
+  if (!engSnap.p && Date.now() - engSnap.at > ENG_TTL)
+    engSnap.p = loadEngSnapshot()
+      .then(d => { if (d?.available) engSnap.data = d; engSnap.at = Date.now(); engSnap.p = null; return engSnap.data })
+      .catch(() => { engSnap.at = Date.now(); engSnap.p = null; return engSnap.data })
+  if (engSnap.data || !wait) return engSnap.data // serve the warm snapshot; the refresh finishes in the background
+  try { return await engSnap.p } catch { return null }
+}
+
+// ---------- 1: delivery risk in the inbox (plane A → work items) ----------
+// Working days: openDays/inCurrent are ALREADY working days (10:00–18:00 Sun–Thu), so 24 working hours = 3d, 48 = 6d.
+const SLA_REVIEW = 3, SLA_REVIEW_HARD = 6
+const jiraUrl = i => `https://${i.host}/browse/${i.key}`
+const prUrl = p => `https://github.com/${p.repo}/pull/${p.num}`
+const d1 = n => (Math.round(n * 10) / 10).toFixed(1)
+function workItems(snap) {
+  const items = []
+  if (!snap?.available) return items
+  const W = (key, kind, severity, text, ts, extra) => items.push({ key, kind, severity, text, ts: ts || Date.now(), section: 'delivery', plane: 'work', ...extra })
+  for (const p of snap.prs || []) {
+    if (p.state === 'Merged' || p.state === 'Closed') continue
+    const created = Date.parse(p.createdAt) || Date.now()
+    const reviews = (p.reviewEvents || []).length // reviewEvents are already non-bot only (server-eng BOT filter)
+    if (!reviews && p.openDays >= SLA_REVIEW)
+      W(`pr:noreview:${p.repo}#${p.num}`, 'review', p.openDays >= SLA_REVIEW_HARD ? 'error' : 'warning',
+        `PR #${p.num} (${p.ticket}) has had zero reviews for ${d1(p.openDays)} working days — ${p.author} is blocked`, created,
+        { link: prUrl(p), owner: p.author, ageWorkDays: p.openDays,
+          nudge: `${p.repo} PR #${p.num} "${p.title}" (${p.ticket}) has been waiting ${d1(p.openDays)} working days with no review — ${p.author} is blocked on it. Can someone pick it up today? ${prUrl(p)}` })
+    const changesReq = Math.max(0, (p.cycles || 1) - 1)
+    if (changesReq >= 2)
+      W(`pr:cr:${p.repo}#${p.num}`, 'review', 'warning',
+        `PR #${p.num} (${p.ticket}) is on review round ${changesReq + 1} — ${changesReq} changes-requested`, created,
+        { link: prUrl(p), owner: p.author, cycles: p.cycles,
+          nudge: `${p.repo} PR #${p.num} (${p.ticket}) has had ${changesReq} rounds of changes requested. Worth 10 minutes on a call instead of another round? ${prUrl(p)}` })
+  }
+  for (const i of snap.issues || []) {
+    if (i.live) continue
+    const ts = Date.parse(i.curSince) || Date.now()
+    const who = i.assignee?.name || 'unassigned'
+    if (i.rec?.atRisk)
+      W(`tkt:budget:${i.key}`, 'ticket', i.rec.remaining <= -2 ? 'error' : 'warning',
+        `${i.key} is ${d1(-i.rec.remaining)} working days past its ${i.status} budget (${i.rec.budget}d) — next: ${i.rec.next}`, ts,
+        { link: jiraUrl(i), owner: who, ageWorkDays: i.inCurrent, overBudgetBy: +(-i.rec.remaining).toFixed(2),
+          nudge: `${i.key} "${i.summary}" has sat in ${i.status} for ${d1(i.inCurrent)} working days — ${d1(-i.rec.remaining)}d past the ${i.rec.budget}d budget. ${who}, what is blocking the move to ${i.rec.next}? ${jiraUrl(i)}` })
+    if (i.qaCycles >= 3)
+      W(`tkt:qa:${i.key}`, 'quality', 'warning', `${i.key} has been through QA ${i.qaCycles} times`, ts,
+        { link: jiraUrl(i), owner: who, qaCycles: i.qaCycles,
+          nudge: `${i.key} "${i.summary}" has bounced through QA ${i.qaCycles} times. Worth a dev+QA pairing pass before the next handoff? ${jiraUrl(i)}` })
+    if (i.rework)
+      W(`tkt:rework:${i.key}`, 'quality', 'warning', `${i.key} re-entered development after review/QA (rework)`, ts,
+        { link: jiraUrl(i), owner: who,
+          nudge: `${i.key} "${i.summary}" went backwards into development after review/QA. Worth capturing why in the retro? ${jiraUrl(i)}` })
+    if (i.stale)
+      W(`tkt:stale:${i.key}`, 'ticket', 'warning', `${i.key} is still "${i.status}" — ${i.staleNote}`, ts,
+        { link: jiraUrl(i), owner: who,
+          nudge: `${i.key} "${i.summary}" still shows ${i.status} but its PR is merged. ${who}, can you move it? ${jiraUrl(i)}` })
+  }
+  return items
+}
+
 // ---------- 17: attention inbox ----------
-function inboxItems() {
+// Every item declares its plane: 'work' (JIRA/GitHub/CI artifacts) or 'harness' (this machine's ~/.claude).
+async function inboxItems() {
   const items = []
   for (const a of readApprovals()) if (a.status === 'proposed') items.push({ key: 'appr:' + a.id, kind: 'approval', severity: 'warning', text: `pending approval: ${a.summary}`, ts: a.ts, section: 'governance' })
   const { alerts } = costAlerts()
@@ -2239,22 +2447,53 @@ function inboxItems() {
       else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
     }
   } catch {}
+  for (const i of items) i.plane ||= 'harness' // everything above is this machine's own harness telemetry
+  // plane A: delivery risk (JIRA + GitHub + CI), from the snapshot server-eng.mjs already caches.
+  // Non-blocking: a cold snapshot (~80s) must not stall the badge — the work items land on the next 60s poll.
+  const snap = await engSnapshot(false).catch(() => null)
+  items.push(...workItems(snap))
+  try {
+    for (const r of (await ciHealth(14, false, false)).repos) {
+      if (!r.mainRed) continue
+      items.push({
+        key: `ci:red:${r.repo}`, kind: 'ci', severity: 'error', plane: 'work', section: 'delivery',
+        text: `main is RED on ${r.repo} — ${r.lastRun?.workflowName || 'CI'} failed`, ts: r.lastRun?.at || Date.now(),
+        link: r.lastRun?.url || `https://github.com/${r.repo}/actions`, owner: r.lastRun?.actor || null,
+        nudge: `main is red on ${r.repo} (${r.lastRun?.workflowName || 'CI'}, ${r.lastRun?.headSha?.slice(0, 7) || '?'}). Everyone branching off main is blocked. ${r.lastRun?.url || ''}`,
+      })
+    }
+  } catch {}
+  // inboxDone: {until:ts} = snoozed, {until:null} = cleared. Legacy boolean/number values still mean "cleared".
   const done = readMeta().inboxDone || {}
+  const doneOf = v => {
+    if (!v) return { done: false, snoozedUntil: null }
+    if (typeof v !== 'object') return { done: true, snoozedUntil: null }        // legacy: true / Date.now()
+    if (v.until == null) return { done: true, snoozedUntil: null }
+    return v.until > Date.now() ? { done: true, snoozedUntil: v.until } : { done: false, snoozedUntil: null } // snooze expired → back
+  }
   const sev = { error: 0, warning: 1, info: 2 }
-  return items.map(i => ({ ...i, done: !!done[i.key] })).sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
+  return items.map(i => ({ ...i, ...doneOf(done[i.key]) })).sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
 }
-app.get('/api/inbox', (req, res) => res.json(inboxItems()))
+app.get('/api/inbox', async (req, res) => {
+  const items = await inboxItems()
+  const plane = req.query.plane // 'work' | 'harness' | undefined (both)
+  res.json(plane ? items.filter(i => i.plane === plane) : items)
+})
+// { key, done } clears; { key, snoozeHours } defers. Snooze is why inboxDone is an object now.
 app.post('/api/inbox/done', (req, res) => {
+  const { key, done, snoozeHours } = req.body
   const meta = readMeta()
   meta.inboxDone ||= {}
-  if (req.body.done) meta.inboxDone[req.body.key] = Date.now()
-  else delete meta.inboxDone[req.body.key]
+  if (snoozeHours > 0) meta.inboxDone[key] = { at: Date.now(), until: Date.now() + snoozeHours * 3600_000 }
+  else if (done) meta.inboxDone[key] = { at: Date.now(), until: null }
+  else delete meta.inboxDone[key]
+  for (const [k, v] of Object.entries(meta.inboxDone)) if (v && typeof v === 'object' && v.until && v.until < Date.now()) delete meta.inboxDone[k] // prune expired snoozes
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
   res.json({ ok: true })
 })
 
 // ---------- 24: daily digest ----------
-app.get('/api/digest', (req, res) => {
+app.get('/api/digest', async (req, res) => {
   const since = Date.now() - (Number(req.query.days) || 1) * 86400_000
   const { entries, lineEvents } = collectUsage()
   const en = entries.filter(e => e.t >= since)
@@ -2282,8 +2521,374 @@ app.get('/api/digest', (req, res) => {
     commits: commits.sort((a, b) => b.count - a.count),
     evals: { runs: evals.length, passRate: evals.length ? evals.reduce((s, r) => s + r.passRate, 0) / evals.length : null },
     drift,
-    attention: inboxItems().filter(i => !i.done).slice(0, 6),
+    attention: (await inboxItems()).filter(i => !i.done).slice(0, 6),
   })
+})
+
+// ---------- 5: skill/agent/MCP ROI ledger — fires × always-on cost ----------
+// Pure join of /api/overview items (kind, name, descTokens, fullTokens) × /api/flow invocations
+// (count, last), both of which already exist. Zero new sources. Plane B, self-only by construction.
+const CAP_KIND = { skills: 'skill', agents: 'agent', commands: 'command', mcp: 'mcp' }
+function capabilityLedger() {
+  const items = overviewItems()
+  const { invocations, prompts, sessions } = scanTranscripts()
+  const now = Date.now(), d30 = now - 30 * 86400_000, d90 = now - 90 * 86400_000
+  const use = {}
+  const bump = (kind, name, t) => {
+    const u = (use[kind + ':' + name] ||= { c30: 0, c90: 0, all: 0, last: 0 })
+    u.all++; if (t >= d30) u.c30++; if (t >= d90) u.c90++; u.last = Math.max(u.last, t)
+  }
+  for (const i of invocations) bump(i.kind, i.name, i.t)
+  // commands don't fire as tool_use — they arrive as a "/name" prompt
+  const cmds = new Set(items.filter(i => i.kind === 'commands').map(i => i.name))
+  for (const p of prompts) {
+    const m = /^\/([\w:.-]+)/.exec(p.text.trim())
+    if (!m) continue
+    const full = m[1], short = full.split(':').pop()
+    if (cmds.has(full)) bump('command', full, p.t)
+    else if (cmds.has(short)) bump('command', short, p.t)
+  }
+  const real = sessions.filter(s => !s.isAgent)
+  const sessions30 = real.filter(s => s.last >= d30).length
+  const sessions90 = real.filter(s => s.last >= d90).length
+  const rows = items.filter(i => CAP_KIND[i.kind]).map(i => {
+    const u = use[CAP_KIND[i.kind] + ':' + i.name] || { c30: 0, c90: 0, all: 0, last: 0 }
+    return {
+      kind: i.kind, name: i.name, scope: i.scope, group: i.group,
+      alwaysOnTokens: i.descTokens || 0,   // in context on EVERY session (the metadata listing)
+      fullTokens: i.fullTokens || 0,       // loaded only when it actually fires
+      fires30: u.c30, fires90: u.c90, firesAll: u.all, last: u.last || null,
+      // the always-on tax you actually paid per fire over 90d (descTokens × sessions ÷ fires)
+      tokPerFire: u.c90 ? Math.round((i.descTokens || 0) * sessions90 / u.c90) : null,
+      verdict: !u.all ? 'DEAD' : u.c30 === 0 ? 'COLD' : 'HOT',
+    }
+  })
+  const rank = { DEAD: 0, COLD: 1, HOT: 2 }
+  rows.sort((a, b) => rank[a.verdict] - rank[b.verdict] || b.alwaysOnTokens - a.alwaysOnTokens || b.fires90 - a.fires90)
+  const sum = (l, f) => l.reduce((s, x) => s + f(x), 0)
+  const dead = rows.filter(r => r.verdict === 'DEAD'), cold = rows.filter(r => r.verdict === 'COLD')
+  const alwaysOn = sum(rows, r => r.alwaysOnTokens)
+  return {
+    items: rows, sessions30, sessions90,
+    headline: {
+      alwaysOnTokens: alwaysOn, deadCount: dead.length, deadTokens: sum(dead, r => r.alwaysOnTokens),
+      coldCount: cold.length, coldTokens: sum(cold, r => r.alwaysOnTokens), hotCount: rows.length - dead.length - cold.length,
+      text: `you pay ${alwaysOn.toLocaleString()} tok every session for ${rows.length} capabilities — ${dead.length} of them (${sum(dead, r => r.alwaysOnTokens).toLocaleString()} tok/session) have never fired`,
+    },
+  }
+}
+app.get('/api/capabilities', (req, res) => res.json(capabilityLedger()))
+// archive = the EXISTING backup()/track() write path (same as the batch `disable-skill` op): dry-run, backed up, reversible.
+app.post('/api/capabilities/archive', (req, res) => {
+  const { items = [], project, dryRun } = req.body
+  const out = []
+  for (const it of items) {
+    const { kind, name, scope = 'user' } = it
+    if (!KINDS[kind]) { out.push({ ...it, error: 'kind not archivable (only skills/commands/agents)' }); continue }
+    try {
+      if (project && scope === 'project') { // reuse the batch op verbatim for project-scoped skills
+        const plan = batchPlan('disable-skill', project, { skill: name })
+        if (!dryRun && plan.changed && plan.apply) plan.apply()
+        out.push({ kind, name, scope, target: project, desc: plan.desc, changed: plan.changed, applied: !dryRun && plan.changed })
+        continue
+      }
+      const root = safe(itemRoot(kind, scopeDir(kind, scope), name))
+      const exists = fs.existsSync(root)
+      const tok = exists ? tokens(readIf(itemFile(kind, scopeDir(kind, scope), name)) || '') : 0
+      if (dryRun || !exists) { out.push({ kind, name, scope, path: root, exists, reclaimTokens: tok, changed: exists, applied: false }); continue }
+      const bak = backup(root)
+      fs.rmSync(root, { recursive: true, force: true })
+      appendVersion({ id: 'v' + Date.now().toString(36), ts: Date.now(), author: AUTHOR, machine: os.hostname(), scope, file: root, summary: `archive ${kind}/${name} (ROI ledger)`, prev: null, content: null, backup: bak })
+      out.push({ kind, name, scope, path: root, exists: true, reclaimTokens: tok, changed: true, applied: true, backup: bak })
+    } catch (e) { out.push({ ...it, error: e.message }) }
+  }
+  respCache.clear()
+  res.json({ dryRun: !!dryRun, reclaimTokens: out.reduce((s, o) => s + (o.reclaimTokens || 0), 0), results: out })
+})
+
+// ---------- 9: session forensics — failure signatures, context pressure, hook blast radius ----------
+// All three panels come off the ONE extra parse now living inside the failStats()/scanTranscripts() walkers.
+app.get('/api/forensics', (req, res) => {
+  const days = Number(req.query.days) || 30
+  const projFilter = req.query.project ? mangle(req.query.project) : null
+  const cutoff = Date.now() - days * 86400_000
+  const half = Date.now() - (days / 2) * 86400_000
+  const recs = failStats().filter(r => r.last >= cutoff && (!projFilter || r.proj === projFilter))
+
+  // (a) failure signatures
+  const sigs = {}
+  for (const r of recs) for (const e of r.errs) {
+    if (e.t && e.t < cutoff) continue
+    const sig = errSig(e.tool, e.text)
+    const g = (sigs[sig] ||= { sig, tool: e.tool, count: 0, recent: 0, prior: 0, first: e.t, last: e.t, example: e.text, sessions: new Set(), projects: new Set() })
+    g.count++; if (e.t >= half) g.recent++; else g.prior++
+    g.first = Math.min(g.first || e.t, e.t); g.last = Math.max(g.last, e.t)
+    g.sessions.add(r.sessionId); g.projects.add(r.proj)
+    if (e.t === g.last) g.example = e.text // freshest verbatim example
+  }
+  const failures = Object.values(sigs).map(g => ({
+    sig: g.sig, tool: g.tool, count: g.count, first: g.first, last: g.last, example: g.example,
+    sessions: g.sessions.size, projects: [...g.projects].slice(0, 4),
+    trend: g.recent > g.prior ? 'up' : g.recent < g.prior ? 'down' : 'flat', recent: g.recent, prior: g.prior,
+    biting: g.count >= 3, // "this has bitten you N times"
+  })).sort((a, b) => b.count - a.count).slice(0, 60)
+
+  // (b) context pressure
+  const bytes = {}, sizes = {}, big = []
+  let compactions = 0
+  const perSession = []
+  for (const r of recs) {
+    for (const [k, v] of Object.entries(r.bytes)) bytes[k] = (bytes[k] || 0) + v
+    for (const [k, v] of Object.entries(r.sizes)) (sizes[k] ||= []).push(...v)
+    for (const b of r.big) big.push({ ...b, sessionId: r.sessionId, proj: r.proj })
+    compactions += r.compactions
+    if (r.compactions || r.turns) perSession.push({ sessionId: r.sessionId, proj: r.proj, compactions: r.compactions, turns: r.turns, errors: Object.values(r.toolErrs).reduce((a, b) => a + b, 0), last: r.last })
+  }
+  const totalBytes = Object.values(bytes).reduce((a, b) => a + b, 0)
+  const tools = Object.keys(bytes).map(name => {
+    const med = median(sizes[name] || [0])
+    return {
+      name, chars: bytes[name], share: totalBytes ? +(bytes[name] / totalBytes).toFixed(3) : 0,
+      results: (sizes[name] || []).length, medianChars: Math.round(med), p90Chars: Math.round((sizes[name] || []).sort((a, b) => a - b)[Math.floor(((sizes[name] || []).length - 1) * 0.9)] || 0),
+      hog: med >= 20000, // median result over ~20k chars = this tool is eating your context window
+    }
+  }).sort((a, b) => b.chars - a.chars).slice(0, 20)
+
+  // (c) hook blast radius
+  const { hookEvents } = scanTranscripts()
+  const hooks = {}
+  for (const h of hookEvents) {
+    if (h.t && h.t < cutoff) continue
+    if (projFilter && h.proj !== projFilter) continue
+    const g = (hooks[h.hook] ||= { hook: h.hook, event: h.event, tool: h.tool, fired: 0, blocks: 0, cancelled: 0, ms: [], blocked: [], last: 0 })
+    g.fired++; g.last = Math.max(g.last, h.t || 0)
+    if (h.cancelled) g.cancelled++
+    if (typeof h.ms === 'number') g.ms.push(h.ms)
+    if (h.blocked) { g.blocks++; if (g.blocked.length < 5) g.blocked.push({ t: h.t, tool: h.tool, sessionId: h.sessionId, reason: h.reason }) }
+  }
+  const hookRows = Object.values(hooks).map(g => ({
+    hook: g.hook, event: g.event, tool: g.tool, fired: g.fired, blocks: g.blocks, cancelled: g.cancelled, last: g.last,
+    blockRate: g.fired ? +(g.blocks / g.fired).toFixed(3) : 0,
+    p50Ms: g.ms.length ? Math.round(median(g.ms)) : null,
+    p90Ms: g.ms.length ? Math.round(g.ms.sort((a, b) => a - b)[Math.floor((g.ms.length - 1) * 0.9)]) : null,
+    examples: g.blocked,
+  })).sort((a, b) => b.blocks - a.blocks || b.fired - a.fired)
+
+  res.json({
+    days, plane: 'harness', sessions: recs.length,
+    failures,
+    context: {
+      tools, totalChars: totalBytes, compactions,
+      compactionsPerSession: recs.length ? +(compactions / recs.length).toFixed(2) : 0,
+      biggest: big.sort((a, b) => b.chars - a.chars).slice(0, 10),
+      worstSessions: perSession.sort((a, b) => b.compactions - a.compactions).slice(0, 10),
+    },
+    hooks: hookRows,
+  })
+})
+
+// ---------- 10: session ledger with real $ ----------
+// collectUsage() already carried sessionId into recentSessions — only cost was missing.
+app.get('/api/sessions', (req, res) => {
+  const days = Number(req.query.days) || 7
+  const limit = Math.min(200, Number(req.query.limit) || 20)
+  const cutoff = Date.now() - days * 86400_000
+  const { files } = collectUsage()
+  const fail = {}; for (const r of failStats()) fail[r.file] = r
+  const projNames = {}, projPaths = {}
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) { const k = mangle(d); projNames[k] = path.basename(d); projPaths[k] = d } } catch {}
+  const rows = files.filter(f => !f.isAgent && f.msgs > 0 && f.last >= cutoff).map(f => {
+    const id = path.basename(f.path, '.jsonl')
+    const fr = fail[f.path]
+    const cwd = f.cwd || projPaths[f.proj] || ''
+    const cacheIn = f.in + f.cc + f.cr
+    return {
+      sessionId: id, proj: f.proj, project: projNames[f.proj] || f.proj.split('-').pop(), cwd,
+      cost: +f.cost.toFixed(4), out: f.out, in: f.in, cacheRead: f.cr,
+      cacheReadPct: cacheIn ? +(f.cr / cacheIn).toFixed(3) : 0,
+      first: f.first, last: f.last, durationMs: Math.max(0, f.last - f.first),
+      msgs: f.msgs, toolCalls: f.toolCalls,
+      compactions: fr?.compactions || 0,
+      errors: fr ? Object.values(fr.toolErrs).reduce((a, b) => a + b, 0) : 0,
+      branch: Object.keys(f.branches).filter(Boolean)[0] || null,
+      transcript: f.path,
+      resume: cwd ? `cd ${cwd} && claude --resume ${id}` : `claude --resume ${id}`,
+    }
+  }).sort((a, b) => b.last - a.last)
+  const totals = { cost: +rows.reduce((s, r) => s + r.cost, 0).toFixed(2), sessions: rows.length, out: rows.reduce((s, r) => s + r.out, 0) }
+  res.json({ days, plane: 'harness', totals, sessions: rows.slice(0, limit) })
+})
+
+// ---------- 8: /api/roi — cohort-level AI ROI (THE ONLY CROSS-PLANE JOIN) ----------
+// Join: transcript gitBranch → cfg.ticketRegex → JIRA key (falling back to pr.branch → pr.ticket).
+// THE AUTHOR/ASSIGNEE FIELD IS DROPPED BEFORE ANY AGGREGATION. Cohorts only. Never per person.
+// Correlational, not causal: n is shown per bucket, n<5 is flagged `low`, unattributed % is stated.
+app.get('/api/roi', async (req, res) => {
+  const days = Number(req.query.days) || 90
+  const cutoff = Date.now() - days * 86400_000
+  const snap = await engSnapshot()
+  if (!snap?.available) return res.json({ available: false, reason: 'no eng snapshot (JIRA creds / gh auth)', plane: 'cohort' })
+  const { files } = collectUsage()
+  // branch → ticket
+  const keyRes = [...new Set((snap.projects || []).map(p => p.jiraProjectKey).filter(Boolean))].map(k => new RegExp(`${k}-\\d+`, 'i'))
+  const branchTicket = {}
+  for (const p of snap.prs || []) if (p.branch) branchTicket[p.branch] = p.ticket
+  const ticketOf = branch => {
+    if (!branch) return null
+    for (const re of keyRes) { const m = branch.match(re); if (m) return m[0].toUpperCase() }
+    return branchTicket[branch] || null
+  }
+  // Claude spend per ticket. NOTE: this is the viewer's OWN spend — plane B is self-only, so an
+  // "AI-touched" cohort here means "touched by THIS machine's Claude", stated plainly in the payload.
+  const spendByTicket = {}, weekly = {}
+  let attributed = 0, total = 0
+  const wk = t => { const d = new Date(t); const day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10) }
+  for (const f of files) {
+    for (const [branch, b] of Object.entries(f.branches || {})) {
+      if (!b.last || b.last < cutoff) continue
+      total += b.cost
+      const w = (weekly[wk(b.last)] ||= { week: wk(b.last), spend: 0, points: 0, tickets: new Set() })
+      w.spend += b.cost
+      const tk = ticketOf(branch)
+      if (!tk) continue
+      attributed += b.cost
+      const s = (spendByTicket[tk] ||= { cost: 0, sessions: 0, last: 0 })
+      s.cost += b.cost; s.sessions++; s.last = Math.max(s.last, b.last)
+      w.tickets.add(tk)
+    }
+  }
+  // shipped stories in the window — author/assignee deliberately NOT read
+  const shipped = (snap.issues || []).filter(i => i.live && i.pts > 0 && Date.parse(i.closedAt || 0) >= cutoff)
+  for (const i of shipped) { const w = (weekly[wk(Date.parse(i.closedAt))] ||= { week: wk(Date.parse(i.closedAt)), spend: 0, points: 0, tickets: new Set() }); w.points += i.pts }
+  const trend = Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)).map(w => ({
+    week: w.week, spend: +w.spend.toFixed(2), points: w.points,
+    perPoint: w.points ? +(w.spend / w.points).toFixed(2) : null, n: w.tickets.size,
+  }))
+  // cohorts, bucketed by story points. Only cohort-level medians — nothing keyed to a human.
+  const BUCKETS = [[1, 2, '1–2'], [3, 3, '3'], [5, 5, '5'], [8, 8, '8'], [13, 99, '13+']]
+  const cohort = BUCKETS.map(([lo, hi, label]) => {
+    const inB = shipped.filter(i => i.pts >= lo && i.pts <= hi)
+    const cut = list => ({
+      n: list.length, low: list.length < 5, // n<5 → the UI greys this cell
+      medianCycleDays: list.length ? +median(list.map(i => i.delivery)).toFixed(2) : null,
+      medianActiveDays: list.length ? +median(list.map(i => i.activeDays)).toFixed(2) : null,
+      medianQaCycles: list.length ? +median(list.map(i => i.qaCycles || 0)).toFixed(2) : null,
+      reworkRate: list.length ? +(list.filter(i => i.rework).length / list.length).toFixed(2) : null,
+      medianSpend: list.length ? +median(list.map(i => spendByTicket[i.key]?.cost || 0)).toFixed(2) : null,
+    })
+    const ai = inB.filter(i => spendByTicket[i.key])
+    const un = inB.filter(i => !spendByTicket[i.key])
+    return { bucket: label, pts: lo, aiTouched: cut(ai), untouched: cut(un) }
+  })
+  const shippedPts = shipped.reduce((s, i) => s + i.pts, 0)
+  res.json({
+    available: true, plane: 'cohort', days, caveat: 'correlational, not causal · AI spend is the viewer\'s own Claude usage (plane B is self-only) · no author/assignee field is read or emitted',
+    headline: {
+      spend: +total.toFixed(2), shippedPoints: shippedPts,
+      spendPerPoint: shippedPts ? +(total / shippedPts).toFixed(2) : null,
+      attributedPct: total ? +(attributed / total).toFixed(3) : 0,
+      unattributedPct: total ? +(1 - attributed / total).toFixed(3) : 1, // spend on branches that map to no ticket
+      ticketsWithSpend: Object.keys(spendByTicket).length, shippedTickets: shipped.length,
+      // shipped tickets carrying no story points can't enter a points bucket — say so rather than hide them
+      unpointedShipped: (snap.issues || []).filter(i => i.live && !(i.pts > 0) && Date.parse(i.closedAt || 0) >= cutoff).length,
+    },
+    trend, cohort,
+  })
+})
+
+// ---------- 14: team harness baseline (repos from projects.json + a team-harness.json read from git) ----------
+function driftVs(bundle, project) {
+  const cur = exportBundle(project, 'current', '')
+  const drifts = []
+  const cmp = (field, a, c) => { const A = JSON.stringify(a ?? null), C = JSON.stringify(c ?? null); if (A !== C) drifts.push({ field, baseline: A.slice(0, 400), current: C.slice(0, 400), syncable: true }) }
+  cmp('settings.harness', bundle.settings?.harness, cur.settings?.harness)
+  cmp('settings.permissions', bundle.settings?.permissions, cur.settings?.permissions)
+  for (const k of new Set([...Object.keys(bundle.rules || {}), ...Object.keys(cur.rules || {})])) cmp('rules/' + k, bundle.rules?.[k], cur.rules?.[k])
+  for (const k of new Set([...Object.keys(bundle.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, bundle.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
+  return drifts
+}
+// map a team repo (owner/name) to a local clone: any registered project dir whose origin remote matches
+const remoteCache = new Map()
+function originOf(dir) {
+  const hit = remoteCache.get(dir)
+  if (hit && Date.now() - hit.t < 600_000) return hit.v
+  let v = ''
+  try { v = (spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { timeout: 3000 }).stdout || '').toString().trim() } catch {}
+  remoteCache.set(dir, { t: Date.now(), v })
+  return v
+}
+function localCloneOf(repo) {
+  const [owner, name] = repo.split('/')
+  let dirs = []
+  try { dirs = Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)) } catch {}
+  for (const d of dirs) { const o = originOf(d); if (o && o.replace(/\.git$/, '').endsWith(`${owner}/${name}`)) return d }
+  return dirs.find(d => path.basename(d) === name) || null
+}
+app.get('/api/gov/team', async (req, res) => {
+  const meta = readMeta()
+  const file = req.query.file || meta.teamHarness || null
+  const bundle = file ? readJson(file, null) : null
+  const projects = await engProjectList().catch(() => [])
+  const repos = projects.filter(p => p.githubRepo).map(p => {
+    const local = localCloneOf(p.githubRepo)
+    const scaffolded = local ? fs.existsSync(path.join(local, '.claude')) : false
+    let drifts = []
+    if (bundle && local && scaffolded) { try { drifts = driftVs(bundle, local) } catch {} }
+    return {
+      key: p.key, name: p.name, repo: p.githubRepo, localPath: local,
+      status: !local ? 'not-cloned' : !scaffolded ? 'never-scaffolded' : !bundle ? 'no-baseline' : drifts.length ? 'drifted' : 'on-baseline',
+      drifts,
+    }
+  })
+  res.json({ plane: 'work', file, hasBaseline: !!bundle, provenance: bundle?.provenance || null, repos })
+})
+// pin the team baseline: point at a team-harness.json committed in a shared repo (read from git working copy)
+app.post('/api/gov/team/baseline', (req, res) => {
+  const { file } = req.body
+  if (!file || !fs.existsSync(file)) return res.status(400).json({ error: 'team-harness.json not found at that path — clone the repo first' })
+  if (!readJson(file, null)) return res.status(400).json({ error: 'not valid JSON' })
+  const meta = readMeta()
+  meta.teamHarness = file
+  fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  respCache.clear()
+  res.json({ ok: true, file })
+})
+// export THIS project's harness as the team baseline, written (tracked) to the shared repo path
+app.post('/api/gov/team/export', (req, res) => {
+  const { project, file, dryRun } = req.body
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const target = file || readMeta().teamHarness
+  if (!target) return res.status(400).json({ error: 'no team-harness.json path set — POST /api/gov/team/baseline first' })
+  const bundle = exportBundle(project, 'team-harness', `team baseline from ${path.basename(project)}`)
+  const content = JSON.stringify(bundle, null, 2)
+  if (dryRun) return res.json({ dryRun: true, file: target, bytes: content.length, skills: Object.keys(bundle.skills || {}), rules: Object.keys(bundle.rules || {}) })
+  track(target, content, { scope: project, summary: 'export team harness baseline' })
+  const meta = readMeta(); meta.teamHarness = target; fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
+  res.json({ ok: true, file: target, note: 'commit and push team-harness.json to share it' })
+})
+// sync one team repo to the baseline — same dry-run guard + tracked-write path as /api/gov/drift/sync
+app.post('/api/gov/team/sync', (req, res) => {
+  const { project, fields, dryRun } = req.body
+  const bundle = readJson(readMeta().teamHarness || '', null)
+  if (!bundle) return res.status(400).json({ error: 'no team baseline set' })
+  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+  const drifts = driftVs(bundle, project).filter(d => d.syncable && (!fields?.length || fields.includes(d.field)))
+  if (dryRun) return res.json({ dryRun: true, drifts })
+  const applied = []
+  for (const d of drifts) {
+    if (d.field === 'settings.harness' || d.field === 'settings.permissions') {
+      const f = path.join(project, '.claude', 'settings.json')
+      const s = readJson(f, {})
+      const key = d.field.split('.')[1]
+      if (bundle.settings?.[key] === undefined) delete s[key]; else s[key] = bundle.settings[key]
+      track(f, JSON.stringify(s, null, 2), { scope: project, summary: `sync ${d.field} from team baseline` })
+      applied.push(d.field)
+    } else if (d.field.startsWith('rules/') && bundle.rules?.[d.field.slice(6)] != null) {
+      track(path.join(project, d.field.slice(6)), bundle.rules[d.field.slice(6)], { scope: project, summary: `sync ${d.field} from team baseline` })
+      applied.push(d.field)
+    }
+  }
+  res.json({ ok: true, applied })
 })
 
 // ---------- 18: new-project harness scaffolder ----------
@@ -2438,12 +3043,13 @@ app.post('/api/notify/test', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 // push new error/warning inbox items to slack (dedup per server run)
+// (this is the viewer's own webhook, to themselves — no auto-nudge is ever sent to anyone else)
 const slackNotified = new Set()
-setInterval(() => {
+setInterval(async () => {
   const hook = (readMeta().notify || {}).slackWebhook
   if (!hook) return
   try {
-    for (const i of inboxItems()) {
+    for (const i of await inboxItems()) {
       if (i.done || i.severity === 'info' || slackNotified.has(i.key)) continue
       slackNotified.add(i.key)
       fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `[claude-dashboard] ${i.severity.toUpperCase()}: ${i.text}` }) }).catch(() => {})
@@ -2738,12 +3344,100 @@ app.post('/api/ci/generate', (req, res) => {
   for (const f of files) track(path.join(project, f.rel), f.content, { scope: project, summary: `CI eval gate (${provider}, min ${Math.round(minPass * 100)}%)` })
   res.json({ ok: true, written: files.map(f => f.rel), note: 'set the ANTHROPIC_API_KEY secret in your repo settings' })
 })
-app.get('/api/ci/runs', (req, res) => {
+// ---------- 4: cross-repo CI health (main-branch failure rate, time-to-green, flakes) ----------
+// Plane A. One `gh run list` per repo from projects.json, existing gh auth, 10-min cache.
+const ghAvailable = () => { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
+async function engProjectList() {
+  engMod ||= await import('./server-eng.mjs')
+  if (typeof engMod.projectList === 'function') return engMod.projectList()
+  const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/projects`)
+  return await r.json()
+}
+const RUN_FIELDS = 'databaseId,status,conclusion,workflowName,headSha,headBranch,createdAt,updatedAt,url,displayTitle'
+function repoRuns(repo, branch, limit = 100) {
+  const r = spawnSync('gh', ['run', 'list', '--repo', repo, '--branch', branch, '--json', RUN_FIELDS, '--limit', String(limit)], { timeout: 25000, maxBuffer: 32 * 1024 * 1024 })
+  if (r.status !== 0) throw new Error((r.stderr || '').toString().trim().slice(0, 160) || 'gh run list failed')
+  return JSON.parse(r.stdout.toString() || '[]')
+}
+function repoCI(repo, project, days) {
+  const cutoff = Date.now() - days * 86400_000
+  let raw = repoRuns(repo, 'main')
+  let branch = 'main'
+  if (!raw.length) { raw = repoRuns(repo, 'master'); branch = raw.length ? 'master' : 'main' }
+  const runs = raw.filter(x => Date.parse(x.createdAt) >= cutoff)
+    .map(x => ({ id: x.databaseId, status: x.status, conclusion: x.conclusion, workflowName: x.workflowName, headSha: x.headSha, at: Date.parse(x.createdAt), endedAt: Date.parse(x.updatedAt), url: x.url, title: x.displayTitle }))
+    .sort((a, b) => a.at - b.at)
+  const done = runs.filter(r => r.conclusion === 'success' || r.conclusion === 'failure')
+  const fails = done.filter(r => r.conclusion === 'failure')
+  // time-to-green: from a red main to the next green run of the same workflow
+  const greens = []
+  for (const f of fails) {
+    const fix = done.find(r => r.workflowName === f.workflowName && r.at > f.at && r.conclusion === 'success')
+    if (fix) greens.push((fix.at - f.at) / 60000)
+  }
+  // flaky = the SAME headSha produced both a failure and a success
+  const bySha = {}
+  for (const r of done) { const s = (bySha[r.headSha] ||= { ok: 0, bad: 0, wf: new Set(), last: 0 }); if (r.conclusion === 'success') s.ok++; else s.bad++; s.wf.add(r.workflowName); s.last = Math.max(s.last, r.at) }
+  const flakySha = Object.entries(bySha).filter(([, s]) => s.ok && s.bad)
+  const byWf = {}
+  for (const [sha, s] of flakySha) for (const w of s.wf) { const e = (byWf[w] ||= { workflow: w, count: 0, shas: [], last: 0 }); e.count++; if (e.shas.length < 5) e.shas.push(sha.slice(0, 7)); e.last = Math.max(e.last, s.last) }
+  const last = done[done.length - 1] || null
+  return {
+    repo, project, branch, days,
+    runs: runs.length, completed: done.length, failures: fails.length,
+    failureRate: done.length ? +(fails.length / done.length).toFixed(3) : null,
+    mainRed: last ? last.conclusion === 'failure' : false,
+    lastRun: last,
+    medianTimeToGreenMin: greens.length ? Math.round(median(greens)) : null,
+    medianDurationMin: done.length ? Math.round(median(done.map(r => (r.endedAt - r.at) / 60000))) : null,
+    flaky: Object.values(byWf).sort((a, b) => b.count - a.count).slice(0, 10),
+    flakyShas: flakySha.length,
+    recent: runs.slice(-15).reverse(),
+  }
+}
+const ciCache = { at: 0, data: null }
+const CI_TTL = 10 * 60_000
+// wait=false (the inbox): never shell out to gh inside the poll — serve the cache, refresh behind it
+async function ciHealth(days = 14, fresh = false, wait = true) {
+  if (!fresh && ciCache.data && Date.now() - ciCache.at < CI_TTL && ciCache.data.days === days) return ciCache.data
+  if (!wait) {
+    if (Date.now() - ciCache.at > CI_TTL) { ciCache.at = Date.now(); setTimeout(() => ciHealth(days, true).catch(() => {}), 0) }
+    return ciCache.data || { days, ghAvailable: false, repos: [], redRepos: [], cold: true }
+  }
+  engMod ||= await import('./server-eng.mjs')
+  if (typeof engMod.ciHealth === 'function') return await engMod.ciHealth(days) // server-eng owns it if it ever exports one
+  const gh = ghAvailable()
+  const projects = gh ? await engProjectList().catch(() => []) : []
+  const repos = []
+  for (const p of projects) {
+    if (!p.githubRepo) continue
+    try { repos.push(repoCI(p.githubRepo, p.key, days)) }
+    catch (e) { repos.push({ repo: p.githubRepo, project: p.key, error: e.message, runs: 0, mainRed: false, flaky: [] }) }
+  }
+  const data = { days, ghAvailable: gh, generatedAt: Date.now(), repos, redRepos: repos.filter(r => r.mainRed).map(r => r.repo) }
+  ciCache.at = Date.now(); ciCache.data = data
+  return data
+}
+// ?project=<local dir> keeps the old harness-evals workflow view; otherwise: cross-repo main-branch health.
+app.get('/api/ci/runs', async (req, res) => {
   const project = req.query.project
-  if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
-  const r = spawnSync('gh', ['run', 'list', '--workflow', 'harness-evals.yml', '--json', 'status,conclusion,createdAt,headBranch,displayTitle,url', '--limit', '15'], { cwd: project, timeout: 15000 })
-  if (r.status !== 0) return res.json({ error: (r.stderr || '').toString().slice(0, 200) || 'gh CLI unavailable or no workflow runs', runs: [] })
-  try { res.json({ runs: JSON.parse(r.stdout.toString()).map(x => ({ ...x, source: 'CI' })) }) } catch { res.json({ runs: [] }) }
+  if (project) {
+    if (!fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
+    const r = spawnSync('gh', ['run', 'list', '--workflow', 'harness-evals.yml', '--json', 'status,conclusion,createdAt,headBranch,displayTitle,url', '--limit', '15'], { cwd: project, timeout: 15000 })
+    if (r.status !== 0) return res.json({ error: (r.stderr || '').toString().slice(0, 200) || 'gh CLI unavailable or no workflow runs', runs: [] })
+    try { return res.json({ runs: JSON.parse(r.stdout.toString()).map(x => ({ ...x, source: 'CI' })) }) } catch { return res.json({ runs: [] }) }
+  }
+  res.json(await ciHealth(Number(req.query.days) || 14, req.query.fresh === '1'))
+})
+app.get('/api/ci/health', async (req, res) => res.json(await ciHealth(Number(req.query.days) || 14, req.query.fresh === '1')))
+app.post('/api/ci/rerun', (req, res) => {
+  const { repo, id, failedOnly } = req.body
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !/^\d+$/.test(String(id || ''))) return res.status(400).json({ error: 'repo (owner/name) and numeric run id required' })
+  const args = ['run', 'rerun', String(id), '--repo', repo, ...(failedOnly ? ['--failed'] : [])]
+  const r = spawnSync('gh', args, { timeout: 20000 })
+  if (r.status !== 0) return res.status(500).json({ error: (r.stderr || '').toString().slice(0, 200) })
+  ciCache.at = 0
+  res.json({ ok: true })
 })
 
 // ---------- 28: analytics instrumentation registry + taxonomy drift ----------
