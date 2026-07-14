@@ -40,8 +40,15 @@ export default function WorkflowPanel({ snap }) {
 
       <div style={PANEL}>
         <SectionTitle>How I work with Claude</SectionTitle>
-        <Bars title="Friction (what slows me down)" obj={w.friction} color={PURPLE} />
-        <Bars title="Perceived helpfulness" obj={w.helpfulness} color={GREEN} />
+        {/* DEMOTED (roadmap Cut): the friction / helpfulness bars are an LLM's opinion of your session and
+            only exist after /insights has run. The deterministic replacement — real tool error RATES and
+            real USD — is the Run economics panel above. These stay only as an authoring aid. */}
+        <div style={{ font: `400 10.5px ${BODY}`, color: MUTE, marginTop: 4 }}>
+          The two bars below are LLM-judged and only populate after <b style={{ color: INK }}>/insights</b> has run.
+          The deterministic version of this question — which tools actually fail, and how often — is in <b style={{ color: INK }}>Run economics</b> above.
+        </div>
+        <Bars title="Friction (what slows me down) — LLM-judged" obj={w.friction} color={PURPLE} />
+        <Bars title="Perceived helpfulness — LLM-judged" obj={w.helpfulness} color={GREEN} />
         <Bars title="Model mix" obj={Object.fromEntries(Object.entries(models).map(([m, v]) => [m.replace(/^claude-|-\d.*$/g, ''), v.msgs]))} color={ACCENT} />
         <Bars title="Tool mix" obj={w.tools} />
         {gh && <div style={{ font: `400 12px ${BODY}`, color: MUTE, marginTop: 12 }}>Review footprint: {gh.prsReviewed} PRs reviewed · mentorship for {Object.keys(gh.reviewedForOthers || {}).length} teammates</div>}

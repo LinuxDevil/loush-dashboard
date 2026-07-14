@@ -1,5 +1,5 @@
-import { useEffect, useState, useMemo } from 'react'
-import { api } from '../api.js'
+import { useEffect, useState, useMemo, useCallback } from 'react'
+import { api, toast } from '../api.js'
 
 // ── Shared period (Year/Q1–Q4) ───────────────────────────────────────────────
 // The header filter must scope EVERY panel's JIRA-derived data, not just the career snapshot.
@@ -9,13 +9,24 @@ let _engPeriod = ''
 const _engSubs = new Set()
 export function setEngPeriod(p) { p = p || ''; if (p === _engPeriod) return; _engPeriod = p; for (const fn of _engSubs) fn(p) }
 
-// Current-year window for a period. '' = year-to-date; 'Qn' = that quarter (clamped to now). Mirrors
-// the server's periodWindow but browser-safe (server module imports node-only deps).
-function engWindow(period) {
-  const y = new Date().getFullYear(), nowMs = Date.now()
-  const m = /Q([1-4])/.exec(period || '')
-  if (m) { const sm = (+m[1] - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(nowMs, Date.UTC(y, sm + 3, 1)) } }
-  return { start: Date.UTC(y, 0, 1), end: nowMs }
+// item 4 — the year clamp is DELETED. A period is `YYYY`, `Qn` (current year) or `YYYYQn`, exactly like
+// the server's periodWindow(). Prior-year periods are first-class, because a single-period number cannot
+// tell anyone whether an intervention worked.
+export function engWindow(period) {
+  const nowMs = Date.now(), curY = new Date().getFullYear()
+  const m = /^(\d{4})?(?:Q([1-4]))?$/.exec(String(period || '').trim())
+  const y = m && m[1] ? +m[1] : curY
+  const q = m && m[2] ? +m[2] : null
+  if (q) { const sm = (q - 1) * 3; return { start: Date.UTC(y, sm, 1), end: Math.min(nowMs, Date.UTC(y, sm + 3, 1)) } }
+  return { start: Date.UTC(y, 0, 1), end: Math.min(nowMs, Date.UTC(y + 1, 0, 1)) }
+}
+// The period BEFORE this one — the denominator of every delta chip. Mirrors server priorPeriod().
+export function priorPeriod(period) {
+  const m = /^(\d{4})?(?:Q([1-4]))?$/.exec(String(period || '').trim())
+  const y = m && m[1] ? +m[1] : new Date().getFullYear()
+  const q = m && m[2] ? +m[2] : null
+  if (!q) return String(y - 1)
+  return q === 1 ? `${y - 1}Q4` : `${y}Q${q - 1}`
 }
 const _ms = x => { const t = x ? Date.parse(x) : NaN; return Number.isNaN(t) ? null : t }
 // "This year's tickets" = created OR closed inside the window. Deliberately EXCLUDES ancient still-open
@@ -119,6 +130,8 @@ export const useUsage = () => useCached('usage', loadUsage, d => d != null && !!
 
 // Eng data scoped to the current period. Loads once (all-time), then filters issues/PRs to the selected
 // window and recomputes DORA — so the Year/Q filter reflects across EVERY panel and all JIRA data.
+// item 4: the SAME derivation runs over the PRIOR window and ships as `priorDora`, so every eng tile can
+// render a ± chip. A number with no denominator in time is not a measurement.
 export function useEngSelf() {
   const base = useCached('engSelf', loadEngSelf, d => !!d?.accountId)
   const [period, setPeriod] = useState(_engPeriod)
@@ -126,14 +139,47 @@ export function useEngSelf() {
   const data = useMemo(() => {
     const d = base.data
     if (!d || !d.accountId || !Array.isArray(d.issues)) return d
-    const w = engWindow(period)
-    const issues = d.issues.filter(i => issueInWindow(i, w))
-    const keys = new Set(issues.map(i => i.key))
-    const prs = (d.prs || []).filter(p => keys.has(p.ticket))
-    return { ...d, issues, prs, dora: deriveDora(issues, prs, d.accountId), period }
+    const scope = (p) => {
+      const w = engWindow(p)
+      const issues = d.issues.filter(i => issueInWindow(i, w))
+      const keys = new Set(issues.map(i => i.key))
+      const prs = (d.prs || []).filter(p2 => keys.has(p2.ticket))
+      return { issues, prs, dora: deriveDora(issues, prs, d.accountId) }
+    }
+    const cur = scope(period), prev = scope(priorPeriod(period))
+    return { ...d, ...cur, priorDora: prev.dora, priorPeriod: priorPeriod(period), period }
   }, [base.data, period])
   return { ...base, data }
 }
+
+// ── item 1 — one loader for every /api/team/* + /api/career/* panel ──────────────────────────
+// No scope parameter exists, by design: scope is a property of the DATA (server-team.mjs enforces the
+// plane boundary and the min-N floor), never a mode the user picks. This hook just fetches and caches.
+const _mem = new Map()
+export function useApi(pathOrNull, { poll = 0 } = {}) {
+  const [state, setState] = useState(() => ({ data: pathOrNull ? _mem.get(pathOrNull) ?? null : null, loading: !!pathOrNull && !_mem.has(pathOrNull), error: null }))
+  const [n, bump] = useState(0)
+  useEffect(() => {
+    if (!pathOrNull) { setState({ data: null, loading: false, error: null }); return }
+    let live = true
+    if (!_mem.has(pathOrNull)) setState(s => ({ ...s, loading: true }))
+    api.get(pathOrNull)
+      .then(d => { if (!live) return; _mem.set(pathOrNull, d); setState({ data: d, loading: false, error: null }) })
+      .catch(e => { if (live) setState(s => ({ data: s.data, loading: false, error: e.message })) })
+    const t = poll ? setInterval(() => bump(x => x + 1), poll) : null
+    return () => { live = false; if (t) clearInterval(t) }
+  }, [pathOrNull, n])
+  const reload = useCallback(() => { if (pathOrNull) _mem.delete(pathOrNull); bump(x => x + 1) }, [pathOrNull])
+  return { ...state, reload }
+}
+export function resetApiCache() { _mem.clear() }
+
+// ── clipboard: every "action" in this dashboard is a line a human sends. There is no auto-ping. ──
+export async function copy(text, label = 'copied') {
+  try { await navigator.clipboard.writeText(String(text ?? '')); toast(label, 'success') }
+  catch (e) { toast('clipboard blocked: ' + e.message, 'error') }
+}
+export const copyJson = (obj) => copy(JSON.stringify(obj, null, 2), 'panel JSON copied — reproduce the number in a terminal')
 
 // ── derivations over the personal eng issue set (used by Overview/Delivery) ──────────────
 
@@ -165,4 +211,4 @@ export function cycleTrend(issues = [], months = 6) {
 }
 
 // header refresh → drop in-memory + localStorage caches so the next load re-fetches
-export function resetCareerData() { _usage = null; _engSelf = null; cacheClear() }
+export function resetCareerData() { _usage = null; _engSelf = null; _mem.clear(); cacheClear() }

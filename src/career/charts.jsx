@@ -1,7 +1,108 @@
 import React from 'react'
 import { PANEL, PANEL_BG, LINE, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE } from './theme.jsx'
+import { copy, copyJson } from './data.jsx'
 
 const jiraUrl = i => i.host ? `https://${i.host}/browse/${i.key}` : null
+
+// ── the trust primitives ─────────────────────────────────────────────────────────────────────
+// Every panel ends in the raw payload. An engineer who can reproduce a number in a terminal argues
+// with the data instead of dismissing the dashboard.
+export function Btn({ onClick, children, tone = ACCENT, title, disabled }) {
+  return (
+    <button onClick={onClick} title={title} disabled={disabled} style={{
+      font: `600 11px ${MONO}`, color: disabled ? MUTE : tone, background: 'transparent',
+      border: `1px solid ${disabled ? LINE : tone + '55'}`, borderRadius: 6, padding: '3px 8px',
+      cursor: disabled ? 'default' : 'pointer', whiteSpace: 'nowrap',
+    }}>{children}</button>
+  )
+}
+// "Copy nudge" — the ONLY shape a nudge takes in this app. No auto-ping, ever.
+export const Nudge = ({ text, label = '⧉ copy nudge' }) => <Btn onClick={() => copy(text, 'nudge copied — you send it')}>{label}</Btn>
+
+// Panel with a title, an optional right slot, and the raw-JSON escape hatch.
+export function Card({ title, sub, right, json, children, tone, style }) {
+  return (
+    <div style={{ ...PANEL, ...(tone ? { borderColor: tone + '55' } : null), ...style }}>
+      {(title || right || json) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ font: `600 13px ${HEAD}`, color: INK }}>{title}</div>
+            {sub && <div style={{ font: `400 11px ${MONO}`, color: MUTE, marginTop: 2 }}>{sub}</div>}
+          </div>
+          <div style={{ flex: 1 }} />
+          {right}
+          {json !== undefined && <Btn tone={MUTE} onClick={() => copyJson(json)} title="copy this panel's raw payload">{'{ }'}</Btn>}
+        </div>
+      )}
+      {children}
+    </div>
+  )
+}
+
+// Where the server says "not configured" / "suppressed" / "low coverage", render THAT. Never a zero.
+export function Empty({ children, tone = MUTE }) {
+  return <div style={{ font: `400 12px ${BODY}`, color: tone, lineHeight: 1.5 }}>{children}</div>
+}
+
+// prior-period ± chip. dir 'down' = lower is better.
+export function Cmp({ cur, prev, unit = '', dir = 'up', label }) {
+  if (cur == null || prev == null || !Number.isFinite(cur) || !Number.isFinite(prev)) return null
+  const abs = +(cur - prev).toFixed(2)
+  if (abs === 0) return <span style={{ font: `500 11px ${MONO}`, color: MUTE }}>= {label || 'prior'}</span>
+  const good = dir === 'down' ? abs < 0 : abs > 0
+  return (
+    <span title={`prior period: ${prev}${unit}`} style={{ font: `500 11px ${MONO}`, color: good ? GREEN : RED }}>
+      {abs > 0 ? '↑' : '↓'}{Math.abs(abs)}{unit} {label ? <span style={{ color: MUTE }}>{label}</span> : null}
+    </span>
+  )
+}
+
+// 100% stacked bar. segs = [{key, value, color}]
+export function Stacked({ segs = [], height = 12, legend = true }) {
+  const total = segs.reduce((a, s) => a + (s.value || 0), 0) || 1
+  return (
+    <div>
+      <div style={{ display: 'flex', height, borderRadius: 999, overflow: 'hidden', background: LINE }}>
+        {segs.filter(s => s.value > 0).map(s => (
+          <div key={s.key} title={`${s.key}: ${s.value} (${Math.round(s.value / total * 100)}%)`} style={{ width: `${s.value / total * 100}%`, background: s.color }} />
+        ))}
+      </div>
+      {legend && (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 7, font: `400 11px ${MONO}`, color: MUTE }}>
+          {segs.filter(s => s.value > 0).map(s => <span key={s.key}><span style={{ color: s.color }}>●</span> {s.key} {Math.round(s.value / total * 100)}%</span>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// horizontal labelled bars. rows = [{label, value, color?, sub?, onClick?}]
+export function HBars({ rows = [], unit = '', labelWidth = 150, max: maxIn, empty = 'no data' }) {
+  if (!rows.length) return <Empty>{empty}</Empty>
+  const max = maxIn || Math.max(1, ...rows.map(r => r.value || 0))
+  return (
+    <div>
+      {rows.map(r => (
+        <div key={r.label} onClick={r.onClick} style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6, cursor: r.onClick ? 'pointer' : 'default' }}>
+          <div title={r.label} style={{ width: labelWidth, font: `400 11px ${MONO}`, color: INK, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</div>
+          <div style={{ flex: 1, height: 8, background: LINE, borderRadius: 999, overflow: 'hidden' }}>
+            <div style={{ width: `${Math.min(100, (r.value / max) * 100)}%`, height: '100%', background: r.color || ACCENT, borderRadius: 999 }} />
+          </div>
+          <div style={{ width: 84, textAlign: 'right', font: `500 11px ${MONO}`, color: MUTE, whiteSpace: 'nowrap' }}>{r.sub ?? `${r.value}${unit}`}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// One sentence, big, with the number in it. The only "headline" shape in this dashboard.
+export function Headline({ children, tone = INK, icon }) {
+  return (
+    <div style={{ font: `500 14px ${BODY}`, color: tone, lineHeight: 1.5 }}>
+      {icon ? <span style={{ marginRight: 8 }}>{icon}</span> : null}{children}
+    </div>
+  )
+}
 
 // tiny project-key tag  (AIR / TRN)
 export function ProjTag({ k }) {

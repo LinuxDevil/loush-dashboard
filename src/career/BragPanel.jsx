@@ -1,13 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import { api, toast } from '../api.js'
-import { PANEL, HEAD, MONO, ACCENT, GREEN, MUTE } from './theme.jsx'
+import { PANEL, HEAD, MONO, BODY, ACCENT, GREEN, MUTE, INK } from './theme.jsx'
 import { useEngSelf } from './data.jsx'
 export default function BragPanel({ reload }) {
   const [data, setData] = useState({ candidates: [], entries: [] })
   const [retro, setRetro] = useState({ worked: '', didnt: '', change: '' })
+  const [importing, setImporting] = useState(false)
   const { data: eng } = useEngSelf()
   const load = () => api.get('/api/career/brag').then(setData).catch(e => toast(e.message, 'error'))
   useEffect(() => { load() }, [])
+  const importGh = async () => {
+    setImporting(true)
+    try { const r = await api.post('/api/career/import/github'); toast(`imported ${r.prs} PRs`, 'success'); load(); reload?.() }
+    catch (e) { toast(e.message, 'error') } finally { setImporting(false) }
+  }
   const accept = async (c) => { await api.post('/api/career/brag', { entry: { title: c.title, impact: c.impact, evidence: c.evidence } }); toast('added to brag log', 'success'); load(); reload?.() }
 
   // JIRA-derived candidates: recently shipped tickets + cross-team bug fixes
@@ -26,12 +32,30 @@ export default function BragPanel({ reload }) {
           <button onClick={exportStory} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer' }}>⧉ story-so-far</button></div>
         {data.entries.slice(-10).reverse().map(e => <div key={e.id} style={{ font: `400 12px ${MONO}`, padding: '4px 0' }}>• {e.title}</div>)}
       </div>
+      {/* item 16 — candidates harvested from merged PRs, review footprint and ownership keystones.
+          When the GitHub drop is missing the server returns [] — which means "not imported", NOT
+          "you did nothing". Say that, and give the button that fixes it. */}
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Auto-seeded candidates <span style={{ color: MUTE, font: `400 11px ${MONO}` }}>· from JIRA + /insights</span></div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, flex: 1 }}>Auto-harvested candidates <span style={{ color: MUTE, font: `400 11px ${MONO}` }}>· merged PRs · reviews given · ownership keystones · JIRA</span></div>
+          <button onClick={importGh} disabled={importing} style={{ font: `600 11px ${MONO}`, color: importing ? MUTE : ACCENT, background: 'transparent', border: `1px solid ${importing ? '#30363d' : ACCENT + '55'}`, borderRadius: 6, padding: '4px 8px', cursor: importing ? 'default' : 'pointer' }}>{importing ? '↻ importing…' : '↓ import GitHub'}</button>
+        </div>
+        {/* the GitHub-sourced half of the harvest is missing → say so even when JIRA has candidates,
+            otherwise the absent source looks like an absent contribution */}
+        {!data.candidates.length && engCandidates.length ? (
+          <div style={{ font: `400 11px ${BODY}`, color: MUTE, marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #21262d' }}>
+            Showing JIRA-derived lines only — the merged-PR, review-footprint and ownership-keystone harvest needs a GitHub import, which is not configured.
+          </div>
+        ) : null}
         {[...engCandidates, ...data.candidates].length ? [...engCandidates, ...data.candidates].map(c => <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0' }}>
           <div style={{ flex: 1, font: `400 12px ${MONO}`, color: '#e6edf3' }}>{c.title}{c.impact ? <span style={{ color: GREEN }}> · {c.impact}</span> : null}</div>
           <button onClick={() => accept(c)} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>+ add</button>
-        </div>) : <div style={{ font: `400 12px ${MONO}`, color: '#8b949e' }}>no candidates — ship a ticket or run /insights</div>}
+        </div>) : (
+          <div style={{ font: `400 12px ${BODY}`, color: MUTE, lineHeight: 1.6 }}>
+            No GitHub import configured — the merged-PR / review-footprint / ownership harvest has nothing to read.
+            <br /><b style={{ color: INK }}>This is an empty source, not an empty year.</b> Hit <b style={{ color: ACCENT }}>↓ import GitHub</b> above (it shells the gh CLI you are already logged into, writes one JSON drop, and uploads nothing).
+          </div>
+        )}
       </div>
       <div style={PANEL}>
         <div style={{ font: `600 13px ${HEAD}`, color: ACCENT, marginBottom: 8 }}>Weekly retro (feeds Analyze + streak)</div>

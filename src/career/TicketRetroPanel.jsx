@@ -44,8 +44,48 @@ export default function TicketRetroPanel() {
               <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>{retro.estimateVsActual ? `estimate ${retro.estimateVsActual.estimateDays}d vs actual ${retro.estimateVsActual.actualDays?.toFixed?.(1) ?? '—'}d` : 'no estimate on file'}</div>
               <div style={{ font: `400 12px ${MONO}`, color: MUTE }}>reopened: {retro.reopened} · escaped bugs: {retro.escapedBugs}</div>
               <div style={{ font: `400 11px ${MONO}`, color: MUTE }}>cycle by phase: {Object.entries(retro.cycleByPhase || {}).map(([k, v]) => `${k} ${v.toFixed(1)}d`).join(' · ') || '—'}</div>
+              {/* item 13: the "no sessions" stub is DELETED. The join is real now — from the branch/commit
+                  strings the agent typed — so a retro either has sessions with a real cost, or it says
+                  honestly that THIS ticket is outside the joined sample and prints the coverage. */}
+              <SessionCost r={retro} />
             </div>}
       </div>
+    </div>
+  )
+}
+
+// What this ticket actually cost to build — from the persisted session↔ticket join (self-plane).
+function SessionCost({ r }) {
+  const cov = r.joinCoverage == null ? null : Math.round(r.joinCoverage * 100)
+  return (
+    <div style={{ marginTop: 6, paddingTop: 10, borderTop: '1px solid #21262d' }}>
+      {r.sessionsShown ? (
+        <>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 6 }}>
+            <Metric label="sessions" v={r.cost?.sessions ?? r.sessions.length} />
+            <Metric label="tokens" v={(r.cost?.tokens || 0).toLocaleString()} />
+            <Metric label="cost" v={r.cost?.usd == null ? '—' : `$${r.cost.usd.toFixed(2)}`} tone={PURPLE} />
+            <Metric label="link confidence" v={r.linkConfidence} tone={r.linkConfidence === 'high' ? GREEN : MUTE} />
+          </div>
+          {r.sessions.map(s => (
+            <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center', font: `400 11px ${MONO}`, color: MUTE, padding: '2px 0' }}>
+              <span style={{ color: INK }}>{s.id.slice(0, 8)}</span>
+              <span>via {s.via}</span>
+              <button onClick={() => navigator.clipboard.writeText(`claude --resume ${s.id}`).then(() => toast('resume command copied', 'success'))}
+                style={{ font: `600 10.5px ${MONO}`, color: GREEN, background: 'transparent', border: `1px solid ${GREEN}55`, borderRadius: 5, padding: '1px 6px', cursor: 'pointer' }}>⧉ resume</button>
+            </div>
+          ))}
+        </>
+      ) : (
+        <div style={{ font: `400 11.5px ${BODY}`, color: MUTE, lineHeight: 1.5 }}>
+          No session on this laptop carries this ticket's key in a branch or commit — so its build cost is <b style={{ color: INK }}>unknown</b>, not zero.
+        </div>
+      )}
+      {cov != null && (
+        <div style={{ font: `400 10.5px ${BODY}`, color: cov < 20 ? PURPLE : MUTE, marginTop: 6 }}>
+          Join coverage: {cov}% of this laptop's sessions carry a ticket key. Read every cost above against that.
+        </div>
+      )}
     </div>
   )
 }
