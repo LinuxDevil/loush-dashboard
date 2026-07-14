@@ -2337,22 +2337,36 @@ app.get('/api/search', (req, res) => {
 // ---------- plane-A bridge: the eng snapshot (server-eng.mjs OWNS it — we only read it) ----------
 // Zero new API calls, zero new auth: server-eng.mjs already caches the JIRA+GitHub aggregate for 2h.
 let engMod = null
-const engSnap = { at: 0, data: null, p: null }
+// at = last SUCCESS (drives ENG_TTL). errAt = last failure/unavailable (drives the short backoff).
+// Caching a null under ENG_TTL is the bug that served a crippled inbox for 10 minutes after every restart.
+const engSnap = { at: 0, errAt: 0, data: null, p: null }
 const ENG_TTL = 10 * 60_000
+const ENG_ERR_TTL = 15_000      // failure backoff: seconds, not minutes — a cold start must converge fast
+const ENG_COLD_WAIT = 90_000    // first-ever fetch (~65s of live JIRA+GitHub): wait it out rather than serve a 3-item inbox.
+                                // All cold callers await the SAME in-flight promise, so this is one fetch, not one per poll.
 async function loadEngSnapshot() {
   engMod ||= await import('./server-eng.mjs')
   if (typeof engMod.snapshotAll === 'function') return await engMod.snapshotAll() // in-process, once server-eng exports it
   const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/snapshot?project=all`)   // fallback: its own route, same cache
   return await r.json()
 }
-// wait=false: never block the caller on a cold snapshot (the inbox polls every 60s — it can wait a poll)
+// wait=false: don't block on a *refresh* of a snapshot we already have (the inbox polls every 60s — it can wait a poll).
+// But a caller with NO snapshot at all is blocked briefly (ENG_COLD_WAIT), because "no data" is not a valid answer.
 async function engSnapshot(wait = true) {
-  if (!engSnap.p && Date.now() - engSnap.at > ENG_TTL)
+  const now = Date.now()
+  const stale = !engSnap.data || now - engSnap.at > ENG_TTL
+  const backoff = !engSnap.data && now - engSnap.errAt < ENG_ERR_TTL // only successes get the long TTL
+  if (!engSnap.p && stale && !backoff)
     engSnap.p = loadEngSnapshot()
-      .then(d => { if (d?.available) engSnap.data = d; engSnap.at = Date.now(); engSnap.p = null; return engSnap.data })
-      .catch(() => { engSnap.at = Date.now(); engSnap.p = null; return engSnap.data })
-  if (engSnap.data || !wait) return engSnap.data // serve the warm snapshot; the refresh finishes in the background
-  try { return await engSnap.p } catch { return null }
+      .then(d => { if (d?.available) { engSnap.data = d; engSnap.at = Date.now() } else engSnap.errAt = Date.now(); engSnap.p = null; return engSnap.data })
+      .catch(() => { engSnap.errAt = Date.now(); engSnap.p = null; return engSnap.data })
+  if (engSnap.data) return engSnap.data // warm: serve it, any refresh finishes in the background
+  if (!engSnap.p) return null           // cold + inside the error backoff: next request retries
+  if (wait) { try { return await engSnap.p } catch { return null } }
+  // cold, no data: wait a bounded while for the in-flight fetch rather than serve a hollow answer
+  let t
+  try { return await Promise.race([engSnap.p.catch(() => null), new Promise(r => { t = setTimeout(() => r(null), ENG_COLD_WAIT) })]) }
+  finally { clearTimeout(t) }
 }
 
 // ---------- 1: delivery risk in the inbox (plane A → work items) ----------
@@ -2435,8 +2449,12 @@ async function inboxItems() {
     for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)).slice(0, 8)) {
       const hub = hubResolve(dir)
       for (const f of (hub.findings || []).filter(f => f.severity === 'error').slice(0, 2)) {
-        const key = 'finding:' + f.text.slice(0, 60)
-        if (!dismissed[key]) items.push({ key, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'library' })
+        // the same finding text is raised against several projects — the key MUST carry the project or the rows
+        // collide (React dup-key) and clearing one clears "both" (inboxDone is keyed by this). legacyKey keeps
+        // pre-fix clears/dismissals honoured (old format: 'finding:<text>', no project).
+        const legacyKey = 'finding:' + f.text.slice(0, 60)
+        const key = `finding:${dir}:${f.text.slice(0, 60)}`
+        if (!dismissed[key] && !dismissed[legacyKey]) items.push({ key, legacyKey, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'library' })
       }
     }
   } catch {}
@@ -2472,7 +2490,11 @@ async function inboxItems() {
     return v.until > Date.now() ? { done: true, snoozedUntil: v.until } : { done: false, snoozedUntil: null } // snooze expired → back
   }
   const sev = { error: 0, warning: 1, info: 2 }
-  return items.map(i => ({ ...i, ...doneOf(done[i.key]) })).sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
+  // legacyKey (if any) is the pre-fix key for the same item — read-through so nothing already cleared comes back.
+  // It never reaches the client: /api/inbox/done always writes the new key.
+  return items
+    .map(({ legacyKey, ...i }) => ({ ...i, ...doneOf(done[i.key] ?? (legacyKey ? done[legacyKey] : undefined)) }))
+    .sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
 }
 app.get('/api/inbox', async (req, res) => {
   const items = await inboxItems()
@@ -3260,6 +3282,9 @@ app.get('/api/hooks/health', (req, res) => {
     // ponytail: firings counted from transcript hook-context lines — latency is not recorded there; measure a hook's cost with dry-run
     note: 'firings parsed from transcript hook-output lines · per-call latency not in transcripts — use dry-run to time a hook' })
 })
+// PostToolUse cap: exits 0 (never blocks) when the result is small; when it is oversized it emits the head of the
+// result plus an explicit "cut N chars" note as additionalContext, so the model sees a bounded, honest result.
+const truncateCmd = (tool, max) => `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const r=j.tool_response;const t=typeof r==='string'?r:JSON.stringify(r==null?'':r);if(t.length<=${max})process.exit(0);const note='[truncate-tool-result] ${tool} returned '+t.length+' chars, capped at ${max}. First ${max} chars follow; re-read a narrower range (offset/limit, head, grep) for the rest.\\n\\n'+t.slice(0,${max});console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:note},systemMessage:'${tool} result capped: '+t.length+' → ${max} chars'}))})"`
 const HOOK_LIBRARY = [
   { name: 'block-prod-file-edit', event: 'PreToolUse', matcher: 'Edit|Write', description: 'blocks edits to .env, secrets, and prod-named paths',
     command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const p=(JSON.parse(s).tool_input||{}).file_path||'';if(/\\.env|secrets\\/|\\bprod(uction)?\\b/.test(p)){console.error('blocked: protected path '+p);process.exit(2)}})"` },
@@ -3269,10 +3294,23 @@ const HOOK_LIBRARY = [
     command: `sh -c 'CH=$(git diff --name-only HEAD 2>/dev/null); echo "$CH" | grep -qE "\\.(ts|js|py|go|tsx)$" || exit 0; echo "$CH" | grep -qE "(test|spec)" && exit 0; echo "source changed but no tests touched" >&2; exit 2'` },
   { name: 'log-tool-usage', event: 'PostToolUse', matcher: '', description: 'appends every tool call to ~/.claude/tool-log.jsonl for auditing',
     command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);require('fs').appendFileSync(require('os').homedir()+'/.claude/tool-log.jsonl',JSON.stringify({t:Date.now(),tool:j.tool_name})+'\\n')})"` },
+  // "Cap this tool" installs this one. Parameterised: params are merged from the install body, so ONE pattern
+  // covers any tool whose median result blows out the context window (Read is ~57% of every byte pulled in).
+  { name: 'truncate-tool-result', event: 'PostToolUse', matcher: 'Read', description: 'caps an oversized tool result — keeps the head, tells the model what was cut (params: tool, maxChars)',
+    params: { tool: 'Read', maxChars: 20000 }, command: truncateCmd('Read', 20000) },
 ]
-app.get('/api/hooks/library', (req, res) => res.json(HOOK_LIBRARY))
+app.get('/api/hooks/library', (req, res) => res.json(HOOK_LIBRARY)) // `command` is the default rendering; params are re-applied on install
+// name + optional params → the concrete pattern to write. Parameterless patterns are returned untouched.
+function resolvePattern(name, params) {
+  const pat = HOOK_LIBRARY.find(h => h.name === name)
+  if (!pat || !pat.params) return pat
+  const p = { ...pat.params, ...(params || {}) }
+  const tool = String(p.tool || pat.params.tool).replace(/[^\w|]/g, '')          // matcher is a regex — keep it a tool name
+  const maxChars = Math.max(500, Math.min(500_000, Number(p.maxChars) || pat.params.maxChars))
+  return { ...pat, matcher: tool, params: { tool, maxChars }, command: truncateCmd(tool, maxChars) }
+}
 app.post('/api/hooks/install', (req, res) => {
-  const pat = HOOK_LIBRARY.find(h => h.name === req.body.name)
+  const pat = resolvePattern(req.body.name, req.body.params)
   const scope = req.body.scope || 'global'
   if (!pat) return res.status(404).json({ error: 'unknown pattern' })
   const file = settingsFileFor(scope)
@@ -4252,4 +4290,9 @@ app.post('/api/runs/approve', (req, res) => {
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))
-app.listen(PORT, () => console.log(`[claude-dashboard] API on http://localhost:${PORT}`))
+app.listen(PORT, () => {
+  console.log(`[claude-dashboard] API on http://localhost:${PORT}`)
+  // start the plane-A fetch at boot, not at first request: the inbox badge/notification/Slack push are wrong
+  // until it lands, so the clock should start now. Failure is fine — it retries (short backoff), it never caches null.
+  engSnapshot(true).then(s => console.log(`[claude-dashboard] eng snapshot ${s?.available ? 'warm' : 'unavailable (will retry)'}`)).catch(() => {})
+})
