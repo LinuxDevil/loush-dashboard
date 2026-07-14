@@ -1,17 +1,33 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
-import { usePager } from './Pager.jsx'
 
+// Overview — the landing page answers ONE question: what needs a human today?
+//
+// DELETED (all four personas asked for this, independently):
+//   · the gamification layer — Pilot Level, XP bar, 🔥 streak, the 10 achievement badges. XP was
+//     literally all-time assistant MESSAGE COUNT: the fastest way to level up was a long, thrashing,
+//     unproductive conversation. It rewarded exactly the behaviour the tool exists to reduce.
+// DEMOTED (moved, not deleted):
+//   · Setup-health ring / Level / Specificity / Quality distribution → Capabilities, as an authoring
+//     aid. All three rendered the same static frontmatter heuristic: a linter cosplaying as a metric.
+//     The metric that replaced it is fires × always-on cost (Capabilities → ROI ledger).
+//   · "cache saved $" → Harness → Sessions. An estimate × an estimate against a counterfactual that
+//     never happened, that only ever goes up. No decision hangs on it.
+//   · Inventory table → Capabilities. Tool-usage bars / model bars / the 18-week output-token heatmap
+//     → Harness → Usage (the heatmap is a green-squares clone measuring "was he typing").
+// RERANKED: Top projects sorted by SESSIONS, not by output tokens (which rewarded whichever project
+//   made Claude write the most text).
 const A = '#d97757'
-const LEVEL_COLOR = { poor: '#e5484d', good: '#e5a03a', excellent: '#3fb96a', perfect: '#8b7cf6' }
-const LEVELS = ['poor', 'good', 'excellent', 'perfect']
 const PROJ_COLORS = ['#5eb3f6', '#3fb96a', '#8b7cf6', '#e8a06a', '#d97757', '#c98bf6']
+const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a'
+const MONO = "'IBM Plex Mono', monospace"
+const HEAD = "'Space Grotesk', sans-serif"
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
-const xpLevel = msgs => Math.floor(Math.sqrt(msgs / 50))
-const xpNext = lvl => (lvl + 1) ** 2 * 50
+const d1 = n => (Math.round(n * 10) / 10).toFixed(1)
+const pctl = (arr, q) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor((s.length - 1) * q))] }
 
 const sparkPts = (arr, h = 26) => {
   const mx = Math.max(...arr), mn = Math.min(...arr), rng = mx - mn || 1, n = arr.length
@@ -23,238 +39,176 @@ const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   </svg>
 )
 
-function HealthRing({ score }) {
-  const R = 30, C = 2 * Math.PI * R
+function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint }) {
   return (
-    <svg width="72" height="72" viewBox="0 0 72 72" role="img" aria-label={`setup health ${score}/100`}>
-      <defs><linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#e8a06a" /><stop offset="1" stopColor="#d97757" /></linearGradient></defs>
-      <circle cx="36" cy="36" r={R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="7" />
-      <circle cx="36" cy="36" r={R} fill="none" stroke="url(#ring)" strokeWidth="7" strokeLinecap="round"
-        strokeDasharray={`${(score / 100) * C} ${C}`} transform="rotate(-90 36 36)" style={{ filter: 'drop-shadow(0 0 6px rgba(217,119,87,0.5))' }} />
-      <text x="36" y="34" textAnchor="middle" style={{ font: "600 20px 'Space Grotesk'", fill: '#f6efe9' }}>{score}</text>
-      <text x="36" y="48" textAnchor="middle" style={{ font: "500 9px 'IBM Plex Mono'", fill: '#8a807a' }}>/100</text>
-    </svg>
-  )
-}
-
-function Kpi({ label, tag, value, sub, accent, data, delay }) {
-  return (
-    <div className="kpi" style={{ animationDelay: delay }}>
-      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.dim ? { color: '#8a807a', background: 'rgba(255,255,255,0.05)' } : null}>{tag.text}</span>}</div>
+    <div className="kpi" style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
+      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: '#8a807a', background: 'rgba(255,255,255,0.05)' } : null}>{tag.text}</span>}</div>
       <div className="kpi-value">{value}</div>
       <div className="kpi-sub">{sub}</div>
-      {data && <Spark data={data} color={accent} />}
+      {data && data.length > 1 && <Spark data={data} color={accent} />}
     </div>
   )
 }
 
-function Bars({ data, unit }) {
-  const max = Math.max(...data.map(d => d.value), 1)
+// ---------- 2: the five delivery tiles (plane A — JIRA + GitHub, team-visible artifacts) ----------
+const weekKey = t => { const d = new Date(t); const day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10) }
+
+function DeliveryTiles({ snap, onNav }) {
+  const t = useMemo(() => {
+    if (!snap?.available) return null
+    const issues = snap.issues || [], prs = snap.prs || []
+    const now = Date.now(), D = n => now - n * 86400_000
+    const active = issues.filter(i => i.active)
+    const atRisk = active.filter(i => i.rec?.atRisk)
+    const closedIn = (from, to) => issues.filter(i => i.live && i.closedAt && Date.parse(i.closedAt) >= from && Date.parse(i.closedAt) < to)
+    const shipped30 = closedIn(D(30), now)
+    // 12-week shipped sparkline
+    const wks = {}
+    for (let w = 11; w >= 0; w--) wks[weekKey(D(w * 7))] = 0
+    for (const i of closedIn(D(84), now)) { const k = weekKey(Date.parse(i.closedAt)); if (k in wks) wks[k]++ }
+    const cyc = list => list.map(i => i.delivery).filter(n => typeof n === 'number' && n >= 0)
+    const cur = cyc(closedIn(D(30), now)), prev = cyc(closedIn(D(60), D(30)))
+    const p50 = pctl(cur, 0.5), p90 = pctl(cur, 0.9), p50prev = pctl(prev, 0.5)
+    const openPrs = prs.filter(p => p.state !== 'Merged' && p.state !== 'Closed')
+    const noReview = openPrs.filter(p => !(p.reviewEvents || []).length)
+    const oldestPr = openPrs.length ? Math.max(...openPrs.map(p => p.openDays || 0)) : 0
+    const worstRisk = atRisk.length ? Math.max(...atRisk.map(i => -(i.rec?.remaining || 0))) : 0
+    return {
+      inFlight: active.length, atRisk: atRisk.length, worstRisk,
+      shipped30: shipped30.length, spark: Object.values(wks),
+      pts30: shipped30.reduce((s, i) => s + (i.pts || 0), 0),
+      p50, p90, delta: p50 != null && p50prev != null ? p50 - p50prev : null, n: cur.length,
+      openPrs: openPrs.length, noReview: noReview.length, oldestPr,
+    }
+  }, [snap])
+
+  if (!snap) return <div className="kpi-grid">{[0, 1, 2, 3, 4].map(i => <div className="kpi" key={i}><div className="kpi-label"><span>delivery</span></div><div className="kpi-value" style={{ color: '#5a514a' }}>…</div><div className="kpi-sub">reading JIRA + GitHub…</div></div>)}</div>
+  if (!snap.available) return (
+    <div className="panel" style={{ borderColor: 'rgba(229,160,58,0.3)' }}>
+      <h3>Delivery <span className="muted">not configured</span></h3>
+      <p className="small" style={{ marginTop: 0 }}>The delivery tiles read <code>/api/eng/snapshot</code> — {snap.reason || snap.error || 'JIRA credentials / gh auth are not wired'}. Nothing is fabricated here: no snapshot, no numbers.</p>
+    </div>
+  )
+  const go = () => onNav?.('delivery')
   return (
-    <div className="bars">
-      {data.map(d => (
-        <div className="bar-row" key={d.label} title={`${d.label}: ${fmtTok(d.value)} ${unit}`}>
-          <div className="bar-label">{d.label}</div>
-          <div className="bar-track"><div className="bar-fill" style={{ width: (d.value / max) * 100 + '%', background: `linear-gradient(90deg, ${d.color || A}, ${d.color || A}cc)`, boxShadow: d.glow ? `0 0 10px ${d.color}55` : 'none' }} /></div>
-          <div className="bar-value">{fmtTok(d.value)}</div>
-        </div>
-      ))}
+    <div className="kpi-grid">
+      <Kpi label="in flight" delay=".02s" accent={A} onClick={go} hint="active tickets — JIRA, team-visible"
+        value={t.inFlight} tag={t.atRisk ? { text: `${t.atRisk} at risk`, color: RED } : { text: 'on budget', color: GREEN }}
+        sub={t.atRisk ? `worst is ${d1(t.worstRisk)}d past its stage budget` : 'nothing past its stage budget'} />
+      <Kpi label="shipped · 30d" delay=".06s" accent={GREEN} onClick={go} data={t.spark} hint="tickets that reached Live/Closed · 12-week trend"
+        value={t.shipped30} tag={{ text: `${t.pts30} pts`, dim: true }} sub="12-week trend" />
+      <Kpi label="cycle time" delay=".1s" accent="#8b7cf6" onClick={go} hint="working days, first In Progress → live. p50/p90 over the last 30d vs the 30d before it."
+        value={t.p50 == null ? '—' : `${d1(t.p50)}d`}
+        tag={t.delta == null ? { text: 'n<1', dim: true } : { text: `${t.delta > 0 ? '+' : ''}${d1(t.delta)}d`, color: t.delta > 0 ? RED : GREEN }}
+        sub={t.p50 == null ? 'nothing shipped in 30d' : `p90 ${d1(t.p90)}d · n=${t.n}`} />
+      <Kpi label="at-risk commitments" delay=".14s" accent={GOLD} onClick={go} hint="tickets past the budget for the stage they are sitting in"
+        value={t.atRisk} tag={{ text: `of ${t.inFlight}`, dim: true }}
+        sub={t.atRisk ? 'each one has a nudge line in the Inbox' : '✓ nothing over budget'} />
+      <Kpi label="review queue" delay=".18s" accent={t.noReview ? RED : GREEN} onClick={go} hint="open PRs · oldest wait in working days"
+        value={t.openPrs} tag={t.noReview ? { text: `${t.noReview} unreviewed`, color: RED } : { text: 'all seen', color: GREEN }}
+        sub={t.openPrs ? `oldest has waited ${d1(t.oldestPr)} working days` : 'no open PRs'} />
     </div>
   )
 }
 
-function Heatmap({ daily }) {
-  const max = Math.max(...daily.map(d => d.out), 1)
+// ---------- 4: cross-repo CI strip — a red badge when main is red ----------
+function CiStrip({ onNav }) {
+  const [ci, setCi] = useState(null)
+  useEffect(() => { api.get('/api/ci/health?days=14').then(setCi).catch(() => {}) }, [])
+  if (!ci || !ci.repos?.length) return null
+  const red = ci.repos.filter(r => r.mainRed)
   return (
-    <div className="heat-grid">
-      {daily.map(d => {
-        const v = d.out / max
-        const bg = d.out === 0 ? 'rgba(255,255,255,0.05)' : `rgba(217,119,87,${(0.3 + Math.min(1, Math.pow(v, 0.5)) * 0.6).toFixed(2)})`
-        return <div key={d.date} className="heat-cell" title={`${d.date}: ${fmtTok(d.out)} out tok · ${d.msgs} msgs`}
-          style={{ background: bg, boxShadow: v > 0.4 ? '0 0 6px rgba(217,119,87,0.4)' : 'none' }} />
-      })}
-    </div>
-  )
-}
-
-function Achievements({ items, usage, hookCount }) {
-  const scored = items.filter(i => i.score !== null)
-  const tagged = items.filter(i => i.tags.length).length
-  const defs = [
-    ['S', 'Skill Collector', '25+ skills installed', items.filter(i => i.kind === 'skills').length >= 25],
-    ['P', 'Prompt Smith', '5+ commands w/ arg hints', items.filter(i => i.kind === 'commands' && i.specificity >= 40).length >= 5],
-    ['A', 'Agent Army', '20+ subagents defined', items.filter(i => i.kind === 'agents').length >= 20],
-    ['H', 'Hook Master', '5+ hooks wired up', hookCount >= 5],
-    ['★', 'Perfectionist', 'any item scores ≥ 90', scored.some(i => i.score >= 90)],
-    ['W', 'No Dead Weight', 'zero poor-level items', scored.length > 0 && !scored.some(i => i.level === 'poor')],
-    ['C', 'Curator', '10+ items tagged', tagged >= 10],
-    ['R', 'On A Roll', '7-day usage streak', (usage?.streak || 0) >= 7],
-    ['V', 'Veteran', '100+ active days', (usage?.activeDays || 0) >= 100],
-    ['F', 'Context Saver', 'always-loaded < 8k tok', items.reduce((s, i) => s + i.descTokens, 0) < 8000],
-  ]
-  const unlocked = defs.filter(d => d[3]).length
-  return (
-    <div className="panel" style={{ animationDelay: '.4s' }}>
-      <h3>Achievements <span className="muted">{unlocked} / {defs.length} unlocked</span></h3>
-      <div className="badges">
-        {defs.map(([glyph, name, desc, done]) => (
-          <div key={name} className={'badge-card' + (done ? ' unlocked' : '')}>
-            <div className="badge-top">
-              <div className="badge-glyph">{glyph}</div>
-              <span className="badge-tag">{done ? 'UNLOCKED' : 'LOCKED'}</span>
+    <div className="panel" style={{ animationDelay: '.22s', borderColor: red.length ? 'rgba(229,72,77,0.35)' : undefined, background: red.length ? 'linear-gradient(90deg, rgba(229,72,77,0.09), rgba(28,24,21,0.55))' : undefined }}>
+      <div className="panel-head" style={{ marginBottom: 10 }}>
+        <h3>CI health <span className="muted">default branch · {ci.days}d · {ci.repos.length} repo{ci.repos.length === 1 ? '' : 's'}</span></h3>
+        {red.length > 0 && <span style={{ font: `700 10px ${MONO}`, letterSpacing: '0.08em', padding: '4px 9px', borderRadius: 6, color: '#fff', background: RED }}>MAIN IS RED</span>}
+        <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('delivery')}>open CI</button>
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {ci.repos.map(r => (
+          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer"
+            style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 12, border: `1px solid ${r.mainRed ? RED + '66' : 'rgba(255,255,255,0.06)'}`, background: 'rgba(255,255,255,0.02)' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? '#6a615a' : r.mainRed ? RED : GREEN, boxShadow: `0 0 8px ${r.mainRed ? RED : GREEN}` }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ font: `500 12.5px ${MONO}`, color: '#eee3da', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
+              <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>
+                {r.error ? r.error.slice(0, 40)
+                  : r.failureRate == null ? `no completed runs on ${r.branch} in ${ci.days}d`
+                    : `${Math.round(r.failureRate * 100)}% fail · ${r.flaky.length} flaky · ${r.medianDurationMin ?? '—'}m median`}
+              </div>
             </div>
-            <div className="badge-name">{name}</div>
-            <div className="badge-desc">{desc}</div>
-          </div>
+            {r.mainRed && <span style={{ font: `700 9px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
+          </a>
         ))}
       </div>
+      {!ci.ghAvailable && <p className="small">gh CLI is not authenticated — CI health is unavailable, not zero.</p>}
     </div>
   )
 }
 
-const COLS = [['name', 'Name'], ['kind', 'Kind'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Level'], ['specificity', 'Spec.']]
-
-export default function Overview() {
-  const [data, setData] = useState(null)
+export default function Overview({ onNav }) {
   const [usage, setUsage] = useState(null)
   const [usageErr, setUsageErr] = useState(null)
+  const [snap, setSnap] = useState(null)
   const [projects, setProjects] = useState([])
-  const [hookCount, setHookCount] = useState(0)
   const [pins, setPins] = useState([])
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
-  const [q, setQ] = useState('')
-  const [kind, setKind] = useState('')
-  const [sort, setSort] = useState({ col: 'score', dir: -1 })
+  const [cap, setCap] = useState(null)
 
   useEffect(() => {
-    api.get('/api/overview').then(setData)
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
+    api.get('/api/eng/snapshot?project=all').then(setSnap).catch(() => setSnap({ available: false, reason: 'the eng snapshot could not be read' }))
+    api.get('/api/capabilities').then(setCap).catch(() => {})
     api.get('/api/projects').then(ps => {
       setProjects(ps)
       const cur = ps.find(p => p.current)
       if (cur) api.get('/api/memory/recent?path=' + encodeURIComponent(cur.path)).then(setMemory).catch(() => {})
     }).catch(() => {})
     api.get('/api/pins').then(setPins).catch(() => {})
-    api.get('/api/hooks').then(d => {
-      let n = 0
-      for (const s of Object.values(d)) for (const groups of Object.values(s.settings?.hooks || {})) for (const g of groups) n += (g.hooks || []).length
-      setHookCount(n)
-    }).catch(() => {})
   }, [])
 
-  const items = data?.items || []
-  const kinds = useMemo(() => [...new Set(items.map(i => i.kind))], [items])
-  const filtered = useMemo(() => {
-    let r = items.filter(i => (!kind || i.kind === kind) && (!q || (i.name + ' ' + i.group + ' ' + i.tags.join(' ')).toLowerCase().includes(q.toLowerCase())))
-    r.sort((a, b) => {
-      const x = a[sort.col], y = b[sort.col]
-      if (x === null) return 1
-      if (y === null) return -1
-      return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y)))
-    })
-    return r
-  }, [items, q, kind, sort])
-
-  const editTags = it => {
-    const t = prompt(`Tags for ${it.name} (comma-separated):`, it.tags.join(', '))
-    if (t === null) return
-    api.put('/api/tags', { key: `${it.kind}:${it.name}`, tags: t.split(',').map(s => s.trim()).filter(Boolean) })
-      .then(() => api.get('/api/overview').then(setData))
-  }
-
-  const scored = items.filter(i => i.score !== null)
-  const health = scored.length ? Math.round(scored.reduce((s, i) => s + i.score, 0) / scored.length) : 0
-  const alwaysTok = items.reduce((s, i) => s + i.descTokens, 0)
-  const hog = items.length ? [...items].sort((a, b) => b.fullTokens - a.fullTokens)[0] : null
   const ab = usage?.activeBlock
-  const lvl = usage ? xpLevel(usage.totalMsgs) : 0
-  const xpPct = usage ? Math.round(((usage.totalMsgs - lvl ** 2 * 50) / (xpNext(lvl) - lvl ** 2 * 50)) * 100) : 0
   const d = usage?.daily || []
   const last10 = key => d.slice(-10).map(x => x[key])
-  const models = usage ? Object.entries(usage.perModel).map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5) : []
-  const levelDist = LEVELS.map(l => ({ label: l, value: scored.filter(i => i.level === l).length, color: LEVEL_COLOR[l], glow: true }))
-  const top = projects.filter(p => p.usage).slice(0, 4)
-  const inv = usePager(filtered, 15)
+  // RERANKED: sessions, not output tokens. Ranking by tokens rewarded whichever project made Claude type most.
+  const top = useMemo(() => [...projects.filter(p => p.usage)].sort((a, b) => (b.sessions || 0) - (a.sessions || 0) || (b.commits || 0) - (a.commits || 0)).slice(0, 4), [projects])
 
-  if (!data) return <Skeleton tiles={4} rows={8} />
+  if (!usage && !usageErr && !snap) return <Skeleton tiles={5} rows={6} />
 
   return (
     <div className="overview">
-      <div className="kpi-grid">
-        <div className="kpi ring">
-          <HealthRing score={health} />
-          <div>
-            <div className="kpi-label">Setup health</div>
-            <div className="kpi-sub" style={{ marginTop: 6, lineHeight: 1.5 }}>
-              {scored.length} scored items<br />
-              {levelDist[2].value} excellent · {levelDist[3].value} perfect
+      <DeliveryTiles snap={snap} onNav={onNav} />
+      <CiStrip onNav={onNav} />
+
+      {cap?.headline?.deadCount > 0 && (
+        <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'rgba(229,160,58,0.14)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ font: `600 13.5px ${HEAD}`, color: '#f2ebe4' }}>You pay {cap.headline.alwaysOnTokens.toLocaleString()} tok every session for {cap.items.length} capabilities.</div>
+            <div style={{ font: `400 11.5px ${MONO}`, color: '#8a807a', marginTop: 3 }}>
+              <b style={{ color: RED }}>{cap.headline.deadCount} have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
             </div>
           </div>
+          <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
         </div>
-        <Kpi label="5h output" tag={ab ? { text: `${ab.msgs} msgs` } : { text: 'idle', dim: true }} accent={A} delay=".05s"
+      )}
+
+      <div className="kpi-grid">
+        <Kpi label="5h output" tag={ab ? { text: `${ab.msgs} msgs` } : { text: 'idle', dim: true }} accent={A} delay=".26s"
           value={ab ? fmtTok(ab.out) : '—'} sub={ab ? `resets ${fmtDur(ab.end - Date.now())}` : usageErr || 'no active block'} data={usage && last10('out')} />
-        <Kpi label="lines · 7d" tag={{ text: `+${fmtTok(usage?.kpis.lines7d.add || 0)}` }} accent="#3fb96a" delay=".1s"
+        <Kpi label="lines · 7d" tag={{ text: `+${fmtTok(usage?.kpis.lines7d.add || 0)}` }} accent={GREEN} delay=".3s"
           value={usage ? fmtTok(usage.kpis.lines7d.add + usage.kpis.lines7d.del) : '…'}
           sub={usage ? `+${fmtTok(usage.kpis.lines7d.add)} · −${fmtTok(usage.kpis.lines7d.del)} (edits)` : ''} data={usage && last10('lines')} />
-        <Kpi label="tool calls" tag={{ text: 'today' }} accent="#8b7cf6" delay=".15s"
+        <Kpi label="tool calls" tag={{ text: 'today' }} accent="#8b7cf6" delay=".34s"
           value={usage ? fmtTok(usage.kpis.toolCallsToday) : '…'} sub={usage ? `${fmtTok(usage.kpis.toolCallsTotal)} all-time` : ''} data={usage && last10('tools')} />
-        <Kpi label="sessions" tag={{ text: '30d', dim: true }} accent="#e8a06a" delay=".2s"
-          value={usage ? usage.kpis.sessions30 : '…'} sub={usage ? `${usage.activeDays} active days` : ''} data={usage && last10('msgs')} />
-        <Kpi label="cache saved" tag={{ text: 'est', dim: true }} accent="#3fb96a" delay=".25s"
-          value={usage ? '$' + fmtTok(usage.kpis.costSaved) : '…'}
-          sub={usage ? `${fmtTok(usage.kpis.cacheReadTok)} cached tok vs uncached` : ''} data={usage && last10('out')} />
+        <Kpi label="sessions" tag={{ text: '30d', dim: true }} accent="#e8a06a" delay=".38s" onClick={() => onNav?.('harness')}
+          value={usage ? usage.kpis.sessions30 : '…'} sub={usage ? `${usage.activeDays} active days · open the ledger` : ''} data={usage && last10('msgs')} />
       </div>
-
-      <div className="gami-strip">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div className="gami-lv">{lvl}</div>
-          <div>
-            <div className="gami-title">Pilot Level {lvl}</div>
-            <div className="gami-meta">{usage ? fmtTok(usage.totalMsgs) : '…'} messages all-time</div>
-          </div>
-        </div>
-        <div className="gami-bar-wrap">
-          <div className="gami-bar-labels"><span>{xpPct}% to Lv {lvl + 1}</span><span>{usage?.activeDays || 0} active days</span></div>
-          <div className="xp-track"><div className="xp-fill" style={{ width: xpPct + '%' }} /></div>
-        </div>
-        <div className="gami-streak">
-          <span className="flame">🔥</span>
-          <div><b>{usage ? usage.streak : '…'} day{usage?.streak === 1 ? '' : 's'}</b><span>streak</span></div>
-        </div>
-      </div>
-
-      <div className="grid-wide">
-        <div className="panel" style={{ animationDelay: '.2s', marginBottom: 0 }}>
-          <div className="panel-head">
-            <h3>Activity <span className="muted">output tokens · 18 wks</span></h3>
-            <div className="heat-legend">less<i style={{ background: 'rgba(255,255,255,0.06)' }} /><i style={{ background: 'rgba(217,119,87,0.35)' }} /><i style={{ background: 'rgba(217,119,87,0.6)' }} /><i style={{ background: 'rgba(217,119,87,0.9)' }} />more</div>
-          </div>
-          {usage ? <Heatmap daily={usage.daily} /> : <p className="muted">{usageErr || 'parsing transcripts…'}</p>}
-        </div>
-        <div className="panel" style={{ animationDelay: '.25s', marginBottom: 0 }}>
-          <h3>Tool usage <span className="muted">all time</span></h3>
-          {usage ? <Bars unit="calls" data={usage.tools.map((t, i) => ({ label: t.name.replace(/^mcp__.*__/, 'mcp:'), value: t.count, color: [A, '#e8a06a', '#8b7cf6', '#5eb3f6', '#3fb96a', '#f0b455', '#c98bf6'][i] }))} /> : <p className="muted">…</p>}
-        </div>
-      </div>
-
-      <div className="grid-2">
-        <div className="panel" style={{ animationDelay: '.3s' }}>
-          <h3>Most used models <span className="muted">all time</span></h3>
-          {usage ? <Bars data={models} unit="msgs" /> : <p className="muted">…</p>}
-        </div>
-        <div className="panel" style={{ animationDelay: '.35s' }}>
-          <h3>Quality distribution <span className="muted">{scored.length} items</span></h3>
-          <Bars data={levelDist} unit="items" />
-          <p className="small">context: {fmtTok(alwaysTok)} tok always-loaded · biggest on-invoke: {hog ? `${hog.name} (${fmtTok(hog.fullTokens)})` : '—'}</p>
-        </div>
-      </div>
-
-      <Achievements items={items} usage={usage} hookCount={hookCount} />
 
       <div className="grid-2" style={{ gridTemplateColumns: '1.2fr 1fr' }}>
-        <div className="panel" style={{ animationDelay: '.45s' }}>
-          <h3>Top projects</h3>
+        <div className="panel" style={{ animationDelay: '.42s' }}>
+          <h3>Top projects <span className="muted">by sessions</span></h3>
           <div className="mini-list">
             {top.map((p, i) => (
               <div className="mini-row" key={p.path}>
@@ -264,23 +218,27 @@ export default function Overview() {
                   <div className="mini-meta">{p.sessions} sessions{p.commits ? ` · ${p.commits} commits` : ''}</div>
                 </div>
                 <Spark data={p.usage.spark} color={PROJ_COLORS[i % 6]} h={24} className="" />
-                <span className="mini-val">{fmtTok(p.usage.out)}</span>
+                <span className="mini-val">{p.sessions}</span>
               </div>
             ))}
+            {top.length === 0 && <p className="small" style={{ marginTop: 0 }}>no project usage recorded yet</p>}
           </div>
         </div>
-        <div className="panel" style={{ animationDelay: '.5s' }}>
-          <h3>Recent sessions {pins.length > 0 && <span className="muted">+ {pins.length} pinned</span>}</h3>
+        <div className="panel" style={{ animationDelay: '.46s' }}>
+          <div className="panel-head">
+            <h3>Recent sessions {pins.length > 0 && <span className="muted">+ {pins.length} pinned</span>}</h3>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('harness')}>full ledger →</button>
+          </div>
           {pins.slice(0, 3).map(p => (
             <div className="sess-row" key={p.sessionId}>
-              <span style={{ color: '#e5a03a', flexShrink: 0 }}>★</span>
+              <span style={{ color: GOLD, flexShrink: 0 }}>★</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="mini-name">{p.label || p.title || p.sessionId}</div>
                 <div className="mini-meta">{(p.cwd || '').split('/').pop()} · resume from Chat{p.configVersion ? ` · cfg ${p.configVersion}` : ''}</div>
               </div>
             </div>
           ))}
-          {usage?.recentSessions.filter(s => !pins.some(p => p.sessionId === s.sessionId)).map((s, i) => (
+          {(usage?.recentSessions || []).filter(s => !pins.some(p => p.sessionId === s.sessionId)).map((s, i) => (
             <div className="sess-row" key={s.sessionId || i}>
               <span className="sess-dot" style={{ background: PROJ_COLORS[i % 6] }} />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -294,11 +252,11 @@ export default function Overview() {
       </div>
 
       {memory?.items?.length > 0 && (
-        <div className="panel" style={{ animationDelay: '.52s' }}>
+        <div className="panel" style={{ animationDelay: '.5s' }}>
           <h3>◆ Memory <span className="muted">{memory.project} · {memory.items.length} recalled · your past self</span></h3>
           <div className="mini-list">
             {memory.items.map(m => {
-              const c = { user: '#8a807a', feedback: '#e8a06a', project: '#5eb3f6', reference: '#3fb96a', memory: '#c98bf6' }[m.type] || '#c98bf6'
+              const c = { user: '#8a807a', feedback: '#e8a06a', project: '#5eb3f6', reference: GREEN, memory: '#c98bf6' }[m.type] || '#c98bf6'
               const open = openMem === m.path
               return (
                 <div key={m.path} className="mini-row" style={{ alignItems: 'flex-start', cursor: 'pointer', flexWrap: 'wrap' }} onClick={() => setOpenMem(open ? null : m.path)}>
@@ -316,42 +274,6 @@ export default function Overview() {
           </div>
         </div>
       )}
-
-      <div className="panel" style={{ animationDelay: '.55s' }}>
-        <div className="panel-head">
-          <h3>Inventory <span className="muted">{items.length} items</span></h3>
-          <input placeholder="search name, group, tag…" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }} />
-          <select value={kind} onChange={e => setKind(e.target.value)}><option value="">all kinds</option>{kinds.map(k => <option key={k}>{k}</option>)}</select>
-        </div>
-        <table className="data inv">
-          <thead><tr>{COLS.map(([c, label]) => (
-            <th key={c} onClick={() => setSort(s => ({ col: c, dir: s.col === c ? -s.dir : -1 }))}>
-              {label}{sort.col === c ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}
-            </th>))}</tr></thead>
-          <tbody>
-            {inv.slice.map(it => (
-              <tr key={it.kind + ':' + it.name + ':' + it.scope}>
-                <td className="mono" style={{ color: '#eee3da' }}>{it.name}</td>
-                <td>{it.kind}</td>
-                <td><span className="chip">{it.group}</span></td>
-                <td className="tags-cell" onClick={() => editTags(it)} title="click to edit tags">
-                  {it.tags.length ? it.tags.map(t => <span className="chip tag" key={t}>{t}</span>) : <span className="muted">+ tag</span>}
-                </td>
-                <td className="num">{it.descTokens ? fmtTok(it.descTokens) : '—'}</td>
-                <td className="num">{it.fullTokens ? fmtTok(it.fullTokens) : '—'}</td>
-                <td>{it.score === null ? <span className="muted">—</span> : (
-                  <span className="score-cell">
-                    <span className="score-track"><span className="score-fill" style={{ width: it.score + '%', background: LEVEL_COLOR[it.level] }} /></span>
-                    {it.level} · {it.score}%
-                  </span>)}</td>
-                <td className="num">{it.specificity === null ? '—' : it.specificity + '%'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {inv.pager}
-        <p className="small">levels: static heuristic (frontmatter completeness, trigger clarity, structure, size) — poor &lt;45 · good 45–69 · excellent 70–89 · perfect ≥90. ctx:always = paid every session · on-invoke = full file when triggered (~4 chars/tok)</p>
-      </div>
     </div>
   )
 }

@@ -7,6 +7,7 @@ import Overview from './Overview.jsx'
 import ProjectsSection from './ProjectsSection.jsx'
 import ChatSection from './ChatSection.jsx'
 import TeamsSection from './TeamsSection.jsx'
+import TeamDesigner from './TeamDesigner.jsx'
 import HarnessSection from './HarnessSection.jsx'
 import GovernanceSection from './GovernanceSection.jsx'
 import ReliabilitySection from './ReliabilitySection.jsx'
@@ -22,20 +23,32 @@ import QualitySection from './QualitySection.jsx'
 import BoardSection from './BoardSection.jsx'
 import QuickActions from './QuickActions.jsx'
 import CursorDashboard from './CursorDashboard.jsx'
-import EngDashboard from './EngDashboard.jsx'
 import CareerDashboard from './CareerDashboard.jsx'
 import ConstitutionSection from './ConstitutionSection.jsx'
 import MemorySection from './MemorySection.jsx'
 import MindwalkSection from './MindwalkSection.jsx'
+import DeliverySection from './DeliverySection.jsx'
+import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
+import SessionsSection from './SessionsSection.jsx'
+import ForensicsSection from './ForensicsSection.jsx'
+import UsagePanel from './UsagePanel.jsx'
+import TeamBaseline from './TeamBaseline.jsx'
 import Palette from './Palette.jsx'
 import { api, forceFresh } from './api.js'
 
-const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
-const xpLevel = msgs => Math.floor(Math.sqrt(msgs / 50))
+// THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
+// level was derived from all-time assistant MESSAGE COUNT, so the fastest way to level up was a long,
+// thrashing, unproductive conversation. A token-count level plus a streak is one product decision away
+// from a per-engineer leaderboard, at which point every number on this screen stops being trusted.
+// src/Gamification.jsx is deleted. Overview's XP bar, streak flame and 10 achievement badges are deleted.
 
+// The four-shell portal is DISSOLVED. Eng folds in as `delivery`. Cursor and Career move out of the
+// topbar (one click from an IC's Overview is precisely what made this app feel like surveillance) into
+// a sidebar-footer "switch dashboard" menu.
 const SECTIONS = [
-  { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'Your Claude Code, at a glance', el: <Overview /> },
-  { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox', el: <InboxSection /> },
+  { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'What needs a human today', el: <Overview /> },
+  { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox — work + harness', el: <InboxSection /> },
+  { id: 'delivery', label: 'Delivery', icon: '▤', kicker: 'Delivery', title: 'Delivery — JIRA, GitHub, CI', el: <DeliverySection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
   { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: (
     <Hub items={[{ label: 'Chat', el: <ChatSection /> }, { label: 'Insights', el: <InsightsSection /> }]} />
@@ -49,18 +62,26 @@ const SECTIONS = [
       { label: 'Bugs', el: <BugsSection /> },
     ]} />
   ) },
-  { id: 'capabilities', label: 'Capabilities', icon: '✦', kicker: 'Capabilities', title: 'Skills, commands, agents & flow', el: (
+  // ROI ledger leads. The Inventory table and its frontmatter linter are demoted OFF the landing page
+  // to the end of this hub, reframed as what they are: an authoring aid, not a metric.
+  { id: 'capabilities', label: 'Capabilities', icon: '✦', kicker: 'Capabilities', title: 'Capabilities — what you pay for, and what actually fires', el: (
     <Hub items={[
+      { label: 'ROI ledger', el: <CapabilityLedger /> },
       { label: 'Skills', el: <ResourceSection kind="skills" title="Skills" /> },
       { label: 'Commands', el: <ResourceSection kind="commands" title="Prompts / Commands" /> },
       { label: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
       { label: 'Flow', el: <FlowSection /> },
+      { label: 'Inventory (linter)', el: <Inventory /> },
     ]} />
   ) },
-  { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Config, governance, reliability, library & MCP', el: (
+  { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness — sessions, forensics, config & governance', el: (
     <Hub items={[
+      { label: 'Sessions', el: <SessionsSection /> },
+      { label: 'Forensics', el: <ForensicsSection /> },
+      { label: 'Usage', el: <UsagePanel /> },
       { label: 'Config', el: <HarnessSection /> },
       { label: 'Governance', el: <GovernanceSection /> },
+      { label: 'Team baseline', el: <TeamBaseline /> },
       { label: 'Reliability', el: <ReliabilitySection /> },
       { label: 'Library', el: <LibrarySection /> },
       { label: 'MCP', el: <McpSection /> },
@@ -68,16 +89,29 @@ const SECTIONS = [
   ) },
   { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
   { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
-  { id: 'mindwalk', label: 'Mindwalk', icon: '◉', kicker: 'Replay', title: 'Mindwalk — replay sessions on a 3D map of the repo', el: <MindwalkSection /> },
-  { id: 'teams', label: 'Agent Teams', icon: '⧉', kicker: 'Experimental', title: 'Agent Teams', el: <TeamsSection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
+  // Mindwalk + Agent Teams + Team Designer are demos. Both cost money per run and neither should outrank
+  // delivery data in the sidebar. One collapsed entry.
+  { id: 'labs', label: 'Labs', icon: '⚗', kicker: 'Experimental', title: 'Labs — demos, not delivery data', el: (
+    <Hub items={[
+      { label: 'Mindwalk', el: <MindwalkSection /> },
+      { label: 'Agent Squads', el: <TeamsSection /> },
+      { label: 'Squad Designer', el: <TeamDesigner /> },
+    ]} />
+  ) },
 ]
 
-function SidebarFoot() {
+const DASHBOARDS = [
+  ['cursor', '⇄ Cursor', 'read-only view of your Cursor usage'],
+  ['career', '⇄ Career', 'your personal growth dashboard'],
+]
+
+function SidebarFoot({ onDash }) {
   const [h, setH] = useState(null)
   const [alerts, setAlerts] = useState([])
+  const [open, setOpen] = useState(false)
   useEffect(() => {
     const load = () => {
       api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
@@ -90,32 +124,47 @@ function SidebarFoot() {
   const ok = (!h || h.ok) && !alerts.some(a => a.level === 'error')
   const issue = h && !h.ok ? h.conflicts[0] : alerts[0]?.text
   return (
-    <div className="sidebar-foot" title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
-      <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
-        {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
+    <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: 6, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          {DASHBOARDS.map(([id, label, hint]) => (
+            <button key={id} onClick={() => onDash(id)} title={hint}
+              style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '7px 10px', borderRadius: 9 }}>{label}</button>
+          ))}
+        </div>
+      )}
+      <button onClick={() => setOpen(o => !o)} title="the other shells — deliberately not one click from Overview"
+        style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <span className="nav-icon">⇄</span> switch dashboard {open ? '▾' : '▸'}
+      </button>
+      <div className="sidebar-foot" style={{ marginTop: 0 }} title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
+        <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
+          {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
+        </div>
+        {issue ? issue.slice(0, 46) : 'settings schema · backups synced'}
       </div>
-      {issue ? issue.slice(0, 46) : 'settings schema · backups synced'}
     </div>
   )
 }
 
 export default function App() {
-  // two dashboards, one toggle, zero mixing: ?dash=cursor renders the Cursor shell instead
-  const [dash, setDash] = useState(() => new URLSearchParams(window.location.search).get('dash') || 'claude')
+  // ?dash=eng no longer opens a separate shell — Eng IS the Delivery section now. The Eng panels write
+  // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
+  // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
+  const initial = new URLSearchParams(window.location.search).get('dash') || 'claude'
+  const [dash, setDash] = useState(initial === 'eng' ? 'claude' : initial)
   const goDash = (name) => {
     const q = new URLSearchParams(window.location.search)
     name === 'claude' ? q.delete('dash') : q.set('dash', name)
     history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
     setDash(name)
   }
-  const switchDash = () => goDash(dash === 'cursor' ? 'claude' : 'cursor')
-  const [section, setSection] = useState('overview')
-  const [chip, setChip] = useState(null)
+  const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview')
   const [inboxCount, setInboxCount] = useState(0)
-  const [stale, setStale] = useState(null) // oldest x-cached-at seen for the current section's data
+  const [stale, setStale] = useState(null)
   const [tick, setTick] = useState(0)
-  const [visited, setVisited] = useState({ overview: true }) // keep-alive: sections stay mounted (hidden) once opened, so their state survives switching
-  const [toasts, setToasts] = useState([]) // failed GET surfacing — sections swallow errors, this makes them visible
+  const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true })
+  const [toasts, setToasts] = useState([])
   useEffect(() => {
     const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
     let lastAt = 0, lastUrl = ''
@@ -126,7 +175,7 @@ export default function App() {
     }
     const onErr = e => {
       const now = Date.now()
-      if (e.detail.url === lastUrl && now - lastAt < 4000) return // dedupe a polling endpoint that keeps failing
+      if (e.detail.url === lastUrl && now - lastAt < 4000) return
       lastAt = now; lastUrl = e.detail.url
       push({ ...e.detail, kind: 'error' })
     }
@@ -137,21 +186,13 @@ export default function App() {
     return () => { window.removeEventListener('api-cache', onCache); window.removeEventListener('api-error', onErr); window.removeEventListener('app-toast', onToast) }
   }, [])
   useEffect(() => setStale(null), [section, tick])
-  const refresh = () => { forceFresh(); setStale(null); setVisited({ [section]: true }); setTick(t => t + 1) } // remounts current section with fresh=1; others refetch on next visit
+  const refresh = () => { forceFresh(); setStale(null); setVisited({ [section]: true }); setTick(t => t + 1) }
   const nav = id => { setVisited(v => (v[id] ? v : { ...v, [id]: true })); setSection(id) }
   const staleMin = stale ? Math.floor((Date.now() - stale) / 60000) : 0
   useEffect(() => {
-    api.get('/api/usage').then(u => {
-      const ab = u.activeBlock
-      setChip({
-        lv: xpLevel(u.totalMsgs), streak: u.streak,
-        out: ab ? fmtTok(ab.out) : null,
-        resets: ab ? Math.round((ab.end - Date.now()) / 60000) : null,
-      })
-    }).catch(() => {})
-    const navChat = () => nav('chat') // context bundles hand-off
+    const navChat = () => nav('chat')
     window.addEventListener('nav-chat', navChat)
-    // inbox badge + desktop notifications for new error/warning items
+    // inbox badge + desktop notifications for new error/warning items (277 real items, not harness trivia)
     const seen = new Set()
     let first = true
     const poll = () => api.get('/api/inbox').then(items => {
@@ -172,8 +213,7 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener('nav-chat', navChat) }
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
-  if (dash === 'cursor') return <CursorDashboard onSwitch={switchDash} />
-  if (dash === 'eng') return <EngDashboard onExit={() => goDash('claude')} />
+  if (dash === 'cursor') return <CursorDashboard onSwitch={() => goDash('claude')} />
   if (dash === 'career') return <CareerDashboard onExit={() => goDash('claude')} />
   return (
     <div className="app">
@@ -185,7 +225,7 @@ export default function App() {
             {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
         ))}
-        <SidebarFoot />
+        <SidebarFoot onDash={goDash} />
       </nav>
       <main className="content">
         <header className="topbar">
@@ -194,30 +234,16 @@ export default function App() {
             <h1>{cur.title}</h1>
           </div>
           <div className="topbar-right">
-            <button className="top-chip" onClick={switchDash} style={{ cursor: 'pointer' }} title="switch to the Cursor dashboard (read-only view of your Cursor usage)">⇄ Cursor</button>
-            <button className="top-chip" onClick={() => goDash('eng')} style={{ cursor: 'pointer' }} title="Engineering Metrics — JIRA changelog + GitHub PRs for the Flight team">⇄ Eng Metrics</button>
-            <button className="top-chip" onClick={() => goDash('career')} style={{ cursor: 'pointer' }} title="Career — your personal growth dashboard">⇄ Career</button>
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
               style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}
             </button>
-            {chip && (
-              <div className="top-chip">
-                <span className="flame">✦</span>
-                <span>Lv {chip.lv}</span>
-                <span className="div" />
-                <span className="meta">
-                  {chip.out ? <>{chip.out} <i>out · {Math.floor(chip.resets / 60)}h{String(chip.resets % 60).padStart(2, '0')}m</i></> : <i>idle</i>}
-                  {' '}<i>· 🔥{chip.streak}d</i>
-                </span>
-              </div>
-            )}
             <div className="avatar">AM</div>
           </div>
         </header>
         {SECTIONS.filter(s => visited[s.id]).map(s => (
           <div key={s.id + ':' + tick} style={s.id === section ? undefined : { display: 'none' }}>
-            {s.id === 'inbox' ? <InboxSection onNav={nav} /> : s.el}
+            {React.cloneElement(s.el, { onNav: nav })}
           </div>
         ))}
       </main>

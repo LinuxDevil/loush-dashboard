@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { api, fmtDate } from './api.js'
+import React, { useEffect, useMemo, useState } from 'react'
+import { api, fmtDate, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
 
@@ -7,8 +7,9 @@ const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
 const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
 const SEV = { error: '#e5484d', warning: '#e5a03a', info: '#8a807a' }
-const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒', board: '▦', run: '⟳' }
+const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒', board: '▦', run: '⟳', action: '⚡', ticket: '◱', review: '⟨⟩', quality: '◈', ci: '⚙' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
+const d1 = n => (Math.round(n * 10) / 10).toFixed(1)
 
 export default function InboxSection({ onNav }) {
   const [tab, setTab] = useState('Inbox')
@@ -22,35 +23,112 @@ export default function InboxSection({ onNav }) {
   )
 }
 
+// ---------- 1: delivery risk in the inbox ----------
+// Two data planes, two filter chips, BOTH ON by default. The planes are a server-side boundary
+// (work = JIRA/GitHub/CI artifacts everyone can already see · harness = this machine's own ~/.claude),
+// not a UI mode: there is no view/lens/role switcher here or anywhere else in this app.
+//
+// "Nudge" COPIES a line for a human to send. It never sends anything. That is deliberate and permanent:
+// the instant the dashboard messages people on its own, it becomes the thing engineers route around.
+const PLANES = [
+  ['work', 'Work', 'JIRA · GitHub · CI — artifacts the whole team can already open'],
+  ['harness', 'Harness', "this machine's own Claude Code telemetry — self-only, always"],
+]
+
+function Chip({ on, color, onClick, title, children }) {
+  return (
+    <button onClick={onClick} title={title} style={{
+      marginTop: 0, cursor: 'pointer', font: `600 11px ${MONO}`, padding: '5px 11px', borderRadius: 9,
+      border: `1px solid ${on ? color + '77' : 'rgba(255,255,255,0.08)'}`,
+      background: on ? color + '1f' : 'transparent', color: on ? color : '#6a615a',
+    }}>{children}</button>
+  )
+}
+
 function Inbox({ onNav }) {
   const [items, setItems] = useState(null)
   const [showDone, setShowDone] = useState(false)
-  const load = () => api.get('/api/inbox').then(setItems).catch(() => {})
+  const [planes, setPlanes] = useState({ work: true, harness: true })
+  const [copied, setCopied] = useState(null)
+  // Dedupe by key: /api/inbox keys its `recommendation` rows on the finding TEXT alone, so the same
+  // finding raised against two projects arrives twice under one key. Dropping the dupe here is correct —
+  // clearing one would clear "both" anyway, since the server stores done-state by that same key.
+  const load = () => api.get('/api/inbox').then(list => {
+    const seen = new Set()
+    setItems(list.filter(i => !seen.has(i.key) && seen.add(i.key)))
+  }).catch(() => {})
   useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t) }, [])
+
   const mark = async (it, done) => { await api.post('/api/inbox/done', { key: it.key, done }); load() }
+  const snooze = async it => { await api.post('/api/inbox/done', { key: it.key, snoozeHours: 24 }); toast('snoozed for 24h — it comes back tomorrow', 'success'); load() }
+  const nudge = async it => {
+    const line = it.nudge || it.text
+    try { await navigator.clipboard.writeText(line) } catch { }
+    setCopied(it.key); setTimeout(() => setCopied(k => (k === it.key ? null : k)), 1800)
+    toast('nudge copied — nothing was sent. Paste it where the human is.', 'success')
+  }
+
+  const counts = useMemo(() => {
+    const open = (items || []).filter(i => !i.done)
+    return { work: open.filter(i => i.plane === 'work').length, harness: open.filter(i => i.plane !== 'work').length }
+  }, [items])
+
   if (!items) return <Skeleton tiles={0} rows={6} />
-  const open = items.filter(i => !i.done)
-  const shown = showDone ? items : open
+  const inPlane = i => planes[i.plane === 'work' ? 'work' : 'harness']
+  const open = items.filter(i => !i.done && inPlane(i))
+  const shown = (showDone ? items.filter(inPlane) : open)
+  const sevN = { error: 0, warning: 1, info: 2 }
+  const errs = open.filter(i => i.severity === 'error').length
+
   return (
     <div style={{ ...PANEL }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <div style={{ font: `600 15px ${HEAD}` }}>Everything that needs you <span style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>{open.length} open · all projects</span></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ font: `600 15px ${HEAD}` }}>
+          Everything that needs you{' '}
+          <span style={{ font: `400 11px ${MONO}`, color: errs ? '#e5484d' : '#8a807a' }}>{open.length} open{errs ? ` · ${errs} error` : ''}</span>
+        </div>
+        <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
+        {PLANES.map(([id, label, hint]) => (
+          <Chip key={id} on={planes[id]} color={id === 'work' ? '#5eb3f6' : '#d97757'} title={hint}
+            onClick={() => setPlanes(p => ({ ...p, [id]: !p[id] }))}>
+            {label} <span style={{ opacity: 0.7 }}>{counts[id]}</span>
+          </Chip>
+        ))}
         <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, font: `400 11px ${MONO}`, color: '#8a807a', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} style={{ width: 13 }} />show cleared
+          <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} style={{ width: 13 }} />show cleared / snoozed
         </label>
       </div>
-      {shown.map(it => (
-        <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 4px', borderBottom: '1px solid rgba(255,255,255,0.045)', opacity: it.done ? 0.45 : 1 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', font: `600 13px ${HEAD}`, color: SEV[it.severity], background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>{KIND_ICON[it.kind] || '•'}</span>
-          <span style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, color: SEV[it.severity], background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>{it.severity.toUpperCase()}</span>
-          <span style={{ flex: 1, font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4' }}>{it.text}</span>
-          <span style={{ font: `400 10px ${MONO}`, color: '#6a615a', flexShrink: 0 }}>{fmtDate(it.ts)}</span>
-          <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.(it.section)}>open</button>
-          <button className="mini" style={{ marginTop: 0 }} onClick={() => mark(it, !it.done)}>{it.done ? 'reopen' : 'clear'}</button>
-        </div>
-      ))}
-      {shown.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ inbox zero — nothing is waiting on you</div>}
-      <p className="small">aggregates: sessions waiting for input · pending global approvals · budget alerts · failed eval runs · error-level recommendations. Clearing here only hides the item; fix it via "open".</p>
+
+      {shown.sort((a, b) => sevN[a.severity] - sevN[b.severity] || b.ts - a.ts).map(it => {
+        const work = it.plane === 'work'
+        return (
+          <div key={it.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid rgba(255,255,255,0.045)', opacity: it.done ? 0.45 : 1 }}>
+            <span style={{ width: 26, height: 26, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', font: `600 13px ${HEAD}`, color: SEV[it.severity], background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>{KIND_ICON[it.kind] || '•'}</span>
+            <span style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, color: SEV[it.severity], background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>{it.severity.toUpperCase()}</span>
+            <span title={work ? 'plane: work artifacts' : 'plane: this machine’s harness'} style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, flexShrink: 0, color: work ? '#5eb3f6' : '#d97757', background: (work ? '#5eb3f6' : '#d97757') + '1a' }}>{work ? 'WORK' : 'HARNESS'}</span>
+            <span style={{ flex: 1, minWidth: 0, font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4' }}>
+              {it.text}
+              {(it.owner || it.ageWorkDays != null) && (
+                <span style={{ font: `400 10.5px ${MONO}`, color: '#6a615a', marginLeft: 8 }}>
+                  {it.owner ? `· ${it.owner}` : ''}{it.ageWorkDays != null ? ` · ${d1(it.ageWorkDays)}d` : ''}{it.overBudgetBy != null ? ` (+${d1(it.overBudgetBy)}d over)` : ''}
+                </span>
+              )}
+              {it.snoozedUntil && <span style={{ font: `400 10px ${MONO}`, color: '#e5a03a', marginLeft: 8 }}>· snoozed until {new Date(it.snoozedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+            </span>
+            <span style={{ font: `400 10px ${MONO}`, color: '#6a615a', flexShrink: 0 }}>{fmtDate(it.ts)}</span>
+            {it.nudge && <button className="mini" style={{ marginTop: 0, color: copied === it.key ? '#3fb96a' : undefined }} title="copies a ready-to-send line. Nothing is ever sent for you." onClick={() => nudge(it)}>{copied === it.key ? '✓ copied' : 'nudge'}</button>}
+            {!it.done && <button className="mini" style={{ marginTop: 0 }} title="hide until tomorrow" onClick={() => snooze(it)}>snooze 24h</button>}
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => (it.link ? window.open(it.link, '_blank') : onNav?.(it.section))}>open</button>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => mark(it, !it.done)}>{it.done ? 'reopen' : 'clear'}</button>
+          </div>
+        )
+      })}
+      {shown.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ inbox zero — nothing is waiting on you{(!planes.work || !planes.harness) && ' in the planes you have on'}</div>}
+      <p className="small">
+        <b style={{ color: '#5eb3f6' }}>work</b>: PRs with no review past the 24/48 working-hour SLA · tickets past their stage budget · QA cycles ≥ 3 · rework re-entry · a JIRA status stale against a merged PR · a red main branch.{' '}
+        <b style={{ color: '#d97757' }}>harness</b>: sessions waiting on you · pending approvals · budget alerts · failed evals · error-level recommendations.{' '}
+        "nudge" copies a line — it never sends one. "snooze" defers for 24h; "clear" hides it permanently.
+      </p>
     </div>
   )
 }
@@ -99,7 +177,7 @@ function Digest({ onNav }) {
           {d.drift.map(x => (
             <div key={x.project} style={{ display: 'flex', justifyContent: 'space-between', font: `500 12px ${MONO}`, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               <span style={{ color: '#e8a06a' }}>{x.project}</span>
-              <span style={{ color: '#c8bdb4' }}>{x.fields} field{x.fields === 1 ? '' : 's'} off baseline <button className="mini" style={{ marginLeft: 8, marginTop: 0 }} onClick={() => onNav?.('governance')}>review</button></span>
+              <span style={{ color: '#c8bdb4' }}>{x.fields} field{x.fields === 1 ? '' : 's'} off baseline <button className="mini" style={{ marginLeft: 8, marginTop: 0 }} onClick={() => onNav?.('harness')}>review</button></span>
             </div>
           ))}
           {d.drift.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: '#3fb96a' }}>✓ all baselined projects in sync</div>}
@@ -142,7 +220,7 @@ function Notify() {
           <input type="checkbox" checked={cfg.desktop} onChange={e => e.target.checked ? askDesktop() : save({ ...cfg, desktop: false })} style={{ width: 14 }} />
           <div>
             <div style={{ font: "500 13px 'IBM Plex Sans'", color: '#e5dbd2' }}>Desktop notifications</div>
-            <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>fires while the dashboard tab is open, for new error/warning inbox items (agent needs input, budget hit, eval failed)</div>
+            <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>fires while the dashboard tab is open, for new error/warning inbox items (a red main, a PR nobody reviewed, an agent needing input)</div>
           </div>
         </div>
         <div>
@@ -151,7 +229,7 @@ function Notify() {
             <input value={cfg.slackWebhook || ''} onChange={e => setCfg({ ...cfg, slackWebhook: e.target.value })} onBlur={() => save(cfg)} placeholder="https://hooks.slack.com/services/…" />
             <button className="mini" style={{ marginTop: 0, flexShrink: 0 }} onClick={() => api.post('/api/notify/test').then(r => alert(r.ok ? 'sent ✓' : 'slack replied ' + r.status)).catch(e => alert(e.message))}>test</button>
           </div>
-          <div style={{ font: `400 11px ${MONO}`, color: '#7a716a', marginTop: 6 }}>the server pushes new error/warning inbox items every minute while running · leave empty to disable</div>
+          <div style={{ font: `400 11px ${MONO}`, color: '#7a716a', marginTop: 6 }}>the server pushes new error/warning inbox items every minute while running · leave empty to disable. This posts to a CHANNEL — it never @-mentions a person on your behalf.</div>
         </div>
       </div>
     </div>

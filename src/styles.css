@@ -163,18 +163,12 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .kpi.ring { flex-direction: row; align-items: center; gap: 16px; }
 .spark { width: 100%; height: 26px; margin-top: 2px; }
 
-.gami-strip { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; background: linear-gradient(90deg, rgba(217, 119, 87, 0.10), rgba(28, 24, 21, 0.4)); border: 1px solid rgba(217, 119, 87, 0.18); border-radius: 16px; padding: 16px 20px; margin-bottom: 16px; animation: fadeUp 0.5s ease both; animation-delay: 0.15s; }
-.gami-lv { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); display: flex; align-items: center; justify-content: center; font: 700 18px var(--head); color: #fff; box-shadow: 0 0 20px -4px rgba(217, 119, 87, 0.7); }
-.gami-title { font: 600 14px var(--head); }
-.gami-meta { font: 400 12px var(--mono); color: #9a9089; }
-.gami-bar-wrap { flex: 1; min-width: 180px; }
-.gami-bar-labels { display: flex; justify-content: space-between; font: 400 11px var(--mono); color: #8a807a; margin-bottom: 6px; }
+/* The gamification strip (.gami-*), the achievement badges (.badges/.badge-card) and the topbar's
+   "Lv N · 🔥Nd" chip are DELETED. XP was all-time assistant message count — the metric rewarded exactly
+   the behaviour the tool exists to reduce. .xp-track/.xp-fill survive only because ProjectsSection reuses
+   them as an honest progress bar (tasks done / total). */
 .xp-track { height: 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .xp-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent-light), var(--accent)); box-shadow: 0 0 12px rgba(217, 119, 87, 0.6); transition: width 0.4s; }
-.gami-streak { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 11px; background: rgba(0, 0, 0, 0.2); }
-.gami-streak .flame { font-size: 17px; animation: flamePulse 2.4s ease-in-out infinite; }
-.gami-streak b { font: 600 15px var(--head); display: block; }
-.gami-streak span { font: 400 10px var(--mono); color: #8a807a; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-wide { display: grid; grid-template-columns: 1.65fr 1fr; gap: 16px; }
@@ -192,18 +186,6 @@ table.inv tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
 .bar-track { flex: 1; background: rgba(255, 255, 255, 0.05); border-radius: 6px; height: 9px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 6px; min-width: 2px; transform-origin: left; animation: grow 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .bar-value { width: 46px; text-align: right; color: #8a807a; font: 500 11px var(--mono); flex-shrink: 0; }
-
-.badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-.badge-card { border: 1px solid var(--panel-border); border-radius: 13px; padding: 15px 14px; background: rgba(255, 255, 255, 0.02); display: flex; flex-direction: column; gap: 8px; opacity: 0.45; transition: transform 0.18s; }
-.badge-card.unlocked { opacity: 1; background: linear-gradient(160deg, rgba(217, 119, 87, 0.1), rgba(28, 24, 21, 0.4)); border-color: rgba(217, 119, 87, 0.3); }
-.badge-card:hover { transform: translateY(-3px); }
-.badge-top { display: flex; align-items: center; justify-content: space-between; }
-.badge-glyph { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font: 600 15px var(--head); background: rgba(255, 255, 255, 0.06); color: #8a807a; }
-.badge-card.unlocked .badge-glyph { background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: #fff; box-shadow: 0 0 16px -2px rgba(217, 119, 87, 0.6); }
-.badge-tag { font: 600 9px var(--mono); letter-spacing: 0.1em; color: #6a615a; }
-.badge-card.unlocked .badge-tag { color: var(--green); }
-.badge-name { font: 600 13px var(--head); color: #f2ebe4; }
-.badge-desc { font: 400 11px var(--mono); color: #8a807a; line-height: 1.4; }
 
 .mini-list { display: flex; flex-direction: column; gap: 9px; }
 .mini-row { display: flex; align-items: center; gap: 13px; padding: 11px 13px; border-radius: 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.04); transition: border-color 0.18s; }
