@@ -992,9 +992,66 @@ function loadStats(prs, issues, members) {
   }
 }
 
-// ---------- snapshot (cached per project, TTL) ----------
-const snaps = new Map() // key -> {at, data}
+// ---------- snapshot (cached per project: in-memory TTL, warm-started from disk) ----------
+// A cold snapshotAll() is ~65s of live JIRA + GitHub. Everything downstream waits on it (/api/inbox, the
+// delivery tiles, the career team plane, the game engine), so an in-memory-only cache made EVERY restart a
+// 65s first request. The snapshot is therefore also persisted to disk: on boot we seed the in-memory map
+// from it and answer immediately — stale but LABELLED (honest `generatedAt` + `stale`, which the UI's
+// provenance strip already renders amber) — while a background refresh replaces it.
+//   · absent / corrupt / older-schema / ancient file → ignored, we fall back to the live fetch. Never fatal.
+//   · errors[] on a stale answer describes the CURRENT auth state, not the state when the file was written,
+//     so a JIRA/GitHub login that broke since cannot hide behind the cache.
+//   · PLANE A only, by construction: this persists exactly the payload the API already serves — JIRA issues,
+//     GitHub PRs, CI runs. No transcript-derived or per-person telemetry field exists in it to persist.
+// key -> {at, data}. Every invalidation site (creds change, roster edit, ?fresh=1, ownership override) must
+// drop the DISK copy too, or the next restart resurrects exactly the snapshot we just invalidated — so the
+// map owns that. Deferred a microtask, to let a paired `ciCache.delete(k)` on the same line land first.
+const snaps = new class extends Map {
+  delete(k) { const r = super.delete(k); queueMicrotask(persistDisk); return r }
+  clear() { super.clear(); queueMicrotask(persistDisk) }
+}()
 const SNAP_TTL = 2 * 3600_000 // cache the JIRA+GitHub aggregate for 2 hours
+const SNAP_FILE = path.join(os.homedir(), '.claude', 'eng-snapshot.json') // alongside career.json
+const SNAP_SCHEMA = 1
+const SNAP_MAX_AGE = 14 * DAY // older than this the disk copy is scrapped, not served
+function loadDisk() {
+  let j
+  try { j = JSON.parse(fs.readFileSync(SNAP_FILE, 'utf8')) } catch { return false } // absent or corrupt → cold
+  if (!j || j.v !== SNAP_SCHEMA || typeof j.snaps !== 'object') return false        // unknown/older schema → cold
+  const fresh = at => typeof at === 'number' && at > 0 && Date.now() - at < SNAP_MAX_AGE
+  const sane = d => d && d.available && Array.isArray(d.issues) && Array.isArray(d.prs) && Array.isArray(d.members)
+  for (const [k, e] of Object.entries(j.snaps)) if (e && fresh(e.at) && sane(e.data)) snaps.set(k, { at: e.at, data: e.data })
+  for (const [k, e] of Object.entries(j.ci || {})) if (e && fresh(e.at) && Date.now() - e.at < CI_FILE_TTL) ciCache.set(k, { at: e.at, data: e.data })
+  return snaps.size > 0
+}
+function persistDisk() { // atomic: a kill mid-write leaves the previous good file, never half a JSON
+  try {
+    fs.mkdirSync(path.dirname(SNAP_FILE), { recursive: true })
+    const pick = m => Object.fromEntries([...m].map(([k, e]) => [k, { at: e.at, data: e.data }]))
+    const tmp = `${SNAP_FILE}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ v: SNAP_SCHEMA, writtenAt: new Date().toISOString(), snaps: pick(snaps), ci: pick(ciCache) }))
+    fs.renameSync(tmp, SNAP_FILE)
+  } catch (e) { console.error('[eng] snapshot persist failed:', e.message) } // a full disk must not break the API
+}
+// The CURRENT auth state — cheap (a memoized `gh auth status` + two file reads), so a stale answer can still
+// tell the truth about a login that broke after the cache was written.
+let ghOkMemo = { at: 0, ok: false }
+function ghAuthed() { if (Date.now() - ghOkMemo.at > 60_000) ghOkMemo = { at: Date.now(), ok: ghAvailable() }; return ghOkMemo.ok }
+const GH_UNAUTHED = 'gh CLI not authenticated (`gh auth status` failed) — PR, review and CI panels are empty, not zero'
+function authErrors() {
+  const at = new Date().toISOString(), errs = []
+  if (!ghAuthed()) errs.push({ source: 'gh', message: GH_UNAUTHED, at })
+  const { email, token } = creds()
+  if (!(email && token) && !acliProfile()) errs.push({ source: 'jira', message: 'no JIRA credentials right now — showing the cached snapshot; the background refresh will fail until they are restored', at })
+  return errs
+}
+const dedupeErrs = errs => [...new Map(errs.map(e => [`${e.source}§${e.message}`, e])).values()]
+// what a consumer gets while the refresh runs behind it: the last good payload, its real generatedAt, and a
+// truthful errors[]. generatedAt is NOT bumped — the provenance strip must be able to see the age.
+const staleView = (data, at) => ({
+  ...data, stale: true, refreshing: true, cachedAt: new Date(at).toISOString(), ageMs: Date.now() - at,
+  errors: dedupeErrs([...(data.errors || []), ...authErrors()]),
+})
 // §3: the REAL error text, not console.error. A swallowed gh failure renders a confident zero-PR dashboard.
 function safe(fn, dflt, errs) {
   try { return fn() } catch (e) {
@@ -1014,13 +1071,33 @@ const derive = (issues, prs, members, ci) => ({
   load: loadStats(prs, issues, members),
   ci,
 })
+// fresh in memory → serve it · warm but past TTL (incl. anything seeded off disk) → serve it stale and
+// refresh behind · genuinely cold → block on the live fetch, because a wrong answer is worse than a slow one
 async function snapshot(cfg) {
   const hit = snaps.get(cfg.key)
   if (hit && Date.now() - hit.at < SNAP_TTL) return hit.data
+  if (hit) { refresh(cfg); return staleView(hit.data, hit.at) }
+  return refresh(cfg)
+}
+const inflight = new Map() // one live fetch per project, however many callers pile onto it
+function refresh(cfg) {
+  const k = cfg.key
+  if (inflight.has(k)) return inflight.get(k)
+  const p = computeSnapshot(cfg).finally(() => inflight.delete(k))
+  inflight.set(k, p)
+  p.catch(e => console.error('[eng] refresh', k, e.message)) // background callers never await it
+  return p
+}
+async function computeSnapshot(cfg) {
   const errors = []
-  const gh0 = ghAvailable()
-  if (!gh0) errors.push({ source: 'gh', message: 'gh CLI not authenticated (`gh auth status` failed) — PR, review and CI panels are empty, not zero', at: new Date().toISOString() })
+  const gh0 = ghAuthed()
+  if (!gh0) errors.push({ source: 'gh', message: GH_UNAUTHED, at: new Date().toISOString() })
+  const prErrN = errors.length
   const prs = gh0 ? safe(() => fetchPRs(cfg), [], errors) : []
+  // a transient gh failure (auth blip, GitHub 502) yields prs=[] — surfaced in errors[], cached in memory for
+  // this run, but NOT written to disk: a degraded snapshot must never overwrite the last-good one on disk, or
+  // a later restart would serve prs=0 as "warm" with gh auth healthy and so no error to flag it.
+  const prsFailed = errors.length > prErrN
   const prsByTicket = {}; for (const p of prs) (prsByTicket[p.ticket] ||= []).push(p)
   const { issues: raw, F } = await jiraIssues(cfg)
   const issues = raw.map(is => computeIssue(is, F, prsByTicket, cfg))
@@ -1035,7 +1112,7 @@ async function snapshot(cfg) {
   const ci = [ciFor(cfg, errors)].filter(Boolean)
   const data = {
     available: true, team: projectPill(cfg), projects: projectList(),
-    generatedAt: new Date().toISOString(), ghAvailable: prs.length > 0 || gh0,
+    generatedAt: new Date().toISOString(), stale: false, refreshing: false, ghAvailable: prs.length > 0 || gh0,
     issues, prs, members, okrs: OKRS,
     byProject: [{ key: cfg.key, name: cfg.name, issues, prs }],
     errors, writes: cfg.writes,
@@ -1043,6 +1120,7 @@ async function snapshot(cfg) {
     ...derive(issues, prs, members, ci),
   }
   snaps.set(cfg.key, { at: Date.now(), data })
+  if (!prsFailed) persistDisk() // ← the whole point: the next boot comes up warm instead of paying 65s again
   return data
 }
 async function snapshotAll() {
@@ -1056,13 +1134,17 @@ async function snapshotAll() {
   for (const p of avail) for (const m of p.members) { (mm[m.id] ||= { ...m, count: 0 }).count += m.count }
   const members = Object.values(mm).sort((a, b) => b.count - a.count)
   const ci = avail.flatMap(p => p.ci || [])
-  const errors = [
+  const errors = dedupeErrs([
     ...avail.flatMap(p => p.errors || []),
     ...parts.filter(p => !p.available).map(p => ({ source: 'project', project: p.key, message: `${p.name || p.key}: ${p.error}`, at: new Date().toISOString() })),
-  ]
+  ])
+  // the aggregate is only as fresh as its OLDEST part — bumping generatedAt to now would hide a stale half
+  const stale = avail.some(p => p.stale)
+  const gens = avail.map(p => Date.parse(p.generatedAt)).filter(t => t > 0)
   return {
     available: true, team: { key: 'all', name: 'All projects', jiraProjectKey: 'ALL', githubRepo: '' },
-    projects: projectList(), generatedAt: new Date().toISOString(),
+    projects: projectList(), generatedAt: new Date(gens.length ? Math.min(...gens) : Date.now()).toISOString(),
+    stale, refreshing: stale, ageMs: gens.length ? Date.now() - Math.min(...gens) : 0,
     ghAvailable: avail.some(p => p.ghAvailable), issues, prs, members, okrs: OKRS,
     // §9: keep the project boundaries the old flatMap destroyed
     byProject: avail.map(p => ({ key: p.team.key, name: p.team.name, issues: p.issues, prs: p.prs })),
@@ -1180,7 +1262,20 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
 export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
 
 // ---------- routes ----------
+// Boot: seed from disk (sync, before the first request can land), then refresh in the background only what is
+// actually past its TTL. Deliberately NOT at module scope — importing this file (the privacy tests do) must
+// never fire a JIRA/GitHub fetch.
+function warmBoot() {
+  const warm = loadDisk()
+  const cold = loadProjects().filter(p => { const h = snaps.get(p.key); return !h || Date.now() - h.at >= SNAP_TTL })
+  console.log(warm ? `[eng] snapshot cache warm from disk: ${[...snaps.keys()].join(', ')}` : '[eng] no usable snapshot cache on disk — first call fetches live')
+  if (!cold.length) return
+  console.log(`[eng] refreshing ${cold.map(p => p.key).join(', ')} in the background`)
+  for (const p of cold) refresh(p).catch(() => {})
+}
+
 export default function mountEng(app) {
+  warmBoot()
   app.get('/api/eng/projects', (req, res) => res.json(projectList()))
   app.post('/api/eng/projects', (req, res) => {
     const { name, jiraProjectKey, githubRepo, jiraHost, members } = req.body || {}
