@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { api, fmtDate } from './api.js'
+import { extractPlan, blocksToPlan, diagnoseSession } from './plan.js'
+import PlanGraph from './PlanGraph.jsx'
 
 const short = (v, n = 200) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v)
@@ -15,16 +17,23 @@ export function buildBlocks(events) {
   for (const ev of events) {
     if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
       for (const c of ev.message.content)
-        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) byToolId[c.tool_use_id].result = short(c.content, 400)
+        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
+          const b = byToolId[c.tool_use_id]
+          b.result = short(c.content, 400)
+          b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
+          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult // structuredPatch / stdout / stderr / filePath
+        }
         else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
         else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+      let usageLeft = ev.message?.usage || null // attach the message's token usage to its first tool (avoids double-count)
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text })
         else if (c.type === 'tool_use') {
-          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
+          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, ts: ev.timestamp || null, usage: usageLeft, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
+          usageLeft = null
           byToolId[c.id] = b
           target(ev).push(b)
         }
@@ -221,6 +230,7 @@ export default function ChatSection() {
   const [prefill, setPrefill] = useState('')
   const [model, setModel] = useState('')
   const [busy, setBusy] = useState(false)
+  const [view, setView] = useState('chat')
   const esRef = useRef(null)
   const endRef = useRef(null)
 
@@ -242,7 +252,7 @@ export default function ChatSection() {
   const attach = (id, chatCwd) => {
     esRef.current?.close()
     if (chatCwd) setCwd(chatCwd)
-    setEvents([]); setChatId(id)
+    setEvents([]); setChatId(id); setView('chat')
     const es = new EventSource(`/api/chat/${id}/events`)
     es.onmessage = m => {
       const ev = JSON.parse(m.data)
@@ -274,6 +284,8 @@ export default function ChatSection() {
   }
 
   const blocks = buildBlocks(events)
+  const realPlan = extractPlan(blocks)
+  const plan = realPlan || (blocks.some(b => b.kind === 'tool') ? blocksToPlan(blocks) : null)
   const ended = blocks.some(b => b.kind === 'closed')
   const liveModel = events.find(e => e.type === 'system' && e.subtype === 'init')?.model
 
@@ -344,13 +356,18 @@ export default function ChatSection() {
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
           {liveModel && <span className="dim" style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
         </span>
-        <button className="mini" onClick={stop}>{ended ? 'close' : 'stop session'}</button>
+        <span style={{ display: 'flex', gap: 8 }}>
+          {plan && <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? '#d97757' : undefined }} onClick={() => setView(view === 'plan' ? 'chat' : 'plan')}>{view === 'plan' ? 'chat' : `${realPlan ? 'plan' : 'activity'} graph (${plan.length})`}</button>}
+          <button className="mini" style={{ marginTop: 0 }} onClick={stop}>{ended ? 'close' : 'stop session'}</button>
+        </span>
       </div>
-      <div className="chat-log">
+      {view === 'plan' && plan
+        ? <div className="chat-log"><PlanGraph steps={plan} cwd={cwd} derived={!realPlan} diagnostics={diagnoseSession(blocks)} /></div>
+        : <div className="chat-log">
         {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text') ? <Cap key={i} text={b.text}><Block b={b} /></Cap> : <Block key={i} b={b} />)}
         {busy && <div className="chat-line dim">✦ working…</div>}
         <div ref={endRef} />
-      </div>
+      </div>}
       <InputBar cwd={cwd} ended={ended} onSend={send} initial={prefill} />
     </div>
   )

@@ -1,0 +1,5 @@
+{ "session_id": "s1", "project_path": "E:\\MedcoreSyria", "start_time": "2026-06-30T19:24:45.994Z",
+  "duration_minutes": 120, "tool_counts": { "Bash": 10, "Edit": 4, "Agent": 3 },
+  "languages": { "TypeScript": 20 }, "git_commits": 2, "git_pushes": 1,
+  "input_tokens": 60000, "output_tokens": 400000, "user_interruptions": 1,
+  "user_response_times": [10, 20, 30], "first_prompt": "Build feature X in AIR-123" }
