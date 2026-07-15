@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
+import { Stagger, CountUp } from './game/index.js'
 
 // ---------- 5: capability ROI ledger — fires × always-on cost ----------
 // This REPLACES Overview's Inventory static-score columns. A "perfect" 92-scored skill that has never
@@ -77,13 +78,13 @@ export default function CapabilityLedger() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="panel" style={{ marginBottom: 0, background: 'linear-gradient(90deg, rgba(229,72,77,0.08), rgba(28,24,21,0.55))', borderColor: 'rgba(229,72,77,0.22)' }}>
         <div style={{ font: `600 17px ${HEAD}`, color: '#f6efe9', lineHeight: 1.5 }}>
-          You pay <b style={{ color: '#d97757' }}>{h.alwaysOnTokens.toLocaleString()} tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
-          <b style={{ color: RED }}>{h.deadCount} of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
+          You pay <b style={{ color: '#d97757' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
+          <b style={{ color: RED }}><CountUp value={h.deadCount} /> of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
         </div>
         <div style={{ display: 'flex', gap: 22, marginTop: 12, flexWrap: 'wrap' }}>
           {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens]].map(([v, n, tok]) => (
             <div key={v} title={VERDICT[v].hint}>
-              <div style={{ font: `700 22px ${HEAD}`, color: VERDICT[v].c }}>{n}</div>
+              <div style={{ font: `700 22px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
               <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.08em', color: DIM }}>{v} · {fmtTok(tok)} tok/session</div>
             </div>
           ))}
@@ -143,7 +144,7 @@ export default function CapabilityLedger() {
                 {label}{sort.col === c ? (sort.dir > 0 ? ' ▲' : ' ▼') : ''}
               </th>))}
           </tr></thead>
-          <tbody>
+          <Stagger tag="tbody" step={16} max={300}>
             {pg.slice.map(it => {
               const id = idOf(it)
               const v = VERDICT[it.verdict]
@@ -165,7 +166,7 @@ export default function CapabilityLedger() {
                 </tr>
               )
             })}
-          </tbody>
+          </Stagger>
         </table>
         {pg.pager}
         <p className="small">

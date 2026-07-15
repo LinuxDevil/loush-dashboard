@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
+import { GameStats, AchievementGrid, CountUp, Draw } from './game/index.js'
+
+// A number that counts up on mount — but ONLY when it is a real number. This app renders honest nulls
+// (a suppressed / not-configured / stale value is '—', never a fake 0), so anything non-numeric is passed
+// straight through to its null state and never animated toward zero.
+const Num = ({ value, ...rest }) =>
+  typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
 // Overview — the landing page answers ONE question: what needs a human today?
 //
@@ -35,15 +42,15 @@ const sparkPts = (arr, h = 26) => {
 }
 const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" className={className} style={{ height: h }}>
-    <polyline points={sparkPts(data, h)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+    <Draw><polyline points={sparkPts(data, h)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" /></Draw>
   </svg>
 )
 
 function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint }) {
   return (
-    <div className="kpi" style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
+    <div className={`kpi${onClick ? ' press' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
       <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: '#8a807a', background: 'rgba(255,255,255,0.05)' } : null}>{tag.text}</span>}</div>
-      <div className="kpi-value">{value}</div>
+      <div className="kpi-value"><Num value={value} /></div>
       <div className="kpi-sub">{sub}</div>
       {data && data.length > 1 && <Spark data={data} color={accent} />}
     </div>
@@ -126,7 +133,7 @@ function CiStrip({ onNav }) {
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {ci.repos.map(r => (
-          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer"
+          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="lift"
             style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 12, border: `1px solid ${r.mainRed ? RED + '66' : 'rgba(255,255,255,0.06)'}`, background: 'rgba(255,255,255,0.02)' }}>
             <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? '#6a615a' : r.mainRed ? RED : GREEN, boxShadow: `0 0 8px ${r.mainRed ? RED : GREEN}` }} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -134,7 +141,7 @@ function CiStrip({ onNav }) {
               <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>
                 {r.error ? r.error.slice(0, 40)
                   : r.failureRate == null ? `no completed runs on ${r.branch} in ${ci.days}d`
-                    : `${Math.round(r.failureRate * 100)}% fail · ${r.flaky.length} flaky · ${r.medianDurationMin ?? '—'}m median`}
+                    : <><CountUp value={Math.round(r.failureRate * 100)} />% fail · {r.flaky.length} flaky · {r.medianDurationMin ?? '—'}m median</>}
               </div>
             </div>
             {r.mainRed && <span style={{ font: `700 9px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
@@ -155,6 +162,7 @@ export default function Overview({ onNav }) {
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
   const [cap, setCap] = useState(null)
+  const [showAch, setShowAch] = useState(false)
 
   useEffect(() => {
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
@@ -185,9 +193,9 @@ export default function Overview({ onNav }) {
         <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'rgba(229,160,58,0.14)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ font: `600 13.5px ${HEAD}`, color: '#f2ebe4' }}>You pay {cap.headline.alwaysOnTokens.toLocaleString()} tok every session for {cap.items.length} capabilities.</div>
+            <div style={{ font: `600 13.5px ${HEAD}`, color: '#f2ebe4' }}>You pay <CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok every session for {cap.items.length} capabilities.</div>
             <div style={{ font: `400 11.5px ${MONO}`, color: '#8a807a', marginTop: 3 }}>
-              <b style={{ color: RED }}>{cap.headline.deadCount} have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
+              <b style={{ color: RED }}><CountUp value={cap.headline.deadCount} /> have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
             </div>
           </div>
           <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
@@ -274,6 +282,20 @@ export default function Overview({ onNav }) {
           </div>
         </div>
       )}
+
+      {/* The reward, deliberately at the foot of the page — after the work that needs a human, not above it.
+          Your own body of work over your own past: level, XP, streak, closest badge. Self-only, no leaderboard.
+          The full wall lives one click away so it never competes with the delivery tiles for the fold. */}
+      <div style={{ marginTop: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 2px 10px', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ font: `600 12px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6a615a' }}>Your body of work</div>
+          <button className="mini press" style={{ marginTop: 0 }} onClick={() => setShowAch(s => !s)}>
+            {showAch ? 'hide achievements ▾' : 'all achievements →'}
+          </button>
+        </div>
+        <GameStats dashboard="claude" />
+        {showAch && <div className="enter"><AchievementGrid dashboard="claude" /></div>}
+      </div>
     </div>
   )
 }

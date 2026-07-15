@@ -34,6 +34,7 @@ import ForensicsSection from './ForensicsSection.jsx'
 import UsagePanel from './UsagePanel.jsx'
 import TeamBaseline from './TeamBaseline.jsx'
 import Palette from './Palette.jsx'
+import { UnlockToast } from './game/index.js'
 import { api, forceFresh } from './api.js'
 
 // THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
@@ -242,12 +243,13 @@ export default function App() {
           </div>
         </header>
         {SECTIONS.filter(s => visited[s.id]).map(s => (
-          <div key={s.id + ':' + tick} style={s.id === section ? undefined : { display: 'none' }}>
+          <div key={s.id + ':' + tick} className={s.id === section ? 'enter' : undefined} style={s.id === section ? undefined : { display: 'none' }}>
             {React.cloneElement(s.el, { onNav: nav })}
           </div>
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
+      <UnlockToast />
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
           {toasts.map(t => {

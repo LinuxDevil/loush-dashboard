@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
+import { Stagger, CountUp } from './game/index.js'
 
 // ---------- 9: session forensics — failure signatures · context pressure · hook blast radius ----------
 // Three panels off the ONE extra parse that already lives in the failStats()/scanTranscripts() walkers.
@@ -74,15 +75,16 @@ export default function ForensicsSection() {
         <select value={days} onChange={e => setDays(Number(e.target.value))}>
           <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
         </select>
-        <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{d.sessions} sessions parsed · plane: this machine only, always</span>
+        <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}><CountUp value={d.sessions} /> sessions parsed · plane: this machine only, always</span>
       </div>
 
       {/* (a) failure signatures */}
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
-          <h3>Failure signatures <span className="muted">{d.failures.length} distinct · {biting.length} have bitten you ≥ 3 times</span></h3>
+          <h3>Failure signatures <span className="muted"><CountUp value={d.failures.length} /> distinct · <CountUp value={biting.length} /> have bitten you ≥ 3 times</span></h3>
         </div>
         {d.failures.length === 0 && <p className="small" style={{ marginTop: 0 }}>✓ no tool errors in this window</p>}
+        <Stagger step={22} max={340}>
         {d.failures.slice(0, 25).map(f => {
           const [tri, tc] = TREND[f.trend]
           const isOpen = open === f.sig
@@ -106,6 +108,7 @@ export default function ForensicsSection() {
             </div>
           )
         })}
+        </Stagger>
         {biting.length > 0 && <p className="small">Anything at 3+ is not bad luck, it is a bug in your setup. The top signature has bitten you <b style={{ color: RED }}>{d.failures[0].count} times</b>.</p>}
       </div>
 

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtDate, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
+import { Stagger, CountUp } from './game/index.js'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -85,7 +86,7 @@ function Inbox({ onNav }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div style={{ font: `600 15px ${HEAD}` }}>
           Everything that needs you{' '}
-          <span style={{ font: `400 11px ${MONO}`, color: errs ? '#e5484d' : '#8a807a' }}>{open.length} open{errs ? ` · ${errs} error` : ''}</span>
+          <span style={{ font: `400 11px ${MONO}`, color: errs ? '#e5484d' : '#8a807a' }}><CountUp value={open.length} /> open{errs ? <> · <CountUp value={errs} /> error</> : ''}</span>
         </div>
         <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.1)' }} />
         {PLANES.map(([id, label, hint]) => (
@@ -99,6 +100,7 @@ function Inbox({ onNav }) {
         </label>
       </div>
 
+      <Stagger step={16} max={320}>
       {shown.sort((a, b) => sevN[a.severity] - sevN[b.severity] || b.ts - a.ts).map(it => {
         const work = it.plane === 'work'
         return (
@@ -123,6 +125,7 @@ function Inbox({ onNav }) {
           </div>
         )
       })}
+      </Stagger>
       {shown.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ inbox zero — nothing is waiting on you{(!planes.work || !planes.harness) && ' in the planes you have on'}</div>}
       <p className="small">
         <b style={{ color: '#5eb3f6' }}>work</b>: PRs with no review past the 24/48 working-hour SLA · tickets past their stage budget · QA cycles ≥ 3 · rework re-entry · a JIRA status stale against a merged PR · a red main branch.{' '}

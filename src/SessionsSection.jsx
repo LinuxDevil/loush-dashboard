@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
+import { Stagger, CountUp } from './game/index.js'
 
 // ---------- 10: session ledger — real $, terminal escape hatches, keyboard layer ----------
 // The app's only previous "resume" spawned the session INSIDE the dashboard's chat pane, which is not
@@ -72,16 +73,16 @@ export default function SessionsSection() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="kpi-grid" style={{ marginBottom: 0 }}>
         <div className="kpi"><div className="kpi-label"><span>spend</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>{days}d</span></div>
-          <div className="kpi-value">${t.cost.toFixed(2)}</div>
-          <div className="kpi-sub">{t.sessions} sessions · ${(t.cost / (t.sessions || 1)).toFixed(2)} median-ish per session</div></div>
+          <div className="kpi-value"><CountUp value={t.cost} prefix="$" decimals={2} /></div>
+          <div className="kpi-sub"><CountUp value={t.sessions} /> sessions · ${(t.cost / (t.sessions || 1)).toFixed(2)} median-ish per session</div></div>
         <div className="kpi"><div className="kpi-label"><span>output</span></div>
-          <div className="kpi-value">{fmtTok(t.out)}</div><div className="kpi-sub">tokens written by Claude</div></div>
+          <div className="kpi-value"><CountUp value={t.out} format={fmtTok} /></div><div className="kpi-sub">tokens written by Claude</div></div>
         <div className="kpi" title="an estimate (90% of input price) × an estimate (~4 chars/token), against a counterfactual that never happened, that only ever goes up. It is here, in small type, because no decision hangs on it — it was NOT worth a headline KPI tile.">
           <div className="kpi-label"><span>cache saved</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>est · all time</span></div>
           <div className="kpi-value" style={{ color: DIM }}>{usage ? '$' + fmtTok(usage.kpis.costSaved) : '…'}</div>
           <div className="kpi-sub">estimate × estimate vs a counterfactual — hover</div></div>
         <div className="kpi"><div className="kpi-label"><span>compactions</span></div>
-          <div className="kpi-value" style={{ color: rows.some(r => r.compactions > 2) ? GOLD : undefined }}>{rows.reduce((s, r) => s + r.compactions, 0)}</div>
+          <div className="kpi-value" style={{ color: rows.some(r => r.compactions > 2) ? GOLD : undefined }}><CountUp value={rows.reduce((s, r) => s + r.compactions, 0)} /></div>
           <div className="kpi-sub">context overflow events · see Forensics</div></div>
       </div>
 
@@ -103,7 +104,7 @@ export default function SessionsSection() {
                 </th>))}
               <th>Actions</th>
             </tr></thead>
-            <tbody>
+            <Stagger tag="tbody" step={14} max={300}>
               {rows.map((r, i) => (
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
                   style={{ background: i === cur ? 'rgba(217,119,87,0.12)' : undefined, cursor: 'pointer' }}>
@@ -125,7 +126,7 @@ export default function SessionsSection() {
                 </tr>
               ))}
               {rows.length === 0 && <tr><td colSpan={11} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
-            </tbody>
+            </Stagger>
           </table>
         </div>
         <p className="small">

@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
+import { Stagger, CountUp, Draw } from './game/index.js'
+
+const Num = ({ value, ...rest }) =>
+  typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
 const PROJ_COLORS = ['#5eb3f6', '#3fb96a', '#8b7cf6', '#e8a06a', '#d97757', '#c98bf6']
 const LANG_COLOR = { TypeScript: '#3b82f6', JavaScript: '#e5a03a', Python: '#3fb96a', Go: '#5eb3f6', Rust: '#e5484d', Ruby: '#e5484d', CSS: '#c98bf6', Markdown: '#9a9089', Shell: '#3fb96a', Vue: '#3fb96a', PHP: '#8b7cf6', Java: '#e8a06a', Kotlin: '#8b7cf6', Swift: '#e8a06a', Dart: '#5eb3f6' }
@@ -136,17 +140,17 @@ export default function ProjectsSection() {
         {stats.map(([label, value, color, sub], i) => (
           <div className="proj-stat" key={label} style={{ animationDelay: 0.05 * i + 's' }}>
             <div className="label">{label}</div>
-            <div className="value" style={{ color }}>{value}</div>
+            <div className="value" style={{ color }}><Num value={value} /></div>
             <div className="sub">{sub}</div>
           </div>
         ))}
       </div>
-      <div className="proj-grid">
+      <Stagger className="proj-grid" step={40} max={360}>
         {slice.map((p, i) => {
           const color = PROJ_COLORS[i % 6]
           const live = p.running + p.runningAgents > 0
           return (
-            <div key={p.path} className="proj-card" style={{ '--pc': color, animationDelay: 0.04 * i + 's' }}>
+            <div key={p.path} className="proj-card" style={{ '--pc': color }}>
               <div className="proj-head">
                 <b>{p.name}</b>
                 <span className={'proj-status ' + (live ? 'on' : 'off')}><i />{live ? `active${p.runningAgents ? ` +${p.runningAgents} agents` : ''}` : p.exists ? 'idle' : 'deleted'}</span>
@@ -159,7 +163,7 @@ export default function ProjectsSection() {
               )}
               {p.usage && (
                 <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="proj-spark">
-                  <polyline points={sparkPts(p.usage.spark, 30)} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" />
+                  <Draw><polyline points={sparkPts(p.usage.spark, 30)} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" /></Draw>
                 </svg>
               )}
               {p.progress && (
@@ -182,7 +186,7 @@ export default function ProjectsSection() {
             </div>
           )
         })}
-      </div>
+      </Stagger>
       {pager}
       <p className="small">projects from ~/.claude.json · usage from ~/.claude/projects transcripts · "active" = transcript written in last 5 min (refreshes 30s) · sparkline = daily output tokens, 14d · lines = edit-tool diffs · commits = git rev-list count</p>
     </div>
