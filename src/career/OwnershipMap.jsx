@@ -3,6 +3,7 @@ import { api, toast } from '../api.js'
 import { MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE, LINE, PANEL_BG, Badge, LoadingPanel } from './theme.jsx'
 import { Card, Btn, Empty, Headline } from './charts.jsx'
 import { useApi, copy } from './data.jsx'
+import { Stagger } from '../game/index.js'
 
 // item 12 — ownership / real bus factor. Area × engineer file-touches over the team's repos, 90d.
 // Alphabetical, not ranked: this answers "what breaks if X leaves", never "who wrote the most code".
@@ -33,13 +34,13 @@ export default function OwnershipMap({ onAgenda }) {
             ? `${risks.length} area${risks.length === 1 ? ' has' : 's have'} exactly one real owner.`
             : 'Every area has at least two real contributors.'}
         </Headline>
-        {risks.map(r => (
-          <div key={r.area} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderTop: `1px solid ${LINE}`, marginTop: 8 }}>
+        <Stagger step={50}>{risks.map(r => (
+          <div key={r.area} className="lift" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '7px 8px', margin: '0 -8px', borderTop: `1px solid ${LINE}`, marginTop: 8, borderRadius: 8 }}>
             <span style={{ font: `600 12px ${MONO}`, color: RED, width: 160 }}>{r.area}</span>
             <span style={{ font: `400 12px ${BODY}`, color: INK, flex: 1, minWidth: 240 }}>only <b>{r.owner}</b> · {r.touches} touches</span>
             <Btn onClick={() => propose(r)}>+ propose a second owner</Btn>
           </div>
-        ))}
+        ))}</Stagger>
       </Card>
 
       <Card title="Area × engineer" sub="file-touches from merged PRs, 90 days · alphabetical, in both directions" json={matrix}>
@@ -53,7 +54,7 @@ export default function OwnershipMap({ onAgenda }) {
                   <th style={{ ...th }}>bus</th>
                 </tr>
               </thead>
-              <tbody>
+              <Stagger tag="tbody" step={35} max={420}>
                 {matrix.map(m => {
                   const row = rows.find(r => r.area === m.area)
                   return (
@@ -69,7 +70,7 @@ export default function OwnershipMap({ onAgenda }) {
                     </tr>
                   )
                 })}
-              </tbody>
+              </Stagger>
             </table>
           </div>
         )}

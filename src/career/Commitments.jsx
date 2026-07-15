@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE, LINE, Badge, MiniTable, LoadingPanel } from './theme.jsx'
 import { Card, Btn, Empty, Headline } from './charts.jsx'
 import { useApi, copy } from './data.jsx'
+import { Stagger } from '../game/index.js'
 
 // item 7 — sprint predictability, epic forecast, scope ledger. All three come out of ONE changelog
 // replay that server-eng.mjs already runs; nothing is recomputed here.
@@ -31,7 +32,7 @@ export default function Commitments() {
         {!predictability.length ? <Empty>No sprint history in the snapshot.</Empty> : predictability.map(p => (
           <div key={p.team} style={{ borderTop: `1px solid ${LINE}`, padding: '10px 0' }}>
             <Headline tone={p.red ? RED : INK} icon={p.red ? '⚠' : null}>{p.line}</Headline>
-            <div style={{ marginTop: 10 }}>
+            <Stagger style={{ marginTop: 10 }} step={40}>
               {(p.sprints || []).map(s => {
                 // the bar is a composition of the three things that actually happened to the sprint's
                 // tickets, so the denominator is their sum — not "committed", which a scope-injected
@@ -52,7 +53,7 @@ export default function Commitments() {
                   </div>
                 )
               })}
-            </div>
+            </Stagger>
           </div>
         ))}
         <div style={{ font: `400 10.5px ${BODY}`, color: MUTE, marginTop: 8 }}>

@@ -1,6 +1,7 @@
 import React from 'react'
 import { PANEL, PANEL_BG, LINE, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE } from './theme.jsx'
 import { copy, copyJson } from './data.jsx'
+import { Draw, CountUp } from '../game/index.js'
 
 const jiraUrl = i => i.host ? `https://${i.host}/browse/${i.key}` : null
 
@@ -208,15 +209,17 @@ export function TrendChart({ series = [], title, unit = 'd', color = ACCENT, inv
         <div style={{ font: `400 11px ${MONO}`, color: MUTE }}>{series[0]?.label} → {series[series.length - 1]?.label}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-        <div style={{ font: `600 30px ${MONO}`, color, letterSpacing: '-1px' }}>{cur}{unit}</div>
+        <div style={{ font: `600 30px ${MONO}`, color, letterSpacing: '-1px' }}>{Number.isFinite(cur) ? <CountUp value={cur} decimals={Number.isInteger(cur) ? 0 : 1} suffix={unit} /> : `${cur}${unit}`}</div>
         {series.length > 1 && <div style={{ font: `500 12px ${MONO}`, color: good ? GREEN : RED }}>{deltaPct > 0 ? '↑' : '↓'} {Math.abs(deltaPct)}% vs {series[0]?.label}</div>}
       </div>
       {series.length > 1 ? (
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ marginTop: 8, overflow: 'visible' }}>
           <defs><linearGradient id="trendfill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor={color} stopOpacity="0.22" /><stop offset="1" stopColor={color} stopOpacity="0" /></linearGradient></defs>
           <path d={area} fill="url(#trendfill)" />
-          <path d={line} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="3.5" fill={PANEL_BG} stroke={color} strokeWidth="2" />)}
+          <Draw duration={620}>
+            <path d={line} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="3.5" fill={PANEL_BG} stroke={color} strokeWidth="2" />)}
+          </Draw>
           {series.map((s, i) => <text key={i} x={pts[i][0]} y={H - 8} textAnchor="middle" style={{ font: `400 10px ${MONO}`, fill: MUTE }}>{s.label}</text>)}
         </svg>
       ) : <div style={{ font: `400 12px ${MONO}`, color: MUTE, marginTop: 12 }}>not enough history yet</div>}

@@ -3,6 +3,7 @@ import { api, toast } from '../api.js'
 import { MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE, LINE, Badge, MiniTable, LoadingPanel } from './theme.jsx'
 import { Card, Btn, Nudge, Empty, Headline } from './charts.jsx'
 import { useApi, copy } from './data.jsx'
+import { Stagger } from '../game/index.js'
 
 // item 3 — review flow: my rot board (MINE) + the team queue + reviewer LOAD.
 // The write path is deliberately weak: /api/team/pr/:num/* answers {ok:false, copy:"<line>"} unless the
@@ -46,19 +47,19 @@ export default function ReviewFlow() {
               style={{ font: `400 12px ${MONO}`, background: '#0d1117', color: INK, border: `1px solid ${LINE}`, borderRadius: 6, padding: '5px 8px' }} />
             <Btn onClick={saveHandle}>save</Btn>
           </div>
-        ) : !mine.length ? <Empty>Nothing of yours is open right now.</Empty> : mine.map(p => (
+        ) : !mine.length ? <Empty>Nothing of yours is open right now.</Empty> : <Stagger>{mine.map(p => (
           <PrRow key={p.num} p={p} red={p.red} onNudge={() => act(p, 'nudge')} />
-        ))}
+        ))}</Stagger>}
       </Card>
 
       {/* QUEUE — the team's rot: open past SLA with no review, or stuck in changes-requested */}
       <Card title="Queue — PRs the team is sitting on"
         sub={`open > ${slaDays}d with zero reviews, or "Changes requested" > ${stuckDays}d · sorted by age (a queue is not a person)`}
         json={queue}>
-        {!queue.length ? <Empty>No PR is past the review SLA. This is the good case.</Empty> : queue.map(p => (
+        {!queue.length ? <Empty>No PR is past the review SLA. This is the good case.</Empty> : <Stagger>{queue.map(p => (
           <PrRow key={p.num} p={p} red={p.firstReviewDays == null} showAuthor
             onNudge={() => act(p, 'nudge')} onAssign={load.length ? () => act(p, 'assign') : null} />
-        ))}
+        ))}</Stagger>}
       </Card>
 
       {/* LOAD — concentration is the signal, not the person. Alphabetical. */}
@@ -98,7 +99,7 @@ const leastLoaded = (load) => [...load].sort((a, b) => (a.openNow || 0) - (b.ope
 
 function PrRow({ p, red, showAuthor, onNudge, onAssign }) {
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '7px 0', borderTop: `1px solid ${LINE}` }}>
+    <div className="lift" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '7px 8px', margin: '0 -8px', borderTop: `1px solid ${LINE}`, borderRadius: 8 }}>
       <a href={p.url} target="_blank" rel="noreferrer" style={{ font: `600 11.5px ${MONO}`, color: ACCENT, textDecoration: 'none' }}>#{p.num}</a>
       <Badge tone={p.state === 'Changes requested' ? 'red' : p.state === 'Approved' ? 'green' : 'mute'}>{p.state}</Badge>
       <span style={{ font: `500 11px ${MONO}`, color: red ? RED : MUTE }}>{Math.round(p.openDays)}d open</span>

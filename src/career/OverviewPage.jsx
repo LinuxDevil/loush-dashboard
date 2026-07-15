@@ -2,6 +2,8 @@ import React from 'react'
 import { PANEL, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, PURPLE, RED, LINE, Tile, Badge, SectionTitle, Spinner, Updating } from './theme.jsx'
 import { HeaderPills, WhereTimeGoes, Card, Cmp, Empty, Headline, Btn } from './charts.jsx'
 import { useUsage, useEngSelf, useApi, timeAllocation, copy } from './data.jsx'
+import CareerGame from './CareerGame.jsx'
+import { CountUp, Stagger } from '../game/index.js'
 
 // Overview — what needs a decision today, and whether the last period's intervention worked.
 //
@@ -37,18 +39,22 @@ export default function OverviewPage({ snap, onGoto }) {
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
+      {/* GROWTH OVER TIME — the game layer belongs on this page most of all. Honest career 0 with the
+          path out of it, plus the real global level/XP/streak. bugTax names the number that must move. */}
+      <CareerGame bugTax={eng?.bugTax} />
+
       {/* ATTENTION — the only thing a landing page owes you */}
       <Card title="Needs a human today" sub={`comparing ${snap.period || 'this period'} against ${prior?.period || 'the prior period'}`}
         json={{ atRisk, queue, redCi }}>
         {/* Never claim "green" while the answer is still in flight — a loading state that renders as a
             clean bill of health is the most dishonest thing a dashboard can do. */}
-        <div style={{ display: 'grid', gap: 6 }}>
+        <Stagger style={{ display: 'grid', gap: 6 }} step={60}>
           {ci.data ? <Line tone={redCi ? RED : GREEN} on={onGoto} to="Team">{redCi ? 'A default branch is RED — that blocks everyone.' : 'CI: every default branch is green.'}</Line> : <Pending>CI status…</Pending>}
           {review.data ? <Line tone={queue ? RED : GREEN} on={onGoto} to="Team">{queue ? `${queue} PRs are past the review SLA with nobody on them.` : 'Review queue: nothing is past the SLA.'}</Line> : <Pending>Review queue…</Pending>}
           {board.data ? <Line tone={atRisk ? RED : GREEN} on={onGoto} to="Team">{atRisk ? `${atRisk} tickets are at risk across ${teamRows.length} engineers.` : 'No ticket is flagged at risk.'}</Line> : <Pending>Team board…</Pending>}
           {roi.data?.dead ? <Line tone={PURPLE} on={onGoto} to="Harness">{roi.data.headline}</Line> : null}
           {econ.data?.worst ? <Line tone={PURPLE} on={onGoto} to="Harness">{econ.data.worst}</Line> : null}
-        </div>
+        </Stagger>
       </Card>
 
       {/* header pills */}
@@ -78,12 +84,16 @@ export default function OverviewPage({ snap, onGoto }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         {alloc ? <WhereTimeGoes {...alloc} /> : <Card title="Where time goes"><Empty>No JIRA issues in this window.</Empty></Card>}
         <Card title="What to focus on" sub={prior ? `vs ${prior.period}` : null} json={snap.focus}>
-          {top.length ? top.map(x => (
-            <div key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 0', font: `400 12px ${BODY}`, color: INK }}>
-              <Badge tone={x.severity === 'high' ? 'red' : x.severity === 'med' ? 'accent' : 'mute'}>{x.severity}</Badge>
-              <span>{x.message}</span>
-            </div>
-          )) : <Empty>Nothing flagged — clean run.</Empty>}
+          {top.length ? (
+            <Stagger step={55}>
+              {top.map(x => (
+                <div key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 0', font: `400 12px ${BODY}`, color: INK }}>
+                  <Badge tone={x.severity === 'high' ? 'red' : x.severity === 'med' ? 'accent' : 'mute'}>{x.severity}</Badge>
+                  <span>{x.message}</span>
+                </div>
+              ))}
+            </Stagger>
+          ) : <Empty>Nothing flagged — clean run.</Empty>}
           <div style={{ display: 'flex', gap: 20, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${LINE}`, flexWrap: 'wrap' }}>
             <Mini label="interrupt rate" cur={pct1(snap.workflow?.interruptRate)} prev={pct1(prior?.workflow?.interruptRate)} dir="down" />
             <Mini label="sessions" cur={snap.me?.sessionCount} prev={prior?.me?.sessionCount} />
@@ -103,8 +113,9 @@ const Pending = ({ children }) => (
   </div>
 )
 
-const Line = ({ children, tone, on, to }) => (
-  <div onClick={() => on?.(to)} style={{ display: 'flex', gap: 8, alignItems: 'baseline', font: `400 13px ${BODY}`, color: INK, cursor: on ? 'pointer' : 'default' }}>
+const Line = ({ children, tone, on, to, className = '', style }) => (
+  <div onClick={() => on?.(to)} className={`${className} ${on ? 'lift press' : ''}`.trim()}
+    style={{ display: 'flex', gap: 8, alignItems: 'baseline', font: `400 13px ${BODY}`, color: INK, cursor: on ? 'pointer' : 'default', padding: '2px 6px', margin: '0 -6px', borderRadius: 8, border: '1px solid transparent', ...style }}>
     <span style={{ color: tone }}>●</span>{children}
     {on ? <span style={{ font: `500 11px ${MONO}`, color: MUTE }}>→ {to}</span> : null}
   </div>
@@ -116,7 +127,10 @@ function TileCmp({ label, value, sub, cur, prev, unit = '', dir = 'up', tone }) 
     <div style={{ ...PANEL, padding: '13px 16px', flex: 1, minWidth: 156, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <div style={{ font: `500 10.5px ${BODY}`, color: MUTE, textTransform: 'uppercase', letterSpacing: '0.6px' }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ font: `600 23px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}>{value ?? '—'}</span>
+        <span style={{ font: `600 23px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}>
+          {/* value === `${cur}${unit}` at every call site — animate the number, keep the honest '—' for null */}
+          {Number.isFinite(cur) ? <CountUp value={cur} decimals={Number.isInteger(cur) ? 0 : 1} suffix={unit} /> : (value ?? '—')}
+        </span>
         <Cmp cur={cur} prev={prev} unit={unit} dir={dir} />
       </div>
       {sub && <div style={{ font: `400 11px ${BODY}`, color: MUTE }}>{sub}</div>}
@@ -127,7 +141,7 @@ function TileCmp({ label, value, sub, cur, prev, unit = '', dir = 'up', tone }) 
 const Mini = ({ label, cur, prev, dir }) => (
   <div>
     <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-      <span style={{ font: `600 17px ${MONO}`, color: INK }}>{cur ?? '—'}</span>
+      <span style={{ font: `600 17px ${MONO}`, color: INK }}>{Number.isFinite(cur) ? <CountUp value={cur} decimals={Number.isInteger(cur) ? 0 : 1} /> : (cur ?? '—')}</span>
       <Cmp cur={cur} prev={prev} dir={dir} />
     </div>
     <div style={{ font: `400 10.5px ${BODY}`, color: MUTE }}>{label}</div>

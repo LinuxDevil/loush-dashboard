@@ -81,7 +81,12 @@ export function loadEngSelf() {
     const myPrs = (snap.prs || []).filter(p => myKeys.has(p.ticket))
     // slim projection of ALL issues — only what OKR epic-progress needs (keeps the cache small)
     const allIssues = (snap.issues || []).map(i => ({ key: i.key, parent: i.parent ? { key: i.parent.key } : null, linkedKey: i.linkedKey, live: i.live, status: i.status, host: i.host }))
-    return { available: true, accountId, email, issues: mine, prs: myPrs, allIssues, dora: deriveDora(mine, myPrs, accountId) }
+    // bug tax — the SAME field the game engine reads for the `better-than-before` badge (server-game.mjs
+    // engEvents → snap.investment). Carried through so the career game block can name the number honestly.
+    // null (not 0) when the snapshot didn't compute it — a missing comparison is not a passing one.
+    const inv = snap.investment
+    const bugTax = inv && inv.bugTaxPct != null && inv.bugTaxPrevPct != null ? { pct: inv.bugTaxPct, prevPct: inv.bugTaxPrevPct } : null
+    return { available: true, accountId, email, issues: mine, prs: myPrs, allIssues, bugTax, dora: deriveDora(mine, myPrs, accountId) }
   })()
 }
 

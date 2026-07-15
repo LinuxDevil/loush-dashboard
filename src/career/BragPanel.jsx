@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api, toast } from '../api.js'
 import { PANEL, HEAD, MONO, BODY, ACCENT, GREEN, MUTE, INK } from './theme.jsx'
 import { useEngSelf } from './data.jsx'
+import { CountUp, Stagger } from '../game/index.js'
 export default function BragPanel({ reload }) {
   const [data, setData] = useState({ candidates: [], entries: [] })
   const [retro, setRetro] = useState({ worked: '', didnt: '', change: '' })
@@ -28,9 +29,9 @@ export default function BragPanel({ reload }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       <div style={PANEL}>
-        <div style={{ display: 'flex', alignItems: 'center' }}><div style={{ font: `600 13px ${HEAD}`, color: ACCENT, flex: 1 }}>Brag log ({data.entries.length})</div>
-          <button onClick={exportStory} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer' }}>⧉ story-so-far</button></div>
-        {data.entries.slice(-10).reverse().map(e => <div key={e.id} style={{ font: `400 12px ${MONO}`, padding: '4px 0' }}>• {e.title}</div>)}
+        <div style={{ display: 'flex', alignItems: 'center' }}><div style={{ font: `600 13px ${HEAD}`, color: ACCENT, flex: 1 }}>Brag log (<CountUp value={data.entries.length} />)</div>
+          <button className="press" onClick={exportStory} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '4px 8px', cursor: 'pointer' }}>⧉ story-so-far</button></div>
+        <Stagger>{data.entries.slice(-10).reverse().map(e => <div key={e.id} style={{ font: `400 12px ${MONO}`, padding: '4px 0' }}>• {e.title}</div>)}</Stagger>
       </div>
       {/* item 16 — candidates harvested from merged PRs, review footprint and ownership keystones.
           When the GitHub drop is missing the server returns [] — which means "not imported", NOT
@@ -47,10 +48,10 @@ export default function BragPanel({ reload }) {
             Showing JIRA-derived lines only — the merged-PR, review-footprint and ownership-keystone harvest needs a GitHub import, which is not configured.
           </div>
         ) : null}
-        {[...engCandidates, ...data.candidates].length ? [...engCandidates, ...data.candidates].map(c => <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 0' }}>
+        {[...engCandidates, ...data.candidates].length ? <Stagger>{[...engCandidates, ...data.candidates].map(c => <div key={c.id} className="lift" style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '4px 6px', margin: '0 -6px', borderRadius: 8 }}>
           <div style={{ flex: 1, font: `400 12px ${MONO}`, color: '#e6edf3' }}>{c.title}{c.impact ? <span style={{ color: GREEN }}> · {c.impact}</span> : null}</div>
-          <button onClick={() => accept(c)} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>+ add</button>
-        </div>) : (
+          <button className="press" onClick={() => accept(c)} style={{ font: `600 11px ${MONO}`, color: ACCENT, background: 'transparent', border: `1px solid ${ACCENT}55`, borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>+ add</button>
+        </div>)}</Stagger> : (
           <div style={{ font: `400 12px ${BODY}`, color: MUTE, lineHeight: 1.6 }}>
             No GitHub import configured — the merged-PR / review-footprint / ownership harvest has nothing to read.
             <br /><b style={{ color: INK }}>This is an empty source, not an empty year.</b> Hit <b style={{ color: ACCENT }}>↓ import GitHub</b> above (it shells the gh CLI you are already logged into, writes one JSON drop, and uploads nothing).

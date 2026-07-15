@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE, LINE, Badge, LoadingPanel } from './theme.jsx'
 import { Card, Btn, Empty, Headline, Stacked } from './charts.jsx'
 import { useApi, copy } from './data.jsx'
+import { Stagger } from '../game/index.js'
 
 // item 6 — work-class effort mix, per team, per quarter. Engineer-days from JIRA (activeDays), NOT
 // Claude-session buckets: a session is not a unit of work, and nobody has ever taken a headcount
@@ -51,7 +52,7 @@ export default function EffortMix() {
               </Headline>
             )}
             <div style={{ marginTop: 14 }}>
-              {qs.map(q => (
+              <Stagger step={45}>{qs.map(q => (
                 <div key={q.quarter} style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 9 }}>
                   <div style={{ width: 60, font: `500 11px ${MONO}`, color: q === qs[qs.length - 1] ? INK : MUTE }}>{q.quarter}</div>
                   <div style={{ flex: 1, display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', background: LINE }}>
@@ -63,7 +64,7 @@ export default function EffortMix() {
                   </div>
                   <div style={{ width: 96, textAlign: 'right', font: `400 11px ${MONO}`, color: MUTE }}>{q.totalDays}d</div>
                 </div>
-              ))}
+              ))}</Stagger>
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8, font: `400 11px ${MONO}`, color: MUTE }}>
                 {CLS.map(([k, color, label]) => <span key={k}><span style={{ color }}>●</span> {label}</span>)}
                 <span style={{ color: MUTE }}>· click a band for the tickets behind it</span>

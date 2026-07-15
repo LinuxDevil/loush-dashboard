@@ -3,6 +3,7 @@ import { api, toast } from '../api.js'
 import { MONO, BODY, ACCENT, MUTE, INK, GREEN, RED, PURPLE, LINE, Badge, LoadingPanel } from './theme.jsx'
 import { Card, Btn, Nudge, Empty, HBars } from './charts.jsx'
 import { useApi, copy } from './data.jsx'
+import { CountUp, Stagger } from '../game/index.js'
 
 // item 2 — team board: blocked & at-risk, grouped by person.
 //
@@ -30,7 +31,7 @@ export default function TeamBoard({ onPacket }) {
       right={<span style={{ font: `400 10.5px ${BODY}`, color: MUTE, maxWidth: 340, textAlign: 'right' }}>
         Rows are alphabetical and carry no score — every fact here is one the person can already open in JIRA about themselves.
       </span>}>
-      {!rows.length ? <Empty>No open tickets assigned to anyone in the snapshot.</Empty> : rows.map(r => {
+      {!rows.length ? <Empty>No open tickets assigned to anyone in the snapshot.</Empty> : <Stagger step={45} max={360}>{rows.map(r => {
         const red = r.flags.length > 0
         const isOpen = open === r.id
         return (
@@ -66,13 +67,13 @@ export default function TeamBoard({ onPacket }) {
             )}
           </div>
         )
-      })}
+      })}</Stagger>}
     </Card>
   )
 }
 
 const Stat = ({ v, l, tone }) => (
   <span style={{ font: `400 11px ${MONO}`, color: MUTE, whiteSpace: 'nowrap' }}>
-    <b style={{ font: `600 13px ${MONO}`, color: tone || INK }}>{v}</b> {l}
+    <b style={{ font: `600 13px ${MONO}`, color: tone || INK }}>{typeof v === 'number' && Number.isFinite(v) ? <CountUp value={v} /> : v}</b> {l}
   </span>
 )

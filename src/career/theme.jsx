@@ -1,5 +1,12 @@
 import React from 'react'
+import { Draw, CountUp } from '../game/index.js'
 // Devtool palette — Linear / Vercel / GitHub Actions inspired
+
+// Animate a value ONLY when it is a real, finite number. Strings ("$1.2k", "47%", "3.2d") and the honest
+// '—' / null / 'suppressed' states render verbatim — a CountUp must never turn a null into a counting-up 0.
+const Num = ({ v }) => (typeof v === 'number' && Number.isFinite(v))
+  ? <CountUp value={v} decimals={Number.isInteger(v) ? 0 : 1} />
+  : <>{v ?? '—'}</>
 export const BG = '#0d1117'          // near-black page
 export const PANEL_BG = '#161b22'    // slightly lighter panel
 export const LINE = '#30363d'        // hairline border
@@ -34,7 +41,7 @@ export function Bar({ v, max = 1, color = ACCENT, h = 6 }) {
 
 export const Stat = ({ label, val, tone }) => (
   <div style={{ ...PANEL, padding: '14px 16px', flex: 1, minWidth: 130 }}>
-    <div style={{ font: `600 24px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}>{val ?? '—'}</div>
+    <div style={{ font: `600 24px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}><Num v={val} /></div>
     <div style={{ font: `400 11px ${BODY}`, color: MUTE, marginTop: 2 }}>{label}</div>
   </div>
 )
@@ -61,7 +68,7 @@ export function Sparkline({ data = [], color = ACCENT, w = 120, h = 30, fill = t
     <svg width={w} height={h} style={{ display: 'block', overflow: 'visible' }}>
       {fill && <><defs><linearGradient id={id} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor={color} stopOpacity="0.28" /><stop offset="1" stopColor={color} stopOpacity="0" /></linearGradient></defs>
         <polygon points={`0,${h} ${line} ${w},${h}`} fill={`url(#${id})`} /></>}
-      <polyline points={line} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <Draw duration={480}><polyline points={line} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" /></Draw>
     </svg>
   )
 }
@@ -106,7 +113,7 @@ export function Tile({ label, value, sub, delta, deltaSuffix, invertDelta, spark
     <div style={{ ...PANEL, padding: '13px 16px', flex: 1, minWidth, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <div style={{ font: `500 10.5px ${BODY}`, color: MUTE, textTransform: 'uppercase', letterSpacing: '0.6px' }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ font: `600 23px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}>{value ?? '—'}</span>
+        <span style={{ font: `600 23px ${MONO}`, color: tone || INK, letterSpacing: '-0.5px' }}><Num v={value} /></span>
         {delta != null && <Delta v={delta} suffix={deltaSuffix} invert={invertDelta} />}
       </div>
       {sub && <div style={{ font: `400 11px ${BODY}`, color: MUTE }}>{sub}</div>}
