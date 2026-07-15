@@ -27,11 +27,12 @@ export default function GameStats({ dashboard = 'claude', compact = false }) {
   )
   if (!game) return null
 
-  // Recent is scoped to the dashboard you're standing on — on the Eng page you want your ships and
-  // reviews, not your cache-read wins. Falls back to everything if this dashboard has no outcomes yet.
-  const next = game.nextUp?.find(a => a.dash === dashboard) || game.nextUp?.[0]
-  const scoped = (game.recent || []).filter(e => e.dash === dashboard)
-  const recent = (scoped.length ? scoped : game.recent || []).slice(0, compact ? 3 : 5)
+  // Recent + closest-badge are scoped to the plane you're standing on — on the Eng page you want your
+  // ships and reviews, not your cache-read wins. If THIS plane has nothing of its own we say so honestly
+  // rather than borrowing another plane's events or badge (that made the Career page show a Claude
+  // cache badge and the Cursor page show cross-plane recents). The level/XP/streak block stays global.
+  const next = mine?.next
+  const recent = (game.recent || []).filter(e => e.dash === dashboard).slice(0, compact ? 3 : 5)
 
   return (
     <div className="panel game-stats">
@@ -74,7 +75,7 @@ export default function GameStats({ dashboard = 'claude', compact = false }) {
                 </div>
               ))}
             </Stagger>
-          ) : <div className="small">No outcomes yet on this dashboard. Ship something.</div>}
+          ) : <div className="small">No {dashboard === 'claude' ? 'harness' : dashboard} outcomes on this plane yet.</div>}
         </div>
 
         {next && (

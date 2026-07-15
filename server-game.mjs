@@ -45,7 +45,7 @@ const dayKey = ms => new Date(ms).toLocaleDateString('en-CA') // local YYYY-MM-D
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
 
 // ---------- persistence (versioned write, same shape as career.json / taskboard.json) ----------
-const BLANK = { version: 1, updatedAt: 0, earned: [], marks: null, unlocked: {}, seen: [] }
+const BLANK = { version: 1, updatedAt: 0, earned: [], banked: [], marks: null, unlocked: {}, seen: [] }
 function load() {
   const g = readJson(GAME_FILE, null)
   if (!g || g.version !== 1) return { ...BLANK }
@@ -318,6 +318,32 @@ function achievements(c) {
   ]
 }
 
+// ---------- lifetime banking (BUG-1 fix) ----------
+// DERIVED events are recomputed from WINDOWED sources every call (sessions?days=90, the eng snapshot's
+// rolling JQL). Left alone, an old ship / PR / review / clean-session that ages out of its window takes
+// its XP with it, and a LIFETIME level derived from that would go DOWN. It must never go down. So we
+// fold every not-yet-seen derived event into a permanent store keyed by its STABLE id, freezing its XP
+// and real date, and score from the union of that store with the current call — deduped by id, banked
+// copy winning, so a fresh event and its banked twin never double-count.
+//
+// Every derived id IS stable and independent of the per-call clock, so banking is idempotent:
+//   ship:/clean:/bug:/qa:KEY, pr:/rev:/revf:/unb:REPO#NUM, cap:VERSION, sess:SESSIONID,
+//   cache:YYYY-MM-DD, tax:YYYY-MM. bugTaxDown + cache/session events carry at=Date.now()/s.last, but
+//   their id is date-window-keyed, not clock-keyed, so re-seeing them re-banks NOTHING. (The DELTA
+//   events in g.earned embed now.at in their id and are NOT derived — they are never banked here, so
+//   there is exactly one source of truth for them.)
+function bankDerived(g, derived) {
+  if (!g.banked) g.banked = []
+  const seen = new Set(g.banked.map(e => e.id))
+  for (const e of derived) if (!seen.has(e.id)) { g.banked.push(e); seen.add(e.id) }
+  return g.banked
+}
+function lifetimeEvents(g, derived) {
+  const byId = new Map() // banked first → the frozen copy wins over the live (windowed) recompute
+  for (const e of [...(g.banked || []), ...derived, ...(g.earned || [])]) if (!byId.has(e.id)) byId.set(e.id, e)
+  return [...byId.values()].sort((a, b) => a.at - b.at)
+}
+
 // ---------- assemble ----------
 let cache = null
 async function build() {
@@ -342,7 +368,12 @@ async function build() {
   g.marks = nowMark
   if (g.earned.length > 2000) g.earned = g.earned.slice(-2000)
 
-  const events = [...derived, ...g.earned].sort((a, b) => a.at - b.at)
+  // BUG-1 fix: bank the derived events permanently (dedup by stable id), then score from the lifetime
+  // union so XP/level are non-decreasing forever even after events leave the source window. On the very
+  // first run under this code g.banked is empty, so it simply absorbs whatever is currently visible —
+  // the number never lurches, and unlocked/seen/marks/bestStreak are untouched.
+  bankDerived(g, derived)
+  const events = lifetimeEvents(g, derived)
   const xp = events.reduce((s, e) => s + e.xp, 0)
   const lvl = levelOf(xp)
   const streak = streakOf(events, g)
@@ -382,12 +413,14 @@ async function build() {
   }
   save(g)
 
-  const per = d => {
-    const evs = events.filter(e => e.dash === d)
-    return { xp: evs.reduce((s, e) => s + e.xp, 0), events: evs.length, unlocked: list.filter(a => a.dash === d && a.unlocked).length, total: list.filter(a => a.dash === d).length }
-  }
   const locked = list.filter(a => !a.unlocked && a.progress.need)
     .sort((a, b) => b.progress.have / b.progress.need - a.progress.have / a.progress.need)
+  const per = d => {
+    const evs = events.filter(e => e.dash === d)
+    // per-plane closest badge, so GameStats can show THIS plane's own next badge (or none) instead of
+    // borrowing the global top-3 when a plane's badge doesn't rank globally (BUG-2).
+    return { xp: evs.reduce((s, e) => s + e.xp, 0), events: evs.length, unlocked: list.filter(a => a.dash === d && a.unlocked).length, total: list.filter(a => a.dash === d).length, next: locked.find(a => a.dash === d) || null }
+  }
 
   return {
     xp, ...lvl,
@@ -454,4 +487,4 @@ export default function mountGame(app, deps = {}) {
     res.json({ ok: true, seen: g.seen.length })
   })
 }
-export { build as gameSnapshot, levelOf, streakOf, EV }
+export { build as gameSnapshot, levelOf, streakOf, EV, bankDerived, lifetimeEvents, mk }
