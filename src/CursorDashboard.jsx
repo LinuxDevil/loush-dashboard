@@ -3,6 +3,7 @@ import { api, toast, tildify, fmtDate } from './api.js'
 import { RunWindow } from './QuickActions.jsx'
 import { DataTable, Facts, StackedBar, Bars } from './charts.jsx'
 import { Columns } from './cursor/charts.jsx'
+import { GameStats, useGame, CountUp, Stagger } from './game/index.js'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
@@ -13,6 +14,9 @@ const BAD = '#e5484d'
 const OK = '#3fb96a'
 const fmtNum = n => n == null ? '—' : n >= 1000 ? (n / 1000).toFixed(n >= 1e4 ? 0 : 1) + 'k' : String(n)
 const money = c => c == null ? null : '$' + (c / 100).toFixed(2)
+// CountUp formatter — only ever reached with a real, non-null cents value (the Stat `num` branch guards
+// null before the number ever animates), so it never needs to invent a $0.00 for missing data.
+const dollars = c => '$' + (c / 100).toFixed(2)
 const pctS = f => f == null ? '—' : (f * 100).toFixed(1) + '%'
 const SCOPE = { always: ['#7cc4f7', 'always loaded'], glob: [WARN, 'on glob match'], 'agent-requested': ['#7a716a', 'agent-requested'] }
 const short = f => f ? tildify(f).split('/').pop() : '—'
@@ -38,12 +42,18 @@ const H = ({ children, right }) => (
 // item 11: the escape hatch, on every panel — the exact backing rows for what you are looking at.
 const Raw = ({ href }) => <a href={href} target="_blank" rel="noreferrer" title="the exact rows behind this panel" style={{ font: `500 10px ${MONO}`, color: '#5c554f', textDecoration: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '2px 6px' }}>{'[{ }]'}</a>
 
-// A tile that REFUSES to print a zero it does not have. `val == null` renders the reason, never $0.00.
-const Stat = ({ label, val, sub, color, missing }) => (
-  <div style={{ ...PANEL, padding: '14px 18px', flex: 1, minWidth: 150 }}>
-    {val != null
-      ? <div style={{ font: `700 24px ${HEAD}`, color: color || '#e5dbd2' }}>{val}</div>
-      : <div style={{ font: `600 12.5px ${MONO}`, color: WARN, padding: '5px 0 3px' }}>{missing || 'no data'}</div>}
+// A tile that REFUSES to print a zero it does not have. The number animates in ONLY when it is a real
+// number: pass `num` (raw value) + `fmt` and it CountUps; pass a pre-formatted `val` for non-numeric
+// text. When BOTH are null the tile renders `missing`, never a $0.00 that a CountUp raced up to from 0.
+// This is the founding principle wired into the primitive: a null cannot be animated into a zero here,
+// because the num branch is never entered when num == null.
+const Stat = ({ label, val, num, fmt, sub, color, missing }) => (
+  <div className="lift" style={{ ...PANEL, padding: '14px 18px', flex: 1, minWidth: 150 }}>
+    {num != null
+      ? <div style={{ font: `700 24px ${HEAD}`, color: color || '#e5dbd2' }}><CountUp value={num} format={fmt || (n => String(Math.round(n)))} /></div>
+      : val != null
+        ? <div style={{ font: `700 24px ${HEAD}`, color: color || '#e5dbd2' }}>{val}</div>
+        : <div style={{ font: `600 12.5px ${MONO}`, color: WARN, padding: '5px 0 3px' }}>{missing || 'no data'}</div>}
     <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{label}</div>
     {sub && <div style={{ font: `400 10px ${MONO}`, color: '#5c554f', marginTop: 3 }}>{sub}</div>}
   </div>
@@ -68,6 +78,80 @@ function useApi(path, deps = []) {
   return [data, err]
 }
 const Loading = ({ what }) => <Muted>{what}</Muted>
+// A shimmer skeleton (the `.skel` class carries the shimmer; reduced-motion freezes it to a static
+// block). Used in place of a bare text spinner on the endpoints that are painfully slow cold —
+// /outcomes (10–68s), /project (~27s), the first /search (~30s FTS build), and the 2 GB truth read.
+const Skel = ({ h = 34, w = '100%', r = 10, style }) => <div className="skel" style={{ height: h, width: w, borderRadius: r, ...style }} />
+const ColdLoading = ({ what, rows = 4, tiles = 3 }) => (
+  <div style={{ display: 'grid', gap: 12 }}>
+    {tiles > 0 && <div style={{ display: 'flex', gap: 12 }}>{Array.from({ length: tiles }, (_, i) => <Skel key={i} h={62} r={14} style={{ flex: 1 }} />)}</div>}
+    {Array.from({ length: rows }, (_, i) => <Skel key={i} h={32} style={{ opacity: 1 - i * 0.12 }} />)}
+    <Muted>{what}</Muted>
+  </div>
+)
+const ChartSkel = ({ what }) => (
+  <div style={{ display: 'grid', gap: 10 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 96 }}>
+      {Array.from({ length: 28 }, (_, i) => <Skel key={i} h={20 + ((i * 37) % 70)} r={3} style={{ flex: 1 }} />)}
+    </div>
+    <Muted>{what}</Muted>
+  </div>
+)
+
+// ---------------------------------------------------------------------------
+// The game block on the Cursor main page. It holds the same line the whole dashboard holds: it tells
+// the truth about a plane with no recent data instead of dressing it up.
+//
+// The level, XP and streak are GLOBAL and real — one person's whole body of work across every plane —
+// so GameStats renders them earned. But the Cursor plane itself reports 0 XP from 0 recent events, and
+// that is not a broken counter: XP is minted from PRICED outcomes, and this machine's local usageData
+// stops on 2026-01-25, so there is nothing recent to score. The two Cursor badges ARE real — they fired
+// off Cursor's own accept-rate counters before the data went stale — so we show them, unlocked. No fake
+// 0 XP with a shiny bar; the honest empty is the point.
+const CURSOR_STALE_DATE = '2026-01-25'
+function CursorGame() {
+  const { game } = useGame('cursor')
+  const badges = (game?.achievements || []).filter(a => a.dash === 'cursor')
+  const TIERS = { bronze: '#c98b5e', silver: '#b9c2cc', gold: '#e5a03a' }
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      {/* Frame FIRST, so the "Recently earned" list GameStats shows below reads as your global body of
+          work across every plane — not as recent Cursor activity, of which there is none. */}
+      <Note>
+        Your level, XP and streak below are <b>global and earned</b> — your whole body of work across every plane.
+        The <b>Cursor plane itself scored 0 XP from 0 recent events</b>, and that is the honest reading, not a broken tile:
+        XP is minted from priced outcomes, and this machine's local <span style={{ color: '#e5dbd2' }}>usageData ends {CURSOR_STALE_DATE}</span>,
+        so there is no recent Cursor activity to score. The two Cursor badges are real — they fired off Cursor's own accept-rate counters before the data went stale.
+      </Note>
+      <GameStats dashboard="cursor" />
+      <div style={PANEL}>
+        <H right={<Chip text="self-only · no leaderboard" color="#7a716a" />}>Cursor badges — 2 of 2 earned</H>
+        {badges.length === 0
+          ? <Muted>loading badges…</Muted>
+          : <Stagger tag="div" step={60} style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {badges.map(b => (
+                <div key={b.id} className="lift" style={{
+                  display: 'flex', gap: 12, alignItems: 'center', flex: '1 1 240px', minWidth: 220,
+                  padding: '12px 14px', borderRadius: 12,
+                  border: `1px solid ${(TIERS[b.tier] || ACCENT)}55`,
+                  background: `linear-gradient(150deg, ${(TIERS[b.tier] || ACCENT)}18, rgba(255,255,255,0.015))`,
+                }}>
+                  <span style={{ fontSize: 26, filter: `drop-shadow(0 0 9px ${(TIERS[b.tier] || ACCENT)}88)` }}>{b.icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ font: `600 13.5px ${HEAD}`, color: '#e5dbd2' }}>{b.name} <span style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: TIERS[b.tier] || ACCENT }}>{b.tier}</span></div>
+                    <div style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>{b.desc}</div>
+                    <div style={{ font: `600 10.5px ${MONO}`, color: OK, marginTop: 3 }}>✓ unlocked{b.unlockedAt ? ' · ' + new Date(b.unlockedAt).toISOString().slice(0, 10) : ''}</div>
+                  </div>
+                </div>
+              ))}
+            </Stagger>}
+        <div style={{ font: `400 10px ${MONO}`, color: '#5c554f', marginTop: 10, lineHeight: 1.5 }}>
+          Both are already earned, so there is no "closest badge" left on the Cursor plane to chase — and no XP to be minted here until Cursor starts writing priced usageData again.
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // item 1 — the truth pass. Five tiles deleted (see `dead[]` below, straight from the server, each
@@ -85,16 +169,20 @@ function Home({ q, days }) {
   const half = Math.floor((t?.trend?.days.length || 0) / 2)
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      {/* headline tiles: spend, accept rate, wasted turns, always-context tax. Not lines typed. */}
+      <CursorGame />
+
+      {/* headline tiles: spend, accept rate, wasted turns, always-context tax. Not lines typed.
+          Each CountUp is fed a raw `num` that is null exactly when the datum is missing, so the stale
+          spend tile renders "stale — see Spend", never a $0.00 racing up from zero. */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <Stat label={`spend · last ${days}d`} val={money(sp?.totals.cents)} color={ACCENT}
+        <Stat label={`spend · last ${days}d`} num={sp?.totals.cents} fmt={c => '$' + (c / 100).toFixed(2)} color={ACCENT}
           missing={sp?.coverage.stale ? 'stale — see Spend' : 'no data'}
           sub={sp?.coverage.stale ? `local usageData stops ${new Date(sp.coverage.lastPricedAt).toISOString().slice(0, 10)}` : sp ? `${sp.pricedSessions} priced sessions` : ''} />
-        <Stat label="accept rate (Cursor's own counters)" val={ac ? pctS(ac.totals.acceptRate) : null} color={OK}
+        <Stat label="accept rate (Cursor's own counters)" num={ac ? ac.totals.acceptRate * 100 : null} fmt={v => v.toFixed(1) + '%'} color={OK}
           sub={ac ? `${fmtNum(ac.totals.accepted)} of ${fmtNum(ac.totals.suggested)} suggested lines` : ''} />
-        <Stat label="wasted turns (tool errors)" val={tl ? fmtNum(tl.totals.errors) : null} color={BAD}
+        <Stat label="wasted turns (tool errors)" num={tl?.totals.errors} fmt={fmtNum} color={BAD}
           sub={tl ? `of ${fmtNum(tl.totals.calls)} tool calls · all-history` : ''} />
-        <Stat label="always-context tax" val={cx ? `${fmtNum(cx.totals.always)} tok` : null} color={WARN}
+        <Stat label="always-context tax" num={cx?.totals.always} fmt={v => fmtNum(v) + ' tok'} color={WARN}
           sub="paid on every single chat" />
       </div>
 
@@ -103,11 +191,11 @@ function Home({ q, days }) {
           {d != null && <Chip text={`${d > 0 ? '▲' : d < 0 ? '▼' : ''} ${d > 0 ? '+' : ''}${d}% vs prior ${half}d`} color={d > 0 ? OK : d < 0 ? WARN : '#7a716a'} />}
           <Raw href={`/api/cursor/truth?${q}`} />
         </>}>Sessions per day — last {days} days</H>
-        {!t ? <Loading what="parsing Cursor's database… (first load reads a 2 GB sqlite file)" /> : (
+        {!t ? <ChartSkel what="parsing Cursor's database… (first load reads a 2 GB sqlite file)" /> : (
           <>
             <Columns items={t.trend.days.map(x => ({ label: x.day.slice(5), value: x.sessions, hint: `${x.day}: ${x.sessions} sessions` }))} color={ACCENT} />
             <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginTop: 8 }}>
-              {t.trend.current} sessions in the recent half · {t.trend.previous} in the one before it
+              <CountUp value={t.trend.current} /> sessions in the recent half · <CountUp value={t.trend.previous} /> in the one before it
             </div>
           </>
         )}
@@ -125,14 +213,14 @@ function Home({ q, days }) {
           <summary style={{ font: `600 12px ${HEAD}`, color: '#9a8f86', cursor: 'pointer' }}>
             {t.dead.length} tiles deleted in the truth pass — the evidence
           </summary>
-          <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+          <Stagger tag="div" step={40} style={{ display: 'grid', gap: 8, marginTop: 10 }}>
             {t.dead.map(x => (
               <div key={x.tile} style={{ borderLeft: `2px solid ${BAD}`, paddingLeft: 10 }}>
                 <div style={{ font: `600 11.5px ${MONO}`, color: '#e5dbd2' }}>{x.tile} <Chip text={x.verdict.split(' ')[0]} color={BAD} /></div>
                 <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', lineHeight: 1.5 }}>{x.where} — {x.why}</div>
               </div>
             ))}
-          </div>
+          </Stagger>
         </details>
       )}
     </div>
@@ -165,13 +253,17 @@ function Spend({ q, days }) {
     <div style={{ display: 'grid', gap: 14 }}>
       {stale && <Note>{sp.coverage.note}</Note>}
 
+      {/* Every money figure here is `num` = raw cents, which is null in a window with no priced data.
+          A null never enters the CountUp branch, so these render "no data" — the whole point of the
+          stale-usageData thesis. A $0.00 counting up from zero would be strictly worse than the static
+          lie this dashboard already deleted. */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <Stat label={`spend · last ${days}d`} val={money(sp.totals.cents)} missing="no data — usageData stale" color={ACCENT} />
-        <Stat label="spend · 30d" val={money(sp.totals.cents30d)} missing="no data" />
-        <Stat label="spend · 90d" val={money(sp.totals.cents90d)} missing="no data" />
-        <Stat label="spend · month to date" val={money(sp.totals.centsMTD)} missing="no data" />
+        <Stat label={`spend · last ${days}d`} num={sp.totals.cents} fmt={dollars} missing="no data — usageData stale" color={ACCENT} />
+        <Stat label="spend · 30d" num={sp.totals.cents30d} fmt={dollars} missing="no data" />
+        <Stat label="spend · 90d" num={sp.totals.cents90d} fmt={dollars} missing="no data" />
+        <Stat label="spend · month to date" num={sp.totals.centsMTD} fmt={dollars} missing="no data" />
         <Stat label={`spend · ${stale ? 'all-time (priced era)' : 'per 1k AI lines'}`}
-          val={stale ? money(s?.totals.cents) : (sp.totals.centsPerKAiLine != null ? money(sp.totals.centsPerKAiLine) : null)}
+          num={stale ? s?.totals.cents : sp.totals.centsPerKAiLine} fmt={dollars}
           color={OK}
           sub={stale && s ? `${sp.coverage.pricedSessionsAllTime} of ${sp.coverage.totalSessionsAllTime} sessions ever carried a price` : ''} />
       </div>
@@ -220,15 +312,15 @@ function Spend({ q, days }) {
 
       <div style={PANEL}>
         <H right={<Raw href="/api/cursor/insights" />}>Repeated prompts — costed, and one click from becoming a /command</H>
-        {dupes.length === 0 ? <Muted>no repeated prompts found</Muted> : dupes.slice(0, 15).map((d, i) => (
+        {dupes.length === 0 ? <Muted>no repeated prompts found</Muted> : <Stagger tag="div" step={35}>{dupes.slice(0, 15).map((d, i) => (
           <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '7px 4px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <span style={{ font: `700 12px ${MONO}`, color: ACCENT, width: 34 }}>{d.count}×</span>
             <span style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', flex: 1, overflowWrap: 'anywhere', maxHeight: 34, overflow: 'hidden' }}>{d.text}</span>
             <span style={{ font: `600 11px ${MONO}`, color: d.cents ? OK : '#5c554f', width: 64, textAlign: 'right' }}>{d.cents ? money(d.cents) : 'unpriced'}</span>
             <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', width: 72, textAlign: 'right' }}>{d.sessions} sess</span>
-            <button onClick={() => saveCmd(d)}>Save as /command</button>
+            <button className="press" onClick={() => saveCmd(d)}>Save as /command</button>
           </div>
-        ))}
+        ))}</Stagger>}
       </div>
 
       {/* item 12 — model mix by cost + the wall-clock wait. Latency is local plane only. */}
@@ -275,7 +367,7 @@ function Outcomes({ q, days }) {
       {/* item 4 — accept rate replaces the lines-typed vanity stat */}
       <div style={PANEL}>
         <H right={<Raw href={`/api/cursor/accept?${q}`} />}>Accept rate — what survived, not what was typed</H>
-        {!ac ? <Loading what="reading aiCodeTracking.dailyStats…" /> : (
+        {!ac ? <ColdLoading what="reading aiCodeTracking.dailyStats…" tiles={4} rows={3} /> : (
           <>
             <Facts items={[
               { label: 'accept rate', value: pctS(ac.totals.acceptRate), color: OK },
@@ -295,7 +387,7 @@ function Outcomes({ q, days }) {
       {/* item 4 (denominator) — ship rate, keyed (repo, week). Never (person, week). */}
       <div style={PANEL}>
         <H right={<><Chip text="repo + week only — never per person" color={ACCENT} /><Raw href={`/api/cursor/ship?${q}`} /></>}>Ship rate — accepted AI lines over merged-PR additions</H>
-        {!sh ? <Loading what="joining cursorBlame to merged PRs…" /> : !sh.engAvailable ? <Note>{sh.note || sh.error}</Note> : (
+        {!sh ? <ColdLoading what="joining cursorBlame to merged PRs…" tiles={0} rows={5} /> : !sh.engAvailable ? <Note>{sh.note || sh.error}</Note> : (
           <>
             <DataTable maxHeight="40vh"
               columns={[
@@ -317,7 +409,7 @@ function Outcomes({ q, days }) {
 
       {/* item 6 — PM altitude + lead altitude, both GROUP BYs over the one join */}
       {ocErr && <Note color={BAD}>outcomes failed: {ocErr}</Note>}
-      {!oc && !ocErr && <div style={PANEL}><Loading what="building the join: sessions → git → branch → ticket → PR. Cold, this takes up to a minute (the eng snapshot behind it shells out to gh)…" /></div>}
+      {!oc && !ocErr && <div style={PANEL}><ColdLoading what="building the join: sessions → git → branch → ticket → PR. Cold, this takes up to a minute (the eng snapshot behind it shells out to gh)…" tiles={3} rows={6} /></div>}
       {oc && (
         <>
           {oc.sources.eng?.prsUnavailable && <Note color={BAD}>{oc.sources.eng.note}</Note>}
@@ -325,9 +417,9 @@ function Outcomes({ q, days }) {
           <div style={PANEL}>
             <H right={<Raw href={`/api/cursor/outcomes?${q}`} />}>Shipped tickets — what the money bought</H>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-              <Stat label="cost per shipped ticket" val={stale ? null : money(oc.pm.costPerShippedTicket)} missing="unpriced — usageData is stale" color={ACCENT} />
-              <Stat label="tickets shipped in window" val={oc.pm.shippedTickets} />
-              <Stat label="tickets touched by a session" val={oc.pm.tickets.length} />
+              <Stat label="cost per shipped ticket" num={stale ? null : oc.pm.costPerShippedTicket} fmt={dollars} missing="unpriced — usageData is stale" color={ACCENT} />
+              <Stat label="tickets shipped in window" num={oc.pm.shippedTickets} />
+              <Stat label="tickets touched by a session" num={oc.pm.tickets.length} />
             </div>
             <DataTable maxHeight="45vh"
               columns={[
@@ -416,7 +508,7 @@ function Outcomes({ q, days }) {
           <a href={`/api/cursor/export?kind=join&${q}`} style={{ font: `500 10px ${MONO}`, color: ACCENT, textDecoration: 'none' }}>export NDJSON</a>
           <Raw href={`/api/cursor/join?${q}`} />
         </>}>Ship log — session → commit → branch → ticket → PR</H>
-        {!jo ? <Loading what="running git log across every known workspace…" /> : (
+        {!jo ? <ColdLoading what="running git log across every known workspace…" tiles={0} rows={6} /> : (
           <>
             <div style={{ font: `400 10px ${MONO}`, color: '#5c554f', marginBottom: 8 }}>
               {jo.sources.sessions} sessions · {jo.sources.cursorBlame.commits} commits scored by cursorBlame · {jo.rows.length} rows · {jo.plane}
@@ -631,17 +723,17 @@ function Wasted({ q, onOpenSession }) {
 
       <div style={PANEL}>
         <H>The exact failures — {t.wasted.length} distinct error strings</H>
-        {t.wasted.slice(0, 25).map((w, i) => (
+        <Stagger tag="div" step={30}>{t.wasted.slice(0, 25).map((w, i) => (
           <div key={i} style={{ padding: '7px 4px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline' }}>
               <span style={{ font: `700 12px ${MONO}`, color: BAD, width: 40 }}>{w.count}×</span>
               <Chip text={w.tool} color={ACCENT} />
               <span style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', flex: 1, overflowWrap: 'anywhere' }}>{w.message}</span>
               <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{w.sessions} sessions · {w.pctOfToolCalls ?? '—'}% of {w.tool} calls</span>
-              {/globalIgnore|blocked/i.test(w.message) && <button onClick={() => { navigator.clipboard.writeText(w.message); toast('copied — add an ignore-file rule in Tooling → Capabilities', 'info') }}>Copy</button>}
+              {/globalIgnore|blocked/i.test(w.message) && <button className="press" onClick={() => { navigator.clipboard.writeText(w.message); toast('copied — add an ignore-file rule in Tooling → Capabilities', 'info') }}>Copy</button>}
             </div>
           </div>
-        ))}
+        ))}</Stagger>
       </div>
 
       <div style={PANEL}>
@@ -741,12 +833,12 @@ function Search({ onOpenSession }) {
         <button className={hasError ? 'active' : ''} onClick={() => setHasError(x => !x)}>has tool error</button>
       </div>
       {!term ? <Muted>type at least 2 characters — FTS5 over every bubble on this machine, never transmitted</Muted>
-        : !r ? <Loading what="searching…" />
+        : !r ? <ColdLoading what="searching… the first query builds the FTS index over every bubble on this machine (~30s cold, instant after)" tiles={0} rows={7} />
           : (
             <div style={PANEL}>
               <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginBottom: 8 }}>{r.total} hits</div>
-              {r.results.map(x => (
-                <div key={x.bubbleId} onClick={() => onOpenSession(x.sessionId)}
+              <Stagger tag="div" step={30}>{r.results.map(x => (
+                <div key={x.bubbleId} className="press" onClick={() => onOpenSession(x.sessionId)}
                   style={{ padding: '8px 4px', borderBottom: '1px solid rgba(255,255,255,0.04)', cursor: 'pointer' }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                     <Chip text={x.role === 1 ? 'me' : 'assistant'} color={x.role === 1 ? ACCENT : '#7a716a'} />
@@ -759,7 +851,7 @@ function Search({ onOpenSession }) {
                   <div style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', marginTop: 4, overflowWrap: 'anywhere' }}
                     dangerouslySetInnerHTML={{ __html: (x.snippet || '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/&lt;&lt;/g, `<mark style="background:${ACCENT}33;color:#fff">`).replace(/&gt;&gt;/g, '</mark>') }} />
                 </div>
-              ))}
+              ))}</Stagger>
               {r.results.length === 0 && <Muted>no hits</Muted>}
             </div>
           )}
@@ -806,7 +898,7 @@ function SessionDetail({ id, onBack }) {
     <div style={{ display: 'grid', gap: 12 }}>
       <div><button onClick={onBack}>← back</button></div>
       {s?.analysis && <ChatAnalysis a={s.analysis} createdAt={s.createdAt} />}
-      {!s ? <Loading what="loading conversation…" /> : (
+      {!s ? <ColdLoading what="loading conversation…" tiles={0} rows={6} /> : (
         <div style={{ ...PANEL, maxHeight: '70vh', overflowY: 'auto' }}>
           <div style={{ font: `600 15px ${HEAD}`, color: '#e5dbd2', marginBottom: 12 }}>{s.name || '(unnamed session)'}</div>
           {s.messages.map((m, i) => (
@@ -834,16 +926,16 @@ function Sessions({ workspace, open, setOpen }) {
         <button className={tab === 'search' ? 'active' : ''} onClick={() => setTab('search')}>Search everything</button>
         <button className={tab === 'list' ? 'active' : ''} onClick={() => setTab('list')}>Browse sessions</button>
       </div>
-      {tab === 'search' ? <Search onOpenSession={setOpen} /> : !list ? <Loading what="loading…" /> : (
+      {tab === 'search' ? <Search onOpenSession={setOpen} /> : !list ? <ColdLoading what="loading sessions…" tiles={0} rows={8} /> : (
         <div style={PANEL}>
-          {list.slice(0, 200).map(s => (
-            <div key={s.id} onClick={() => setOpen(s.id)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '7px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <Stagger tag="div" step={22} max={520}>{list.slice(0, 200).map(s => (
+            <div key={s.id} className="press" onClick={() => setOpen(s.id)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '7px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               <span style={{ font: `500 12.5px "IBM Plex Sans", sans-serif`, color: '#e5dbd2', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name || '(unnamed)'}</span>
               <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{short(s.folder)}</span>
               <span style={{ font: `400 10.5px ${MONO}`, color: ACCENT }}>{s.messages} msgs</span>
               <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', width: 130, textAlign: 'right' }}>{s.lastUpdatedAt ? fmtDate(s.lastUpdatedAt) : ''}</span>
             </div>
-          ))}
+          ))}</Stagger>
         </div>
       )}
     </div>
@@ -853,18 +945,18 @@ function Sessions({ workspace, open, setOpen }) {
 // ---- projects (heatmap, biggest-sessions and model count chips deleted by the truth pass) ----
 function Projects({ onOpen }) {
   const [ps] = useApi('/api/cursor/projects')
-  if (!ps) return <Loading what="loading…" />
+  if (!ps) return <ColdLoading what="loading workspaces…" tiles={3} rows={2} />
   return (
-    <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+    <Stagger className="" tag="div" step={30} style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
       {ps.map(p => (
-        <div key={p.workspaceId || p.folder} style={{ ...PANEL, cursor: 'pointer' }} onClick={() => onOpen(p)}>
+        <div key={p.workspaceId || p.folder} className="lift press" style={{ ...PANEL, cursor: 'pointer' }} onClick={() => onOpen(p)}>
           <div style={{ font: `600 13.5px ${HEAD}`, color: '#e5dbd2', marginBottom: 4 }}>{short(p.folder) || '(unknown workspace)'}</div>
           <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginBottom: 8, overflowWrap: 'anywhere' }}>{p.folder ? tildify(p.folder) : p.workspaceId}</div>
           <div style={{ font: `400 11px ${MONO}`, color: ACCENT }}>{p.sessions} sessions · {p.messages} msgs</div>
           <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>last active {p.last ? fmtDate(p.last) : '—'}</div>
         </div>
       ))}
-    </div>
+    </Stagger>
   )
 }
 
@@ -929,13 +1021,13 @@ function ProjectDetail({ project, onBack, onOpenSessions }) {
         <div style={{ font: `700 18px ${HEAD}`, color: '#e5dbd2' }}>{short(project.folder) || '(unknown workspace)'}</div>
         <div style={{ font: `400 11px ${MONO}`, color: '#7a716a', overflowWrap: 'anywhere' }}>{project.folder ? tildify(project.folder) : project.workspaceId}</div>
       </div>
-      {!a ? <Loading what="analyzing…" /> : a.sessions === 0 ? <Muted>no sessions</Muted> : (
+      {!a ? <ColdLoading what="analyzing this workspace… (~27s cold)" tiles={4} rows={2} /> : a.sessions === 0 ? <Muted>no sessions</Muted> : (
         <>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <Stat label="sessions" val={a.sessions} />
-            <Stat label="messages" val={fmtNum(a.messages)} />
-            <Stat label="avg msgs/session" val={a.avgMessages} />
-            <Stat label="active days" val={a.activeDays} />
+            <Stat label="sessions" num={a.sessions} />
+            <Stat label="messages" num={a.messages} fmt={fmtNum} />
+            <Stat label="avg msgs/session" num={a.avgMessages} />
+            <Stat label="active days" num={a.activeDays} />
           </div>
           <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>{isFinite(a.first) && <>first {fmtDate(a.first)} · last {fmtDate(a.last)}</>}</div>
           <Harness folder={project.folder} />
@@ -1098,13 +1190,13 @@ function CursorRuns() {
       <div style={PANEL}>
         <H>Runs</H>
         {runs.length === 0 && <Muted>no cursor-agent runs yet</Muted>}
-        {runs.map(r => (
-          <div key={r.id} onClick={() => setOpen(r)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+        <Stagger tag="div" step={30}>{runs.map(r => (
+          <div key={r.id} className="press" onClick={() => setOpen(r)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <span style={{ font: `400 11px ${MONO}`, color: r.alive ? ACCENT : r.exitCode === 0 ? OK : BAD }}>{r.alive ? '●' : r.exitCode === 0 ? '✓' : '✗'}</span>
             <span style={{ font: `400 12px "IBM Plex Sans", sans-serif`, color: '#e5dbd2', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.cmd}</span>
             <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{short(r.cwd)}</span>
           </div>
-        ))}
+        ))}</Stagger>
       </div>
     </div>
   )
