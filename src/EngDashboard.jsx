@@ -6,6 +6,7 @@ import {
   TicketLink, PRLink, PrBadge, Checks, ProjTag, sel, miniBtn, primaryBtn, inp, useCopy, fx, lc, fdate, fdt, initials, colorFor,
 } from './eng/ui.jsx'
 import { of, stat, pos, pctl, MIN_N, spread, delta as statDelta } from './eng/stats.js'
+import { CountUp } from './game/index.js'
 import { Scatter, Lines, Split, typeColor } from './eng/charts.jsx'
 import { TimeLens, resolveWindow, prevWindow, shippedIn } from './eng/TimeLens.jsx'
 import { useUrlState } from './eng/urlState.js'
@@ -283,7 +284,7 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker={win.label} title="Team Overview" right={<div style={{ display: 'flex', gap: 8 }}>
       {chips.map((c, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 9, background: 'rgba(19,27,38,0.7)', border: '1px solid rgba(142,200,255,0.1)' }}>
-        <span style={{ font: `700 15px ${HEAD}`, color: c.c }}>{c.v}</span><span style={{ font: `400 11px ${BODY}`, color: '#7f8ea1' }}>{c.l}</span></div>)}
+        <span style={{ font: `700 15px ${HEAD}`, color: c.c }}><CountUp value={Number(c.v)} /></span><span style={{ font: `400 11px ${BODY}`, color: '#7f8ea1' }}>{c.l}</span></div>)}
     </div>} />
 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
@@ -401,7 +402,7 @@ function BoardCard({ i, onOpen }) {
   const c = i.rec?.atRisk ? RED : i.rec && i.rec.remaining < 0.5 ? GOLD : 'rgba(142,200,255,0.09)'
   const f = n => (n ? n.split(' ')[0] : '—')
   return <IssueTip i={i}>
-    <div onClick={onOpen ? () => onOpen(i) : undefined} style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(19,27,38,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6, cursor: onOpen ? 'pointer' : undefined }}>
+    <div className={onOpen ? 'press' : undefined} onClick={onOpen ? () => onOpen(i) : undefined} style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(19,27,38,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6, cursor: onOpen ? 'pointer' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <TicketLink i={i} style={{ font: `600 10.5px ${MONO}` }} />
         <ProjTag k={i.project} />
@@ -875,9 +876,23 @@ function CredsForm({ onSaved }) {
     <button onClick={submit} disabled={busy || !f.email || !f.token} style={{ ...primaryBtn, alignSelf: 'flex-start', padding: '8px 16px', fontSize: 12.5 }}>{busy ? 'Saving…' : 'Save & connect'}</button>
   </div>
 }
+// Cold `snapshot?project=all` is slow (~30–65s uncached), so this is what the user stares at the longest.
+// A shimmer skeleton that mimics the real layout (header, the KPI row, a tall chart) reads as "loading",
+// not "broken/empty" — .skel snaps to a static panel under prefers-reduced-motion.
 function Loading() {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-    {[0, 1, 2].map(i => <div key={i} style={{ ...PANEL, height: i === 0 ? 90 : 160, animation: 'pulse 1.4s ease-in-out infinite', opacity: 0.5 }} />)}
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+      <span className="skel" style={{ width: 220, height: 30, borderRadius: 9 }} />
+      <span className="skel" style={{ width: 260, height: 30, borderRadius: 9 }} />
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
+      {[0, 1, 2, 3, 4, 5].map(i => <span key={i} className="skel" style={{ height: 78, borderRadius: 13 }} />)}
+    </div>
+    <span className="skel" style={{ height: 260, borderRadius: 14 }} />
+    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 12 }}>
+      <span className="skel" style={{ height: 200, borderRadius: 14 }} />
+      <span className="skel" style={{ height: 200, borderRadius: 14 }} />
+    </div>
   </div>
 }
 function LoadingOverlay() {

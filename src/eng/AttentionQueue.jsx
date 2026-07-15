@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, Empty, H1, miniBtn, primaryBtn, useCopy, first, fx } from './ui.jsx'
+import { GameStats, Stagger } from '../game/index.js'
 
 // §1 — THE landing route. ONE ranked list of the server's triage records. No charts. No kanban.
 // Row = subject · owner · what is stuck · how long · how far over budget · an ACTION.
@@ -95,6 +96,7 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
 
     <div style={{ ...PANEL, overflow: 'hidden' }}>
       {rows.length === 0 && <Empty text={mine ? 'Nothing is stuck on you. Go build something.' : 'Queue is empty — nothing is stuck. (If that looks wrong, check the provenance strip above.)'} />}
+      <Stagger key={`${mine}-${kind}-${zomb}`} step={20} max={280}>
       {rows.slice(0, limit).map(r => {
         const k = KIND[r.kind] || { label: r.kind, c: DIM, why: '' }
         const iss = !isPr(r) && issueOf(r.subjectKey)
@@ -120,16 +122,17 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
             <div style={{ font: `400 8.5px ${MONO}`, color: r.overBudgetBy != null ? RED : DIM }}>{r.overBudgetBy != null ? `+${fx(r.overBudgetBy)}d over` : 'in stage'}</div>
           </div>
           <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
-            <button style={miniBtn} onClick={() => copy(nudgeFor(r), r.id)}>{copied === r.id ? '✓ copied' : 'Copy nudge'}</button>
-            {snap.writes && isPr(r) && <button style={primaryBtn} disabled={busy === r.id}
+            <button className="press" style={miniBtn} onClick={() => copy(nudgeFor(r), r.id)}>{copied === r.id ? '✓ copied' : 'Copy nudge'}</button>
+            {snap.writes && isPr(r) && <button className="press" style={primaryBtn} disabled={busy === r.id}
               onClick={() => write(r, `/api/eng/pr/${r.subjectKey.split('#')[1]}/comment?project=${r.project}`, { body: nudgeFor(r) })}>{busy === r.id ? '…' : 'Post nudge'}</button>}
-            {snap.writes && next && <button style={primaryBtn} disabled={busy === r.id}
+            {snap.writes && next && <button className="press" style={primaryBtn} disabled={busy === r.id}
               onClick={() => write(r, `/api/eng/ticket/${r.subjectKey}/transition?project=${r.project}`, { to: next })}>{busy === r.id ? '…' : `→ ${next}`}</button>}
-            {iss && <button style={miniBtn} onClick={() => onOpenTicket(iss.key)}>Open</button>}
-            <button style={{ ...miniBtn, color: DIM }} title="dismiss for today" onClick={() => dismiss(r)}>✕</button>
+            {iss && <button className="press" style={miniBtn} onClick={() => onOpenTicket(iss.key)}>Open</button>}
+            <button className="press" style={{ ...miniBtn, color: DIM }} title="dismiss for today" onClick={() => dismiss(r)}>✕</button>
           </div>
         </div>
       })}
+      </Stagger>
       {rows.length > limit && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '12px 16px' }}>
         <span style={{ font: `400 11px ${MONO}`, color: DIM }}>showing the {limit} most severe of {rows.length}</span>
         <button style={miniBtn} onClick={() => setLimit(l => l + 40)}>Show 40 more</button>
@@ -139,6 +142,16 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
       Sorted severity × age, server-side. Dismiss hides a row until tomorrow (persisted to eng-triage.json).
       {zombies.length > 0 && ` ${zombies.length} item(s) older than ${ZOMBIE} working days are ${zomb ? 'shown' : 'behind the zombies chip'} — they are backlog hygiene, not an intervention.`}
       {!snap.writes && ' Write actions are off — set "writes": true on the project in projects.json to post a nudge or transition a ticket with your own credentials.'}
+    </div>
+
+    {/* Your progress — deliberately BELOW the queue, never above it. The queue answers "what is stuck,
+        act on it" and must be the first thing on the page; clearing stuck work is the job, not a score.
+        This is the reward you scroll down to AFTER triage: your own XP/level/streak and the single badge
+        you are closest to (self-only — there is NO team XP and NO XP on any person row up in the queue).
+        It scopes `recent` to eng outcomes — ships, PRs merged, reviews given, red mains fixed. */}
+    <div style={{ marginTop: 4 }}>
+      <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6f8199', margin: '2px 2px 8px' }}>Your delivery progress · just you, measured against your own past</div>
+      <GameStats dashboard="eng" compact />
     </div>
   </section>
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { CountUp, Stagger } from '../game/anim.jsx'
 
 // Design tokens + primitives lifted out of EngDashboard.jsx unchanged, so every src/eng/ panel is
 // pixel-identical to the shell that hosts it. Nothing here is new styling — it is the existing system.
@@ -40,6 +41,27 @@ export const Legend = ({ c, label, v }) => <div style={{ display: 'flex', alignI
   <span style={{ font: `400 11.5px ${BODY}`, color: '#9fb0c2' }}>{label}{v != null && <b style={{ color: HI, fontWeight: 600 }}> {v}</b>}</span></div>
 export const Spinner = ({ size = 14 }) => <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid rgba(142,200,255,0.25)', borderTopColor: BB, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
 
+// AnimatedValue — the ONE null-vs-zero guard for every stat in the dashboard. It takes the ALREADY
+// FORMATTED string a tile would have rendered ("3.2d", "85%", "1,204", "—", "FLAG", "green") and only
+// counts up the leading number, preserving prefix + suffix. Anything with NO number in it — the em-dash
+// null, "FLAG", "ok", "RED" — is returned verbatim and NEVER animated. This is deliberate: because the
+// suppressed / never-started / no-data states are all rendered as '—' upstream, routing them all through
+// here means a null can never count up to 0 anywhere a KPI is shown (§ hard constraint).
+const NUM_RE = /^([^\d-]*)(-?[\d,]+(?:\.\d+)?)(.*)$/
+export function AnimatedValue({ value, duration }) {
+  if (value == null) return '—'
+  const s = String(value)
+  const m = s.match(NUM_RE)
+  if (!m) return s // '—', 'FLAG', 'ok', 'RED', 'green' — no digits, render as-is, no count
+  const [, prefix, numStr, suffix] = m
+  const decimals = numStr.includes('.') ? numStr.split('.')[1].length : 0
+  const grouped = numStr.includes(',')
+  const target = parseFloat(numStr.replace(/,/g, ''))
+  if (Number.isNaN(target)) return s
+  return <CountUp value={target} duration={duration} prefix={prefix} suffix={suffix} decimals={decimals}
+    format={grouped ? n => n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : undefined} />
+}
+
 // KPI tile with percentiles instead of a mean. n is always shown; n<5 goes grey (§2 hard rule).
 export function Kpi({ label, value, color = HI, sub, n, thin, delta, onCopy }) {
   const c = thin ? '#7f8ea1' : color
@@ -50,7 +72,7 @@ export function Kpi({ label, value, color = HI, sub, n, thin, delta, onCopy }) {
       {onCopy && <button onClick={onCopy} title="copy the underlying array as JSON" style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#4c5768', cursor: 'pointer', font: `600 10px ${MONO}`, padding: 0 }}>{'{ }'}</button>}
     </span>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-      <span style={{ font: `700 22px ${HEAD}`, color: c, letterSpacing: '-0.01em' }}>{value}</span>
+      <span style={{ font: `700 22px ${HEAD}`, color: c, letterSpacing: '-0.01em' }}><AnimatedValue value={value} /></span>
       {delta && <span style={{ font: `600 10.5px ${MONO}`, color: delta.good ? GREEN : RED }}>{delta.txt}</span>}
     </div>
     <span style={{ font: `400 10px ${BODY}`, color: DIM }}>{sub}</span>
@@ -150,9 +172,11 @@ export function DataTable({ title, meta, right, columns, rows, getKey, initialSo
           {c.label}{c.sort && <span style={{ fontSize: 8, opacity: sort?.key === c.key ? 1 : 0.35 }}>{sort?.key === c.key ? (sort.dir > 0 ? '▲' : '▼') : '↕'}</span>}</span>)}
       </div>
       {slice.length === 0 && <Empty text="Nothing matches." />}
-      {slice.map(row => <div key={getKey(row)} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '12px 16px', alignItems: 'center', cursor: onRowClick ? 'pointer' : 'default', background: activeKey != null && getKey(row) === activeKey ? 'rgba(142,200,255,0.08)' : 'transparent', borderBottom: '1px solid rgba(142,200,255,0.045)' }}>
-        {columns.map(c => <span key={c.key} style={{ textAlign: c.align ? 'right' : 'left', minWidth: 0 }}>{c.render(row)}</span>)}
-      </div>)}
+      <Stagger key={`${p}-${sort?.key}-${sort?.dir}`} step={22} max={260}>
+        {slice.map(row => <div key={getKey(row)} className={onRowClick ? 'lift' : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '12px 16px', alignItems: 'center', cursor: onRowClick ? 'pointer' : 'default', background: activeKey != null && getKey(row) === activeKey ? 'rgba(142,200,255,0.08)' : 'transparent', borderBottom: '1px solid rgba(142,200,255,0.045)' }}>
+          {columns.map(c => <span key={c.key} style={{ textAlign: c.align ? 'right' : 'left', minWidth: 0 }}>{c.render(row)}</span>)}
+        </div>)}
+      </Stagger>
     </div></div>
     {pages > 1 && <Pager page={p} pages={pages} setPage={setPage} />}
   </div>

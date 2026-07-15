@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, STEEL, DIM, HI } from './ui.jsx'
+import { Draw } from '../game/anim.jsx'
 
 // Chart types the shared src/charts.jsx does not have (it has Bars / StackedBar / Ring / Treemap, all
 // reused as-is elsewhere). These four are the ones this dashboard needs and that one lacks:
@@ -38,15 +39,15 @@ export function Scatter({ points, p85, p50, height = 260, onPick }) {
         <text x={W - R} y={py(p50) - 4} textAnchor="end" style={{ font: `600 9.5px ${MONO}`, fill: BB }}>p50 {p50.toFixed(1)}d</text></>}
       {p85 != null && <><line x1={L} x2={W - R} y1={py(p85)} y2={py(p85)} stroke={GOLD} strokeWidth="1.5" strokeDasharray="5 4" />
         <text x={W - R} y={py(p85) - 4} textAnchor="end" style={{ font: `700 10px ${MONO}`, fill: GOLD }}>p85 {p85.toFixed(1)}d</text></>}
-      {points.map((p, i) => (p.y > ymax
-        ? <polygon key={i} points={`${px(p.x)},${py(p.y) - 6} ${px(p.x) - 5},${py(p.y) + 2} ${px(p.x) + 5},${py(p.y) + 2}`} fill={p.color}
-          style={{ cursor: onPick ? 'pointer' : 'default' }}
+      {points.map((p, i) => { const d = { '--enter-delay': `${Math.min(i * 9, 520)}ms` }; return (p.y > ymax
+        ? <polygon key={i} className="enter" points={`${px(p.x)},${py(p.y) - 6} ${px(p.x) - 5},${py(p.y) + 2} ${px(p.x) + 5},${py(p.y) + 2}`} fill={p.color}
+          style={{ cursor: onPick ? 'pointer' : 'default', ...d }}
           onMouseEnter={e => setHov({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHov(null)} onClick={() => onPick?.(p)} />
-        : <circle key={i} cx={px(p.x)} cy={py(p.y)} r={p85 != null && p.y > p85 ? 4.5 : 3.4}
+        : <circle key={i} className="enter" cx={px(p.x)} cy={py(p.y)} r={p85 != null && p.y > p85 ? 4.5 : 3.4}
           fill={p.color} fillOpacity={p85 != null && p.y > p85 ? 0.95 : 0.55} stroke={p85 != null && p.y > p85 ? p.color : 'none'} strokeWidth="1"
-          style={{ cursor: onPick ? 'pointer' : 'default' }}
+          style={{ cursor: onPick ? 'pointer' : 'default', ...d }}
           onMouseEnter={e => setHov({ p, x: e.clientX, y: e.clientY })} onMouseLeave={() => setHov(null)}
-          onClick={() => onPick?.(p)} />))}
+          onClick={() => onPick?.(p)} />) })}
       {off.length > 0 && <text x={L + 4} y={T + 10} style={{ font: `600 9.5px ${MONO}`, fill: RED }}>▲ {off.length} above the scale — up to {Math.max(...off.map(p => p.y)).toFixed(0)}d</text>}
     </svg>
     {hov && <div style={{ ...tip, left: Math.min(hov.x + 12, window.innerWidth - 320), top: hov.y - 52 }}>
@@ -76,7 +77,9 @@ export function Lines({ series, labels, height = 190, yFmt = v => v, threshold }
       {threshold && <><line x1={L} x2={W - R} y1={py(threshold.at)} y2={py(threshold.at)} stroke={threshold.color || RED} strokeDasharray="4 4" strokeWidth="1.2" />
         <text x={W - R} y={py(threshold.at) - 4} textAnchor="end" style={{ font: `600 9px ${MONO}`, fill: threshold.color || RED }}>{threshold.label}</text></>}
       {series.map((s, si) => <g key={si}>
-        <path d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+        <Draw duration={560} delay={si * 130}>
+          <path d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+        </Draw>
         {s.values.map((v, i) => v.y != null && <circle key={i} cx={px(i)} cy={py(v.y)} r="3.2" fill="#0b1017" stroke={s.color} strokeWidth="2"
           onMouseEnter={e => setHov({ x: e.clientX, y: e.clientY, txt: `${labels[i]} · ${s.label}: ${yFmt(v.y)}${v.note ? ' · ' + v.note : ''}` })} onMouseLeave={() => setHov(null)} />)}
       </g>)}
@@ -99,7 +102,7 @@ export function StackedCols({ rows, keys, colors, labels, height = 200, valueOf,
         const tot = vals.reduce((a, b) => a + b, 0)
         const max = pctMode ? tot : Math.max(...rows.map(x => keys.reduce((a, k) => a + (valueOf(x, k) || 0), 0)))
         let acc = 0
-        return <g key={ri}>
+        return <g key={ri} className="enter" style={{ '--enter-delay': `${Math.min(ri * 55, 400)}ms` }}>
           {keys.map((k, ki) => {
             const v = vals[ki]
             if (!v || !max) return null
