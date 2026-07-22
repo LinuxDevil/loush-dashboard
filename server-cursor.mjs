@@ -1,5 +1,5 @@
 // Cursor dashboard — fully separate read-only routes under /api/cursor/*.
-// Reads Cursor's state.vscdb with the macOS-bundled sqlite3 CLI (mode=ro: no npm dep,
+// Reads Cursor's state.vscdb with the sqlite3 CLI on PATH (mode=ro: no npm dep,
 // no lock contention with a running Cursor). Schema is undocumented — everything fails soft.
 //
 // ============================ THE PLANE RULE (not a convention — a boundary) ============================
@@ -32,7 +32,15 @@ import mountCursorJoin from './server-cursor-join.mjs'
 import mountCursorTeam from './server-cursor-team.mjs'
 
 const HOME = os.homedir()
-const CURSOR_USER = path.join(HOME, 'Library', 'Application Support', 'Cursor', 'User')
+// Cursor's per-user data dir is platform-specific (same layout as VS Code):
+//   macOS   ~/Library/Application Support/Cursor/User
+//   Windows %APPDATA%\Cursor\User   (falls back to ~/AppData/Roaming)
+//   Linux   ~/.config/Cursor/User
+const CURSOR_USER = process.platform === 'win32'
+  ? path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'Cursor', 'User')
+  : process.platform === 'darwin'
+    ? path.join(HOME, 'Library', 'Application Support', 'Cursor', 'User')
+    : path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'Cursor', 'User')
 const DB = path.join(CURSOR_USER, 'globalStorage', 'state.vscdb')
 const WS_DIR = path.join(CURSOR_USER, 'workspaceStorage')
 
