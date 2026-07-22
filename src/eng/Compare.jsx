@@ -57,14 +57,14 @@ export default function Compare({ snap, win, onProject }) {
       columns={[
         { key: 'name', label: 'Project', width: '1.5fr', sort: r => r.name, filter: r => r.name + r.key, render: r => <span>
           <span style={{ font: `600 12.5px ${BODY}`, color: HI }}>{r.name}</span> <span style={{ font: `500 9px ${MONO}`, color: DIM }}>{r.key}</span></span> },
-        { key: 'p50', label: 'Cycle p50', width: '92px', align: 1, sort: r => r.cyc.p50 ?? 1e9, render: r => <span style={{ font: `600 12px ${MONO}`, color: r.cyc.n < MIN_N ? '#7f8ea1' : HI }}>{fx(r.cyc.p50)}d</span> },
-        { key: 'p90', label: 'Cycle p90', width: '92px', align: 1, sort: r => r.cyc.p90 ?? 1e9, render: r => <span style={{ font: `700 12px ${MONO}`, color: r.cyc.n < MIN_N ? '#7f8ea1' : RED, ...tint(r.cyc.p90, wCyc) }}>{fx(r.cyc.p90)}d</span> },
+        { key: 'p50', label: 'Cycle p50', width: '92px', align: 1, sort: r => r.cyc.p50 ?? 1e9, render: r => <span style={{ font: `600 12px ${MONO}`, color: r.cyc.n < MIN_N ? '#8a807a' : HI }}>{fx(r.cyc.p50)}d</span> },
+        { key: 'p90', label: 'Cycle p90', width: '92px', align: 1, sort: r => r.cyc.p90 ?? 1e9, render: r => <span style={{ font: `700 12px ${MONO}`, color: r.cyc.n < MIN_N ? '#8a807a' : RED, ...tint(r.cyc.p90, wCyc) }}>{fx(r.cyc.p90)}d</span> },
         { key: 'trend', label: '6mo', width: '76px', align: 1, render: r => <span style={{ display: 'inline-block' }}><Spark values={r.spark} color={BB} /></span> },
         { key: 'thru', label: 'Shipped', width: '78px', align: 1, sort: r => r.throughput, render: r => <span style={{ font: `600 12px ${MONO}`, color: HI }}>{r.throughput}<span style={{ font: `500 9px ${MONO}`, color: r.delta == null ? DIM : r.delta <= 0 ? GREEN : RED }}>{r.delta == null ? '' : ` ${r.delta > 0 ? '+' : ''}${r.delta}d`}</span></span> },
         { key: 'wip', label: 'WIP', width: '58px', align: 1, sort: r => r.wip, render: r => <span style={{ font: `600 12px ${MONO}`, color: BB }}>{r.wip}</span> },
         { key: 'bugs', label: 'Open bugs', width: '86px', align: 1, sort: r => r.bugs, render: r => <span style={{ font: `600 12px ${MONO}`, color: r.bugs ? GOLD : DIM }}>{r.bugs}</span> },
         { key: 'esc', label: 'Escape %', width: '86px', align: 1, sort: r => r.escapeRate ?? -1, render: r => <span style={{ font: `600 12px ${MONO}`, color: RED, ...tint(r.escapeRate, wEsc) }}>{fx(r.escapeRate, 0)}%</span> },
-        { key: 'rev', label: 'Review p90', width: '96px', align: 1, sort: r => r.revP90 ?? 1e9, render: r => <span style={{ font: `600 12px ${MONO}`, color: r.revN < MIN_N ? '#7f8ea1' : PURPLE, ...tint(r.revP90, wRev) }}>{fx(r.revP90)}d</span> },
+        { key: 'rev', label: 'Review p90', width: '96px', align: 1, sort: r => r.revP90 ?? 1e9, render: r => <span style={{ font: `600 12px ${MONO}`, color: r.revN < MIN_N ? '#8a807a' : PURPLE, ...tint(r.revP90, wRev) }}>{fx(r.revP90)}d</span> },
         { key: 'risk', label: 'At risk', width: '76px', align: 1, sort: r => r.atRisk, render: r => <span style={{ font: `700 13px ${MONO}`, color: r.atRisk ? RED : GREEN, ...tint(r.atRisk, wRisk) }}>{r.atRisk}</span> },
       ]} />
     <div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>Cycle = first In Progress → Live, working days. "At risk" = triage records for that project. n&lt;5 greyed — a p90 over four tickets is an anecdote.</div>

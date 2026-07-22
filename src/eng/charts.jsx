@@ -6,8 +6,8 @@ import { Draw } from '../game/anim.jsx'
 // reused as-is elsewhere). These four are the ones this dashboard needs and that one lacks:
 // Scatter (the tail), Lines (trend), StackedArea (mix), Split (one row's active-vs-waiting bar).
 
-const AX = 'rgba(142,200,255,0.10)'
-const tip = { position: 'fixed', zIndex: 2147483647, padding: '7px 10px', borderRadius: 8, background: 'rgba(20,28,40,0.99)', border: '1px solid rgba(142,200,255,0.3)', boxShadow: '0 12px 30px -8px rgba(0,0,0,0.7)', pointerEvents: 'none', font: `500 11px ${BODY}`, color: HI, maxWidth: 320 }
+const AX = 'rgba(255,255,255,0.10)'
+const tip = { position: 'fixed', zIndex: 2147483647, padding: '7px 10px', borderRadius: 8, background: 'rgba(20,28,40,0.99)', border: '1px solid rgba(255,255,255,0.3)', boxShadow: '0 12px 30px -8px rgba(0,0,0,0.7)', pointerEvents: 'none', font: `500 11px ${BODY}`, color: HI, maxWidth: 320 }
 
 // §2 THE artifact: one dot per ticket. x = completion date, y = cycle working-days, colour = type,
 // p85 line straight across. A bar chart of the mean would hide every one of the dots above the line.
@@ -80,7 +80,7 @@ export function Lines({ series, labels, height = 190, yFmt = v => v, threshold }
         <Draw duration={560} delay={si * 130}>
           <path d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
         </Draw>
-        {s.values.map((v, i) => v.y != null && <circle key={i} cx={px(i)} cy={py(v.y)} r="3.2" fill="#0b1017" stroke={s.color} strokeWidth="2"
+        {s.values.map((v, i) => v.y != null && <circle key={i} cx={px(i)} cy={py(v.y)} r="3.2" fill="#12100e" stroke={s.color} strokeWidth="2"
           onMouseEnter={e => setHov({ x: e.clientX, y: e.clientY, txt: `${labels[i]} · ${s.label}: ${yFmt(v.y)}${v.note ? ' · ' + v.note : ''}` })} onMouseLeave={() => setHov(null)} />)}
       </g>)}
       {labels.map((l, i) => (labels.length <= 8 || i % 2 === 0) && <text key={i} x={px(i)} y={H - 6} textAnchor="middle" style={{ font: `500 8.5px ${MONO}`, fill: DIM }}>{l}</text>)}
@@ -126,9 +126,9 @@ export function StackedCols({ rows, keys, colors, labels, height = 200, valueOf,
 export function Split({ active, wait, height = 8, showLabels }) {
   const tot = (active || 0) + (wait || 0) || 1
   return <div>
-    <div style={{ display: 'flex', height, borderRadius: 5, overflow: 'hidden', background: 'rgba(142,200,255,0.06)' }}>
-      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'linear-gradient(90deg,#5fd39a,#48c48a)' }} />
-      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'linear-gradient(90deg,#f5c451,#eab13a)' }} />
+    <div style={{ display: 'flex', height, borderRadius: 5, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
+      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'linear-gradient(90deg,#3fb96a,#48c48a)' }} />
+      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'linear-gradient(90deg,#e5a03a,#eab13a)' }} />
     </div>
     {showLabels && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, font: `500 9px ${MONO}` }}>
       <span style={{ color: GREEN }}>mine {(active || 0).toFixed(1)}d</span>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import ResourceSection from './ResourceSection.jsx'
+import CustomizeSection from './CustomizeSection.jsx'
 import McpSection from './McpSection.jsx'
 import HooksSection from './HooksSection.jsx'
 import ArtifactsSection from './ArtifactsSection.jsx'
@@ -88,6 +89,7 @@ const SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
+  { id: 'customize', label: 'Customize', icon: '✦', kicker: 'Setup', title: 'Customize — skills, commands, subagents, rules, MCPs, hooks & plugins', el: <CustomizeSection /> },
   { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
   { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },

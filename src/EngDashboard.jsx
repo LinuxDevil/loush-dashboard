@@ -22,6 +22,7 @@ import CIHealth from './eng/CI.jsx'
 import Load from './eng/Load.jsx'
 import Export from './eng/Export.jsx'
 import CmdK from './eng/CmdK.jsx'
+import { metricsFor, buildRadars, MemberCard, MemberDetail } from './eng/MemberInsights.jsx'
 
 // Engineering Metrics — self-contained shell.
 // The Attention Queue is the landing route: three of four personas open this app to answer "what do I do
@@ -122,7 +123,7 @@ export default function EngDashboard({ onExit }) {
     ['okrs', 'OKRs', '◎'], ['export', 'Export', '↧'],
   ]
   const shell = children => (
-    <div style={{ minHeight: '100vh', color: '#e7eef6', fontFamily: BODY, background: 'radial-gradient(950px 440px at 18% -10%,rgba(142,200,255,0.13),transparent 60%),radial-gradient(760px 400px at 104% -4%,rgba(91,159,230,0.08),transparent 55%),#080b11' }}>
+    <div style={{ minHeight: '100vh', color: '#eee3da', fontFamily: BODY, background: 'radial-gradient(950px 440px at 18% -10%,rgba(255,255,255,0.13),transparent 60%),radial-gradient(760px 400px at 104% -4%,rgba(91,159,230,0.08),transparent 55%),#0d0b0a' }}>
       <TopBar team={S?.team} projects={projects} project={project} onProject={selectProject} nav={NAV}
         onAdd={() => setConfig({ mode: 'new' })} onEdit={() => project && project !== 'all' && setConfig({ mode: 'edit', key: project })}
         route={route} setRoute={r => setUrl({ route: r })} url={url} setUrl={setUrl} win={win} sprints={S?.sprints}
@@ -173,36 +174,36 @@ function TopBar({ team, projects, project, onProject, onAdd, onEdit, route, setR
   const repoShort = r => (r || '').split('/')[1] || r
   const activeName = project === 'all' ? 'All projects' : (projects.find(p => p.key === project)?.name || team?.name || '')
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'linear-gradient(180deg,rgba(17,26,38,0.96),rgba(10,15,22,0.9))', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(142,200,255,0.1)' }}>
+    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'linear-gradient(180deg,rgba(28,24,21,0.96),rgba(13,11,10,0.9))', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 22px 0', maxWidth: 1320, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,#a7d5ff,#5b9fe6)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 18px -3px rgba(142,200,255,0.75)' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 20V11M10 20V4M16 20v-6M22 20V8" stroke="#0a1420" strokeWidth="2.6" strokeLinecap="round" /></svg>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,#e8a06a,#b8532f)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 18px -3px rgba(255,255,255,0.75)' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 20V11M10 20V4M16 20v-6M22 20V8" stroke="#2a1712" strokeWidth="2.6" strokeLinecap="round" /></svg>
           </div>
           <div>
-            <div style={{ font: `700 15px ${HEAD}`, letterSpacing: '-0.01em', color: '#eef4fb', lineHeight: 1 }}>Engineering Metrics</div>
-            <div style={{ font: `500 9.5px ${MONO}`, letterSpacing: '0.08em', color: '#6f8199', marginTop: 3, textTransform: 'uppercase', height: 11 }}>{activeName}</div>
+            <div style={{ font: `700 15px ${HEAD}`, letterSpacing: '-0.01em', color: '#f6efe9', lineHeight: 1 }}>Engineering Metrics</div>
+            <div style={{ font: `500 9.5px ${MONO}`, letterSpacing: '0.08em', color: '#8a807a', marginTop: 3, textTransform: 'uppercase', height: 11 }}>{activeName}</div>
           </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <TimeLens value={url.win} from={url.from} to={url.to} onChange={setUrl} sprints={sprints} resolved={win} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 2px 2px 4px', borderRadius: 9, background: 'rgba(142,200,255,0.07)', border: '1px solid rgba(142,200,255,0.16)' }}>
-            <span style={{ font: `500 9px ${MONO}`, letterSpacing: '0.06em', color: '#6f8199', textTransform: 'uppercase', paddingLeft: 4 }}>project</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 2px 2px 4px', borderRadius: 9, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.16)' }}>
+            <span style={{ font: `500 9px ${MONO}`, letterSpacing: '0.06em', color: '#8a807a', textTransform: 'uppercase', paddingLeft: 4 }}>project</span>
             <select value={project || ''} onChange={e => onProject(e.target.value)} style={{ ...sel, border: 'none', background: 'transparent', paddingRight: 6 }}>
               <option value="all">All projects</option>
               {projects.map(p => <option key={p.key} value={p.key}>{p.jiraProjectKey} ↔ {repoShort(p.githubRepo)}</option>)}
             </select>
-            {project && project !== 'all' && <button onClick={onEdit} title="Configure this project" style={{ width: 24, height: 24, borderRadius: 7, border: '1px solid rgba(142,200,255,0.2)', background: 'rgba(18,27,39,0.9)', color: '#cfe0f2', cursor: 'pointer', fontSize: 12, padding: 0 }}>⚙</button>}
-            <button onClick={onAdd} title="Add a project" style={{ width: 24, height: 24, borderRadius: 7, border: '1px solid rgba(142,200,255,0.2)', background: 'rgba(18,27,39,0.9)', color: '#cfe0f2', cursor: 'pointer', font: `600 14px ${BODY}`, padding: 0 }}>+</button>
+            {project && project !== 'all' && <button onClick={onEdit} title="Configure this project" style={{ width: 24, height: 24, borderRadius: 7, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(28,24,21,0.9)', color: '#d8cfc7', cursor: 'pointer', fontSize: 12, padding: 0 }}>⚙</button>}
+            <button onClick={onAdd} title="Add a project" style={{ width: 24, height: 24, borderRadius: 7, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(28,24,21,0.9)', color: '#d8cfc7', cursor: 'pointer', font: `600 14px ${BODY}`, padding: 0 }}>+</button>
           </div>
           <button onClick={onPalette} title="jump to a ticket or PR" style={{ ...miniBtn, font: `500 11px ${MONO}` }}>⌘K</button>
           <button onClick={() => setIdOpen(o => !o)} title="who is “mine”" style={{ ...miniBtn, color: me?.gh ? GREEN : GOLD }}>{me?.gh ? '@' + me.gh : 'set me'}</button>
-          <button onClick={onExit} title="back to Claude Code dashboard" style={{ cursor: 'pointer', font: `500 11.5px ${BODY}`, color: '#93a2b4', padding: '6px 10px', borderRadius: 8, border: '1px solid rgba(142,200,255,0.12)', background: 'transparent' }}>← Claude</button>
+          <button onClick={onExit} title="back to Claude Code dashboard" style={{ cursor: 'pointer', font: `500 11.5px ${BODY}`, color: '#9a9089', padding: '6px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'transparent' }}>← Claude</button>
         </div>
       </div>
       {idOpen && <div style={{ maxWidth: 1320, margin: '8px auto 0', padding: '0 22px' }}>
         <div style={{ ...PANEL, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ font: `400 11.5px ${BODY}`, color: '#9fb0c2' }}>JIRA: <b style={{ color: HI }}>{me?.name || me?.email || '—'}</b> · GitHub login (used to resolve “Mine” on PR rows):</span>
+          <span style={{ font: `400 11.5px ${BODY}`, color: '#a89f97' }}>JIRA: <b style={{ color: HI }}>{me?.name || me?.email || '—'}</b> · GitHub login (used to resolve “Mine” on PR rows):</span>
           <input defaultValue={me?.gh || ''} placeholder="your gh login" onKeyDown={e => e.key === 'Enter' && (setGh(e.target.value.trim()), setIdOpen(false))}
             style={{ ...inp, width: 180, padding: '5px 9px', fontSize: 12 }} />
           <span style={{ font: `400 10px ${MONO}`, color: DIM }}>stored locally · nothing about anyone else is ever fetched</span>
@@ -211,7 +212,7 @@ function TopBar({ team, projects, project, onProject, onAdd, onEdit, route, setR
       <nav style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '8px 22px 6px', maxWidth: 1320, margin: '0 auto', overflowX: 'auto' }}>
         {nav.map(([id, label, icon]) => {
           const a = route === id
-          return <button key={id} onClick={() => setRoute(id)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', border: 'none', borderRadius: 9, cursor: 'pointer', font: `500 12.5px ${BODY}`, background: a ? 'rgba(142,200,255,0.14)' : 'transparent', color: a ? '#dbeafc' : '#93a2b4', whiteSpace: 'nowrap' }}>
+          return <button key={id} onClick={() => setRoute(id)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', border: 'none', borderRadius: 9, cursor: 'pointer', font: `500 12.5px ${BODY}`, background: a ? 'rgba(255,255,255,0.14)' : 'transparent', color: a ? '#f0e7e0' : '#9a9089', whiteSpace: 'nowrap' }}>
             <span style={{ fontSize: 11, opacity: 0.9 }}>{icon}</span>{label}
             {id === 'queue' && queueN > 0 && <span style={{ font: `700 9px ${MONO}`, padding: '1px 5px', borderRadius: 4, background: 'rgba(242,119,122,0.18)', color: RED }}>{queueN}</span>}
           </button>
@@ -283,8 +284,8 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
 
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker={win.label} title="Team Overview" right={<div style={{ display: 'flex', gap: 8 }}>
-      {chips.map((c, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 9, background: 'rgba(19,27,38,0.7)', border: '1px solid rgba(142,200,255,0.1)' }}>
-        <span style={{ font: `700 15px ${HEAD}`, color: c.c }}><CountUp value={Number(c.v)} /></span><span style={{ font: `400 11px ${BODY}`, color: '#7f8ea1' }}>{c.l}</span></div>)}
+      {chips.map((c, i) => <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 9, background: 'rgba(28,24,21,0.7)', border: '1px solid rgba(255,255,255,0.1)' }}>
+        <span style={{ font: `700 15px ${HEAD}`, color: c.c }}><CountUp value={Number(c.v)} /></span><span style={{ font: `400 11px ${BODY}`, color: '#8a807a' }}>{c.l}</span></div>)}
     </div>} />
 
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
@@ -307,21 +308,21 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
           {stages.map(({ st, s, budget, over }) => <div key={st}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 3 }}>
-              <span style={{ width: 118, flexShrink: 0, font: `500 11.5px ${BODY}`, color: '#b3c1d1' }}>{st}</span>
-              <div style={{ flex: 1, position: 'relative', height: 10, borderRadius: 5, background: 'rgba(142,200,255,0.06)', overflow: 'visible' }}>
+              <span style={{ width: 118, flexShrink: 0, font: `500 11.5px ${BODY}`, color: '#c8bdb4' }}>{st}</span>
+              <div style={{ flex: 1, position: 'relative', height: 10, borderRadius: 5, background: 'rgba(255,255,255,0.06)', overflow: 'visible' }}>
                 <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${(s.p50 || 0) / stMax * 100}%`, borderRadius: 5, background: colorFor(st), opacity: 0.9 }} />
                 <div style={{ position: 'absolute', left: `${(s.p50 || 0) / stMax * 100}%`, top: 0, height: '100%', width: `${Math.max(0, (s.p90 || 0) - (s.p50 || 0)) / stMax * 100}%`, borderRadius: 5, background: colorFor(st), opacity: 0.32 }} />
                 {budget && <div title={`budget ${budget}d`} style={{ position: 'absolute', left: `${budget / stMax * 100}%`, top: -3, width: 2, height: 16, background: over > 1 ? RED : GREEN }} />}
               </div>
-              <span style={{ width: 96, textAlign: 'right', font: `600 11px ${MONO}`, color: s.n < MIN_N ? '#7f8ea1' : HI }}>{fx(s.p50)} / {fx(s.p90)}d</span>
+              <span style={{ width: 96, textAlign: 'right', font: `600 11px ${MONO}`, color: s.n < MIN_N ? '#8a807a' : HI }}>{fx(s.p50)} / {fx(s.p90)}d</span>
             </div>
             <div style={{ marginLeft: 128, font: `400 9.5px ${MONO}`, color: over > 1.5 ? RED : DIM }}>
               n={s.n} · budget {budget}d{over ? ` · p90 is ${over}× the budget` : ''}
             </div>
           </div>)}
         </div>
-        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(142,200,255,0.07)' }}>
-          <div style={{ font: `600 10px ${MONO}`, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#7f8ea1', marginBottom: 6 }}>Mine vs the queue — shipped in this window</div>
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+          <div style={{ font: `600 10px ${MONO}`, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#8a807a', marginBottom: 6 }}>Mine vs the queue — shipped in this window</div>
           <Split active={activeSum} wait={waitSum} height={11} />
           <div style={{ display: 'flex', gap: 18, marginTop: 7 }}>
             <Legend c={GREEN} label="Active effort (In Progress)" v={fx(activeSum) + 'd'} />
@@ -385,24 +386,24 @@ function IssueTip({ i, children }) {
   return <span onMouseEnter={e => { const r = e.currentTarget.getBoundingClientRect(); setPos({ left: r.left, top: r.top, bottom: r.bottom }) }} onMouseLeave={() => setPos(null)} style={{ position: 'relative', cursor: 'help' }}>
     {children}
     {pos && <span style={box}>
-      <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#8ea1b8', marginBottom: 6 }}>{i.key} · in {i.status}</div>
+      <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#8a807a', marginBottom: 6 }}>{i.key} · in {i.status}</div>
       <TipRow label="In this column" value={`${fx(i.inCurrent)}d`} />
-      <TipRow label="Estimate" value={i.estAcc == null ? `${i.pts || 0}pt` : `${i.pts}pt · ${fx(i.estAcc, 0)}% accurate`} c={i.estAcc == null ? '#dbe4ef' : accColor(i.estAcc)} />
+      <TipRow label="Estimate" value={i.estAcc == null ? `${i.pts || 0}pt` : `${i.pts}pt · ${fx(i.estAcc, 0)}% accurate`} c={i.estAcc == null ? '#e5dbd2' : accColor(i.estAcc)} />
       {rec ? <TipRow label="Move next" value={rec.atRisk ? `→ ${rec.next} · overdue` : `→ ${rec.next} by ${when}`} c={c} /> : <TipRow label="Status" value="done — no action" />}
       {rec && <div style={{ font: `400 9.5px ${MONO}`, color: DIM, margin: '5px 0 6px' }}>{rec.atRisk ? `${fx(Math.abs(rec.remaining))}d over budget` : `${fx(rec.remaining)}d of ${fx(rec.budget)}d budget left`}</div>}
       <Split active={i.activeDays} wait={i.waitDays} showLabels />
     </span>}
   </span>
 }
-const TipRow = ({ label, value, c = '#dbe4ef' }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '2px 0' }}>
-  <span style={{ font: `400 11px ${BODY}`, color: '#8b98a9' }}>{label}</span>
+const TipRow = ({ label, value, c = '#e5dbd2' }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '2px 0' }}>
+  <span style={{ font: `400 11px ${BODY}`, color: '#8a807a' }}>{label}</span>
   <span style={{ font: `600 11px ${MONO}`, color: c, textAlign: 'right' }}>{value}</span></div>
 
 function BoardCard({ i, onOpen }) {
-  const c = i.rec?.atRisk ? RED : i.rec && i.rec.remaining < 0.5 ? GOLD : 'rgba(142,200,255,0.09)'
+  const c = i.rec?.atRisk ? RED : i.rec && i.rec.remaining < 0.5 ? GOLD : 'rgba(255,255,255,0.09)'
   const f = n => (n ? n.split(' ')[0] : '—')
   return <IssueTip i={i}>
-    <div className={onOpen ? 'press' : undefined} onClick={onOpen ? () => onOpen(i) : undefined} style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(19,27,38,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6, cursor: onOpen ? 'pointer' : undefined }}>
+    <div className={onOpen ? 'press' : undefined} onClick={onOpen ? () => onOpen(i) : undefined} style={{ padding: '9px 10px', borderRadius: 9, background: 'rgba(28,24,21,0.85)', border: `1px solid ${c}`, display: 'flex', flexDirection: 'column', gap: 6, cursor: onOpen ? 'pointer' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <TicketLink i={i} style={{ font: `600 10.5px ${MONO}` }} />
         <ProjTag k={i.project} />
@@ -411,10 +412,10 @@ function BoardCard({ i, onOpen }) {
       </div>
       {i.parent && <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
         <span style={{ font: `600 8px ${MONO}`, color: DIM, flexShrink: 0 }}>↳</span>
-        <TicketLink i={{ key: i.parent.key, host: i.host }} color="#93a6bb" style={{ font: `500 9px ${MONO}`, borderBottom: 'none' }}>{i.parent.key}</TicketLink>
+        <TicketLink i={{ key: i.parent.key, host: i.host }} color="#a89f97" style={{ font: `500 9px ${MONO}`, borderBottom: 'none' }}>{i.parent.key}</TicketLink>
         <span style={{ font: `400 9px ${BODY}`, color: DIM, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.parent.summary}</span>
       </div>}
-      <div style={{ font: `500 11.5px ${BODY}`, color: '#dbe4ef', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{i.summary}</div>
+      <div style={{ font: `500 11.5px ${BODY}`, color: '#e5dbd2', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{i.summary}</div>
       <Split active={i.activeDays} wait={i.waitDays} height={5} />
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         <RoleChip label="Dev" name={f(i.devAssignee?.name)} c={BB} />
@@ -422,14 +423,14 @@ function BoardCard({ i, onOpen }) {
         <RoleChip label="Now" name={f(i.assignee?.name)} c={GREEN} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ font: `400 9.5px ${MONO}`, color: '#7f8ea1' }}>{i.sprint?.name || 'no sprint'}</span>
-        <span style={{ font: `600 9px ${MONO}`, color: '#93a6bb', padding: '1px 6px', borderRadius: 4, background: 'rgba(142,200,255,0.08)' }}>{i.pts || 0} pt</span>
+        <span style={{ font: `400 9.5px ${MONO}`, color: '#8a807a' }}>{i.sprint?.name || 'no sprint'}</span>
+        <span style={{ font: `600 9px ${MONO}`, color: '#a89f97', padding: '1px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.08)' }}>{i.pts || 0} pt</span>
       </div>
     </div>
   </IssueTip>
 }
-const RoleChip = ({ label, name, c }) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: `500 9px ${MONO}`, padding: '1px 6px', borderRadius: 5, background: 'rgba(10,15,22,0.6)', border: '1px solid rgba(142,200,255,0.07)' }}>
-  <span style={{ color: c, fontWeight: 700 }}>{label}</span><span style={{ color: name === '—' ? '#4c5768' : '#b3c1d1' }}>{name}</span></span>
+const RoleChip = ({ label, name, c }) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: `500 9px ${MONO}`, padding: '1px 6px', borderRadius: 5, background: 'rgba(13,11,10,0.6)', border: '1px solid rgba(255,255,255,0.07)' }}>
+  <span style={{ color: c, fontWeight: 700 }}>{label}</span><span style={{ color: name === '—' ? '#5c554f' : '#c8bdb4' }}>{name}</span></span>
 
 function ColumnsBoard({ items, minCol = 232, onOpen }) {
   const cols = colsFor(items)
@@ -440,12 +441,12 @@ function ColumnsBoard({ items, minCol = 232, onOpen }) {
       return <div key={col} style={{ flex: `0 0 ${minCol}px`, width: minCol, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 4px' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(col) }} />
-          <span style={{ font: `600 11px ${BODY}`, color: '#c3cfdc' }}>{col}</span>
+          <span style={{ font: `600 11px ${BODY}`, color: '#c8bdb4' }}>{col}</span>
           <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{its.length}</span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 40, padding: 6, borderRadius: 10, background: 'rgba(10,15,22,0.4)', border: '1px solid rgba(142,200,255,0.05)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 40, padding: 6, borderRadius: 10, background: 'rgba(13,11,10,0.4)', border: '1px solid rgba(255,255,255,0.05)' }}>
           {its.map(i => <BoardCard key={i.key} i={i} onOpen={onOpen} />)}
-          {its.length === 0 && <div style={{ padding: '10px 6px', font: `400 10.5px ${MONO}`, color: '#3d4757', textAlign: 'center' }}>—</div>}
+          {its.length === 0 && <div style={{ padding: '10px 6px', font: `400 10.5px ${MONO}`, color: '#3a332e', textAlign: 'center' }}>—</div>}
         </div>
       </div>
     })}
@@ -459,9 +460,9 @@ function sprintStats(items) {
     ['Tickets', String(items.length), HI],
     ['Story pts', String(items.reduce((a, i) => a + (i.pts || 0), 0)), BB],
     ['Done', `${done.length}/${items.length}`, GREEN],
-    ['Bugs', String(items.filter(i => i.isBug).length), items.some(i => i.isBug) ? RED : '#7f8ea1'],
+    ['Bugs', String(items.filter(i => i.isBug).length), items.some(i => i.isBug) ? RED : '#8a807a'],
     ['Cycle p50/p90', cyc.n ? `${fx(cyc.p50)}/${fx(cyc.p90)}d` : '—', PURPLE],
-    ['At risk', String(items.filter(i => i.rec?.atRisk).length), items.some(i => i.rec?.atRisk) ? GOLD : '#7f8ea1'],
+    ['At risk', String(items.filter(i => i.rec?.atRisk).length), items.some(i => i.rec?.atRisk) ? GOLD : '#8a807a'],
   ]
 }
 
@@ -515,8 +516,6 @@ function Sprint({ issues, members, open, setOpen, member, setMember }) {
 // ---------------- MEMBERS — operational facts only. The "Delivery skills" radar is DELETED. ----------------
 function Members({ issues, prs, members, member, setMember, prsFor, win, me, onExport }) {
   const mine = issues.filter(i => i.assignee?.id === member)
-  const done = mine.filter(i => i.live)
-  const cyc = of(done, i => pos(i.delivery))
   const cur = members.find(m => m.id === member)
   const isMe = me?.accountId && member === me.accountId
   const myPrs = useMemo(() => {
@@ -524,13 +523,9 @@ function Members({ issues, prs, members, member, setMember, prsFor, win, me, onE
     for (const i of mine) for (const p of prsFor(i)) if (!seen.has(p.num)) { seen.add(p.num); out.push(p) }
     return out.sort((a, b) => (b.mergedAt || b.closedAt || b.createdAt || '').localeCompare(a.mergedAt || a.closedAt || a.createdAt || ''))
   }, [member, issues.length])
-  const tiles = [
-    ['Open', String(mine.filter(i => !i.live).length), BB],
-    ['In flight', String(mine.filter(i => i.active).length), PURPLE],
-    ['Shipped', String(done.length), GREEN],
-    ['Cycle p50 / p90', cyc.n ? `${fx(cyc.p50)} / ${fx(cyc.p90)}d` : '—', cyc.n < MIN_N ? '#7f8ea1' : HI],
-    ['At risk', String(mine.filter(i => i.rec?.atRisk).length), mine.some(i => i.rec?.atRisk) ? RED : '#7f8ea1'],
-  ]
+  const metrics = useMemo(() => members.map(m => ({ ...metricsFor(m.id, issues, prs, win), name: m.name })), [members, issues, prs, win])
+  const radars = useMemo(() => buildRadars(metrics), [metrics])
+  const sel = metrics.find(x => x.id === member) || metrics[0]
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="operational facts · no score, no ranking" title="Members" right={<div style={{ display: 'flex', gap: 8 }}>
       {isMe && <button style={miniBtn} onClick={onExport}>Build my impact export →</button>}
@@ -539,20 +534,21 @@ function Members({ issues, prs, members, member, setMember, prsFor, win, me, onE
         {members.map(m => <option key={m.id} value={m.id}>{m.name} · {m.count} issues</option>)}
       </select></div>} />
 
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 10 }}>
-      {tiles.map((t, i) => <div key={i} style={{ background: 'linear-gradient(150deg,rgba(19,27,38,0.85),rgba(11,16,23,0.6))', border: '1px solid rgba(142,200,255,0.09)', borderRadius: 12, padding: '12px 13px' }}>
-        <span style={{ font: `600 9px ${MONO}`, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#7f8ea1', display: 'block' }}>{t[0]}</span>
-        <span style={{ font: `700 20px ${HEAD}`, color: t[2] }}>{t[1]}</span></div>)}
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 10 }}>
+      {metrics.length === 0 && <Empty text="No dev-team members." />}
+      {metrics.map(m => <MemberCard key={m.id} name={m.name} m={m} radar={radars[m.id]} active={m.id === sel?.id} onClick={() => setMember(m.id)} />)}
     </div>
+
+    {sel && <MemberDetail name={sel.name} m={sel} radar={radars[sel.id]} win={win} />}
+
     <div style={{ font: `400 11px ${BODY}`, color: DIM, lineHeight: 1.6 }}>
-      This page carries <b style={{ color: '#93a6bb' }}>coordination facts</b> — who owns which open ticket, whose PR is stale — because they are already public in JIRA and GitHub and they are how work gets unblocked.
-      It carries no composite score, no ranking and no sort-by-output. The "Delivery skills" radar that scored five invented composites 0–100 per person was deleted, not hidden. Everything here about a person, that person can export about themselves (Export → Impact).
+      Every number here is a JIRA ticket or a GitHub PR the subject can open about themselves, scoped to <b style={{ color: '#a89f97' }}>{win.label}</b>. The radar is <b style={{ color: '#a89f97' }}>relative</b> — each axis is this person's rank inside this team over this window, not an absolute score — and it is flagged low-confidence below {MIN_N} shipped tickets. Cards are alphabetical, because a sort order is a scoreboard. Read it to coach and unblock, never to rank.
     </div>
 
     <DataTable title={`Work items · ${cur?.name || '—'}`} minWidth={620} pageSize={10} rows={mine} getKey={r => r.key} initialSort={{ key: 'status', dir: 1 }} raw={mine}
       columns={[
         { key: 'issue', label: 'Issue', width: '88px', sort: r => r.key, filter: r => r.key + ' ' + r.summary, render: r => <IssueTip i={r}><TicketLink i={r} style={{ font: `500 12px ${MONO}` }} /></IssueTip> },
-        { key: 'summary', label: 'Summary', width: '1.7fr', sort: r => r.summary, render: r => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{r.summary}</span> },
+        { key: 'summary', label: 'Summary', width: '1.7fr', sort: r => r.summary, render: r => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{r.summary}</span> },
         { key: 'status', label: 'Status', width: '96px', align: 1, sort: r => r.status, filter: r => r.status, render: r => <span style={{ font: `600 9px ${MONO}`, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', background: r.statusColor + '26', color: r.statusColor }}>{r.status}</span> },
         { key: 'split', label: 'Mine / waiting', width: '110px', sort: r => r.waitDays, render: r => <Split active={r.activeDays} wait={r.waitDays} /> },
         { key: 'cycle', label: 'Cycle', width: '66px', align: 1, sort: r => r.delivery, render: r => <span style={{ font: `600 12px ${MONO}`, color: HI }}>{r.delivery ? fx(r.delivery) + 'd' : '—'}</span> },
@@ -564,8 +560,8 @@ function Members({ issues, prs, members, member, setMember, prsFor, win, me, onE
         { key: 'ticket', label: 'Ticket', width: '86px', sort: p => p.ticket, filter: p => p.ticket + ' ' + p.title, render: p => <span style={{ font: `500 12px ${MONO}`, color: BB }}>{p.ticket}</span> },
         { key: 'state', label: 'State', width: '112px', sort: p => p.state, render: p => <PrBadge state={p.state} /> },
         { key: 'checks', label: 'Checks', width: '60px', align: 1, sort: p => p.checks || '', render: p => <Checks state={p.checks} /> },
-        { key: 'title', label: 'Title', width: '1.9fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}><PRLink pr={p}>#{p.num}</PRLink> {p.title}</span> },
-        { key: 'cycles', label: 'Rounds', width: '72px', align: 1, sort: p => p.cycles, render: p => <span style={{ font: `600 12px ${MONO}`, color: p.cycles > 1 ? GOLD : '#c3cfdc' }}>{p.cycles}</span> },
+        { key: 'title', label: 'Title', width: '1.9fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}><PRLink pr={p}>#{p.num}</PRLink> {p.title}</span> },
+        { key: 'cycles', label: 'Rounds', width: '72px', align: 1, sort: p => p.cycles, render: p => <span style={{ font: `600 12px ${MONO}`, color: p.cycles > 1 ? GOLD : '#c8bdb4' }}>{p.cycles}</span> },
         { key: 'merge', label: 'Merge', width: '76px', align: 1, sort: p => p.mergeDays ?? 1e9, render: p => <span style={{ font: `500 12px ${MONO}`, color: p.mergeDays == null ? DIM : HI }}>{p.mergeDays == null ? '—' : fx(p.mergeDays) + 'd'}</span> },
       ]} />
   </section>
@@ -591,7 +587,7 @@ function insightsFor(i) {
   if (i.stale) out.push({ c: RED, t: i.staleNote || 'Status out of date vs PR' })
   if (i.active && !(i.prNums || []).length) out.push({ c: BB, t: 'No PR linked yet' })
   if (i.estAcc != null && i.estAcc < 75) out.push({ c: RED, t: `Estimate error — ${fx(i.estAcc, 0)}% accuracy on a ${i.pts}pt ticket` })
-  if (!out.length) out.push({ c: '#7f8ea1', t: 'On track — nothing flagged' })
+  if (!out.length) out.push({ c: '#8a807a', t: 'On track — nothing flagged' })
   return out
 }
 function TicketDetail({ issue: i, onClose }) {
@@ -619,16 +615,16 @@ function TicketDetail({ issue: i, onClose }) {
   const kd = [['Type', i.type], ['Status', i.status], ['Points', i.pts || '—'], ['Sprint', i.sprint?.name || '—'],
     ['Dev', i.devAssignee?.name || '—'], ['QA', i.qaAssignee?.name || '—'], ['Assignee', i.assignee?.name || '—'], ['Parent', i.parent?.key || '—']]
   const metrics = [['Cycle', i.delivery != null ? fx(i.delivery) + 'd' : '—', BB], ['Lead', i.leadDays != null ? fx(i.leadDays) + 'd' : '—', STEEL], ['Mine', fx(i.activeDays) + 'd', GREEN],
-    ['Waiting', fx(i.waitDays) + 'd', GOLD], ['QA cycles', String(i.qaCycles), GOLD], ['Est acc', i.estAcc == null ? '—' : fx(i.estAcc, 0) + '%', i.estAcc == null ? '#7f8ea1' : accColor(i.estAcc)]]
+    ['Waiting', fx(i.waitDays) + 'd', GOLD], ['QA cycles', String(i.qaCycles), GOLD], ['Est acc', i.estAcc == null ? '—' : fx(i.estAcc, 0) + '%', i.estAcc == null ? '#8a807a' : accColor(i.estAcc)]]
   const artMeta = { ac: { title: 'Acceptance Criteria', noun: 'acceptance criteria' }, tests: { title: 'Test Cases', noun: 'test cases' } }
   const nudge = `${i.assignee?.name || 'team'}: ${i.key} "${i.summary}" has been in ${i.status} for ${fx(i.inCurrent)} working days${i.rec?.atRisk ? ` — ${fx(Math.abs(i.rec.remaining))}d over its ${fx(i.rec.budget)}d budget` : ''}. ${i.url || ''}`
 
   return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(4,7,11,0.55)', backdropFilter: 'blur(2px)', display: 'flex', justifyContent: 'flex-end' }}>
-    <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '96vw', height: '100vh', overflowY: 'auto', background: 'linear-gradient(180deg,#0d131d,#0a0f16)', borderLeft: '1px solid rgba(142,200,255,0.12)', padding: '18px 20px 60px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '96vw', height: '100vh', overflowY: 'auto', background: 'linear-gradient(180deg,#161310,#100e0c)', borderLeft: '1px solid rgba(255,255,255,0.12)', padding: '18px 20px 60px', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: '#93a6bb' }}>{i.status}</span></div>
-          <div style={{ font: `700 17px ${HEAD}`, color: '#f0f5fb', marginTop: 6, lineHeight: 1.3 }}>{i.summary}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: '#a89f97' }}>{i.status}</span></div>
+          <div style={{ font: `700 17px ${HEAD}`, color: '#f6efe9', marginTop: 6, lineHeight: 1.3 }}>{i.summary}</div>
         </div>
         <button style={miniBtn} onClick={() => copy(nudge, 'n')}>{copied === 'n' ? '✓' : 'Copy nudge'}</button>
         <button onClick={onClose} style={{ ...miniBtn, width: 30, height: 28, padding: 0 }}>✕</button>
@@ -636,15 +632,15 @@ function TicketDetail({ issue: i, onClose }) {
 
       <Sec title="Key data">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
-          {kd.map(([k, v]) => <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid rgba(142,200,255,0.05)', padding: '3px 0' }}>
-            <span style={{ font: `400 11px ${BODY}`, color: '#8b98a9' }}>{k}</span>
-            <span style={{ font: `600 11px ${MONO}`, color: '#dbe4ef', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>)}
+          {kd.map(([k, v]) => <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid rgba(255,255,255,0.05)', padding: '3px 0' }}>
+            <span style={{ font: `400 11px ${BODY}`, color: '#8a807a' }}>{k}</span>
+            <span style={{ font: `600 11px ${MONO}`, color: '#e5dbd2', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</span></div>)}
         </div>
       </Sec>
 
       <Sec title="Metrics">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 12 }}>
-          {metrics.map(([l, v, c]) => <div key={l} style={{ padding: '8px 10px', borderRadius: 9, background: 'rgba(10,15,22,0.5)', border: '1px solid rgba(142,200,255,0.06)' }}>
+          {metrics.map(([l, v, c]) => <div key={l} style={{ padding: '8px 10px', borderRadius: 9, background: 'rgba(13,11,10,0.5)', border: '1px solid rgba(255,255,255,0.06)' }}>
             <div style={{ font: `700 16px ${HEAD}`, color: c }}>{v}</div><div style={{ font: `400 8.5px ${MONO}`, color: DIM, textTransform: 'uppercase' }}>{l}</div></div>)}
         </div>
         <div style={{ marginBottom: 12 }}>
@@ -654,42 +650,42 @@ function TicketDetail({ issue: i, onClose }) {
           </div>
         </div>
         {bars.map(([k, v]) => <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0' }}>
-          <span style={{ width: 120, flexShrink: 0, font: `500 10.5px ${BODY}`, color: WAITING.includes(k) ? GOLD : '#b3c1d1' }}>{k}</span>
-          <div style={{ flex: 1, height: 7, borderRadius: 4, background: 'rgba(142,200,255,0.06)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${v / barMax * 100}%`, background: colorFor(k), borderRadius: 4 }} /></div>
+          <span style={{ width: 120, flexShrink: 0, font: `500 10.5px ${BODY}`, color: WAITING.includes(k) ? GOLD : '#c8bdb4' }}>{k}</span>
+          <div style={{ flex: 1, height: 7, borderRadius: 4, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${v / barMax * 100}%`, background: colorFor(k), borderRadius: 4 }} /></div>
           <span style={{ width: 40, textAlign: 'right', font: `600 10.5px ${MONO}`, color: HI }}>{fx(v)}d</span></div>)}
       </Sec>
 
       <Sec title="Insights">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {insightsFor(i).map((s, idx) => <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-            <span style={{ color: s.c, fontSize: 10 }}>●</span><span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc' }}>{s.t}</span></div>)}
+            <span style={{ color: s.c, fontSize: 10 }}>●</span><span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4' }}>{s.t}</span></div>)}
         </div>
       </Sec>
 
       {err && <div style={{ font: `400 12px ${BODY}`, color: RED }}>Failed to load detail: {err}</div>}
-      {!d && !err && <div style={{ ...PANEL, padding: '13px 15px', display: 'flex', gap: 8, alignItems: 'center', color: '#8b98a9' }}><Spinner /><span style={{ font: `500 12px ${BODY}` }}>Loading content, history & PR context…</span></div>}
+      {!d && !err && <div style={{ ...PANEL, padding: '13px 15px', display: 'flex', gap: 8, alignItems: 'center', color: '#8a807a' }}><Spinner /><span style={{ font: `500 12px ${BODY}` }}>Loading content, history & PR context…</span></div>}
 
       {d && <>
         <Sec title="Ticket content">
-          {d.description ? <div style={{ font: `400 12px/1.6 ${BODY}`, color: '#c3cfdc', whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{d.description}</div> : <Empty text="No description." />}
+          {d.description ? <div style={{ font: `400 12px/1.6 ${BODY}`, color: '#c8bdb4', whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{d.description}</div> : <Empty text="No description." />}
           {d.comments?.length > 0 && <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {d.comments.slice(-6).map((c, idx) => <div key={idx} style={{ borderLeft: '2px solid rgba(142,200,255,0.2)', paddingLeft: 10 }}>
-              <div style={{ font: `600 10px ${MONO}`, color: '#93a6bb' }}>{c.author} · {fdate(c.at)}</div>
-              <div style={{ font: `400 11.5px/1.5 ${BODY}`, color: '#b3c1d1', whiteSpace: 'pre-wrap' }}>{c.body}</div></div>)}
+            {d.comments.slice(-6).map((c, idx) => <div key={idx} style={{ borderLeft: '2px solid rgba(255,255,255,0.2)', paddingLeft: 10 }}>
+              <div style={{ font: `600 10px ${MONO}`, color: '#a89f97' }}>{c.author} · {fdate(c.at)}</div>
+              <div style={{ font: `400 11.5px/1.5 ${BODY}`, color: '#c8bdb4', whiteSpace: 'pre-wrap' }}>{c.body}</div></div>)}
           </div>}
         </Sec>
 
         {d.prs?.length > 0 && <Sec title={`Linked PRs (${d.prs.length})`}>
-          {d.prs.map(p => <div key={p.num} style={{ padding: '6px 0', borderBottom: '1px solid rgba(142,200,255,0.05)' }}>
+          {d.prs.map(p => <div key={p.num} style={{ padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><PRLink pr={{ repo: p.repo, num: p.num }} /><span style={{ font: `500 9px ${MONO}`, color: DIM }}>{p.state} · {p.changedFiles || 0} files</span></div>
-            <div style={{ font: `400 11px ${BODY}`, color: '#b3c1d1' }}>{p.title}</div></div>)}
+            <div style={{ font: `400 11px ${BODY}`, color: '#c8bdb4' }}>{p.title}</div></div>)}
         </Sec>}
 
         <Sec title="History">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflow: 'auto' }}>
             {!d.history?.length ? <Empty text="No transitions recorded." /> : d.history.map((h, idx) => <div key={idx} style={{ display: 'flex', gap: 8, font: `400 10.5px ${MONO}` }}>
               <span style={{ color: DIM, flexShrink: 0, width: 104 }}>{fdt(h.at)}</span>
-              <span style={{ color: '#b3c1d1' }}>{h.field === 'status' ? '' : h.field + ': '}{h.from ? `${h.from} → ` : ''}<span style={{ color: '#dbe4ef' }}>{h.to}</span></span></div>)}
+              <span style={{ color: '#c8bdb4' }}>{h.field === 'status' ? '' : h.field + ': '}{h.from ? `${h.from} → ` : ''}<span style={{ color: '#e5dbd2' }}>{h.to}</span></span></div>)}
           </div>
         </Sec>
 
@@ -700,7 +696,7 @@ function TicketDetail({ issue: i, onClose }) {
             {a && !editing && <button style={miniBtn} onClick={() => setEdit({ kind, md: a.md })}>edit</button>}
             <button style={miniBtn} disabled={busy === kind} onClick={() => gen(kind)}>{busy === kind ? 'generating…' : a ? 'regenerate' : 'generate'}</button>
           </div>}>
-            {busy === kind && <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#8b98a9' }}><Spinner /><span style={{ font: `500 11.5px ${BODY}` }}>Asking claude…</span></div>}
+            {busy === kind && <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#8a807a' }}><Spinner /><span style={{ font: `500 11.5px ${BODY}` }}>Asking claude…</span></div>}
             {!a && busy !== kind && !editing && <Empty text={`No ${artMeta[kind].noun} yet — generate from the ticket content.`} />}
             {editing ? <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <textarea value={edit.md} onChange={e => setEdit({ kind, md: e.target.value })} rows={12} style={{ ...inp, resize: 'vertical', fontFamily: MONO, fontSize: 12 }} />
@@ -762,7 +758,7 @@ function Okrs({ S, issues, shipped, prs, win }) {
       else if (target === 0) pct = v <= 0 ? 100 : Math.max(0, 100 - v * 33)
       else pct = v <= target ? 100 : Math.max(0, Math.min(100, (target / v) * 100))
       const thin = (n[m.auto] || 0) < MIN_N
-      const color = noData || thin ? '#7f8ea1' : pct >= 90 ? GREEN : pct >= 60 ? BB : pct >= 40 ? GOLD : RED
+      const color = noData || thin ? '#8a807a' : pct >= 90 ? GREEN : pct >= 60 ? BB : pct >= 40 ? GOLD : RED
       return { ...m, src: 'p50', n: n[m.auto] || 0, thin, note: (m.reducePct != null ? `${m.note} (baseline ${fx(baseline[m.baselineOf])}d)` : m.note) + (noData ? ' · no data in this window' : ''), curTxt: noData ? '—' : fx(v, dec) + suffix, tgtTxt: fx(target, dec) + suffix, pct: Math.round(pct), color }
     })
     const vals = measures.map(m => m.pct)
@@ -777,20 +773,20 @@ function Okrs({ S, issues, shipped, prs, win }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 18, flexWrap: 'wrap', marginBottom: 14 }}>
         <div style={{ maxWidth: 600 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 5 }}><span style={{ width: 26, height: 26, borderRadius: 8, background: o.color + '26', color: o.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>◎</span><span style={{ font: `700 16px ${HEAD}`, color: HI }}>{o.title}</span></div>
-          <div style={{ font: `400 12px ${BODY}`, color: '#8b98a9', lineHeight: 1.5 }}>{o.def}</div>
+          <div style={{ font: `400 12px ${BODY}`, color: '#8a807a', lineHeight: 1.5 }}>{o.def}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
           <div style={{ textAlign: 'right' }}><div style={{ font: `700 26px ${HEAD}`, color: o.color }}>{o.pct}%</div><div style={{ font: `400 9.5px ${MONO}`, color: DIM }}>objective</div></div>
-          <svg width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="24" fill="none" stroke="rgba(142,200,255,0.1)" strokeWidth="6" /><circle cx="30" cy="30" r="24" fill="none" stroke={o.color} strokeWidth="6" strokeLinecap="round" strokeDasharray="150.8" strokeDashoffset={(150.8 * (1 - o.pct / 100)).toFixed(1)} transform="rotate(-90 30 30)" /></svg>
+          <svg width="60" height="60" viewBox="0 0 60 60"><circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="6" /><circle cx="30" cy="30" r="24" fill="none" stroke={o.color} strokeWidth="6" strokeLinecap="round" strokeDasharray="150.8" strokeDashoffset={(150.8 * (1 - o.pct / 100)).toFixed(1)} transform="rotate(-90 30 30)" /></svg>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-        {o.measures.map((m, mi) => <div key={mi} style={{ padding: '12px 14px', borderRadius: 11, background: 'rgba(10,15,22,0.5)', border: '1px solid rgba(142,200,255,0.06)' }}>
+        {o.measures.map((m, mi) => <div key={mi} style={{ padding: '12px 14px', borderRadius: 11, background: 'rgba(13,11,10,0.5)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 9 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                <span style={{ font: `500 12.5px ${BODY}`, color: '#dbe4ef' }}>{m.t}</span>
-                <span style={{ font: `600 8px ${MONO}`, letterSpacing: '0.04em', padding: '1px 6px', borderRadius: 4, background: 'rgba(142,200,255,0.12)', color: '#93a6bb' }}>{m.src} · n={m.n}</span>
+                <span style={{ font: `500 12.5px ${BODY}`, color: '#e5dbd2' }}>{m.t}</span>
+                <span style={{ font: `600 8px ${MONO}`, letterSpacing: '0.04em', padding: '1px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.12)', color: '#a89f97' }}>{m.src} · n={m.n}</span>
                 {m.thin && <span style={{ font: `600 8px ${MONO}`, color: GOLD }}>n&lt;{MIN_N} — not a trend</span>}
               </div>
               <div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>{m.note}</div>
@@ -798,7 +794,7 @@ function Okrs({ S, issues, shipped, prs, win }) {
             <div style={{ textAlign: 'right', flexShrink: 0 }}><span style={{ font: `700 14px ${HEAD}`, color: HI }}>{m.curTxt}</span><span style={{ font: `400 10.5px ${MONO}`, color: DIM }}> / {m.tgtTxt}</span></div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-            <div style={{ flex: 1, height: 6, borderRadius: 4, background: 'rgba(142,200,255,0.06)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${m.pct}%`, borderRadius: 4, background: m.color }} /></div>
+            <div style={{ flex: 1, height: 6, borderRadius: 4, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}><div style={{ height: '100%', width: `${m.pct}%`, borderRadius: 4, background: m.color }} /></div>
             <span style={{ width: 38, textAlign: 'right', font: `600 11px ${MONO}`, color: m.color }}>{m.pct}%</span>
           </div>
         </div>)}
@@ -830,12 +826,12 @@ function ProjectConfig({ mode, project, onClose, onSaved, onSelect }) {
       .catch(e => setErr(String(e.message || e))).finally(() => setBusy(false))
   }
   const field = (label, key, ph, dis) => <label style={{ display: 'block' }}>
-    <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7f8ea1', marginBottom: 5 }}>{label}</div>
+    <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#8a807a', marginBottom: 5 }}>{label}</div>
     <input value={f[key]} onChange={set(key)} placeholder={ph} disabled={dis} style={{ ...inp, opacity: dis ? 0.5 : 1 }} /></label>
   return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(4,7,11,0.72)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
     <div onClick={e => e.stopPropagation()} style={{ ...PANEL, width: 500, maxWidth: '94vw', maxHeight: '90vh', overflowY: 'auto', padding: 22 }}>
-      <div style={{ font: `700 17px ${HEAD}`, color: '#f0f5fb', marginBottom: 4 }}>{isEdit ? `Configure ${project.jiraProjectKey}` : 'Add a project'}</div>
-      <div style={{ font: `400 12px ${BODY}`, color: '#8b98a9', marginBottom: 16 }}>Ties a GitHub repo to a JIRA board and defines the team by role. Persisted server-side.</div>
+      <div style={{ font: `700 17px ${HEAD}`, color: '#f6efe9', marginBottom: 4 }}>{isEdit ? `Configure ${project.jiraProjectKey}` : 'Add a project'}</div>
+      <div style={{ font: `400 12px ${BODY}`, color: '#8a807a', marginBottom: 16 }}>Ties a GitHub repo to a JIRA board and defines the team by role. Persisted server-side.</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           {field('Name', 'name', 'e.g. Transport Web')}
@@ -844,19 +840,19 @@ function ProjectConfig({ mode, project, onClose, onSaved, onSelect }) {
         {field('GitHub repo (owner/name)', 'githubRepo', 'e.g. tajawal/ct-web-transport')}
         {field('JIRA host', 'jiraHost', 'data4altayyargroup.atlassian.net')}
       </div>
-      <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7f8ea1', margin: '18px 0 8px' }}>Team members & roles</div>
+      <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#8a807a', margin: '18px 0 8px' }}>Team members & roles</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
         {members.map((m, i) => <div key={i} style={{ display: 'flex', gap: 7 }}>
           <input value={m.email} onChange={e => setM(i, 'email', e.target.value)} placeholder="name@almosafer.com" style={{ ...inp, flex: 1 }} />
           <select value={m.role} onChange={e => setM(i, 'role', e.target.value)} style={{ ...inp, width: 108, flex: 'none', cursor: 'pointer' }}>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select>
-          <button onClick={() => setMembers(members.filter((_, j) => j !== i))} style={{ width: 34, flexShrink: 0, borderRadius: 9, border: '1px solid rgba(142,200,255,0.14)', background: 'transparent', color: '#93a2b4', cursor: 'pointer' }}>✕</button>
+          <button onClick={() => setMembers(members.filter((_, j) => j !== i))} style={{ width: 34, flexShrink: 0, borderRadius: 9, border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: '#9a9089', cursor: 'pointer' }}>✕</button>
         </div>)}
       </div>
-      <button onClick={() => setMembers([...members, { email: '', role: 'dev' }])} style={{ marginTop: 8, padding: '6px 12px', borderRadius: 8, border: '1px dashed rgba(142,200,255,0.24)', background: 'transparent', color: '#93a2b4', cursor: 'pointer', font: `500 12px ${BODY}` }}>+ Add member</button>
+      <button onClick={() => setMembers([...members, { email: '', role: 'dev' }])} style={{ marginTop: 8, padding: '6px 12px', borderRadius: 8, border: '1px dashed rgba(255,255,255,0.24)', background: 'transparent', color: '#9a9089', cursor: 'pointer', font: `500 12px ${BODY}` }}>+ Add member</button>
       {err && <div style={{ marginTop: 12, font: `400 12px ${BODY}`, color: RED }}>{err}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, marginTop: 18 }}>
-        <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(142,200,255,0.14)', background: 'transparent', color: '#93a2b4', cursor: 'pointer', font: `500 12.5px ${BODY}` }}>Cancel</button>
-        <button onClick={submit} disabled={busy || (!isEdit && (!f.jiraProjectKey || !f.githubRepo))} style={{ ...primaryBtn, padding: '8px 15px', fontSize: 12.5, background: busy ? '#33506e' : primaryBtn.background }}>{busy ? 'Saving…' : isEdit ? 'Save changes' : 'Add project'}</button>
+        <button onClick={onClose} style={{ padding: '8px 15px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: '#9a9089', cursor: 'pointer', font: `500 12.5px ${BODY}` }}>Cancel</button>
+        <button onClick={submit} disabled={busy || (!isEdit && (!f.jiraProjectKey || !f.githubRepo))} style={{ ...primaryBtn, padding: '8px 15px', fontSize: 12.5, background: busy ? '#3a2e26' : primaryBtn.background }}>{busy ? 'Saving…' : isEdit ? 'Save changes' : 'Add project'}</button>
       </div>
     </div>
   </div>
@@ -897,21 +893,21 @@ function Loading() {
 }
 function LoadingOverlay() {
   return <div style={{ position: 'absolute', inset: 0, zIndex: 40, background: 'rgba(8,11,17,0.5)', backdropFilter: 'blur(1.5px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 130 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 10, background: 'rgba(20,28,40,0.96)', border: '1px solid rgba(142,200,255,0.16)' }}>
-      <Spinner /><span style={{ font: `500 12px ${BODY}`, color: '#cfe0f2' }}>Updating…</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 10, background: 'rgba(20,28,40,0.96)', border: '1px solid rgba(255,255,255,0.16)' }}>
+      <Spinner /><span style={{ font: `500 12px ${BODY}`, color: '#d8cfc7' }}>Updating…</span>
     </div>
   </div>
 }
 function NotWired({ reason, onSaved, onAddProject }) {
   return <div style={{ ...PANEL, padding: 28, maxWidth: 560, margin: '40px auto' }}>
-    <div style={{ font: `700 18px ${HEAD}`, color: '#f0f5fb', marginBottom: 8 }}>Connect JIRA to go live</div>
-    <div style={{ font: `400 13px ${BODY}`, color: '#9fb0c2', lineHeight: 1.6, marginBottom: 16 }}>
+    <div style={{ font: `700 18px ${HEAD}`, color: '#f6efe9', marginBottom: 8 }}>Connect JIRA to go live</div>
+    <div style={{ font: `400 13px ${BODY}`, color: '#a89f97', lineHeight: 1.6, marginBottom: 16 }}>
       GitHub is already live via the <code style={{ color: BB }}>gh</code> CLI. Paste an Atlassian email + API token below — saved server-side, gitignored.
       {reason && reason !== 'no-jira-token' ? <div style={{ color: RED, marginTop: 6 }}>Error: {reason}</div> : null}
     </div>
     <CredsForm onSaved={onSaved} />
-    <div style={{ borderTop: '1px solid rgba(142,200,255,0.08)', paddingTop: 16, marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-      <div style={{ font: `400 12px ${BODY}`, color: '#8b98a9' }}>No project yet, or need a different board?</div>
+    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16, marginTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ font: `400 12px ${BODY}`, color: '#8a807a' }}>No project yet, or need a different board?</div>
       <button onClick={onAddProject} style={miniBtn}>+ Add project</button>
     </div>
   </div>

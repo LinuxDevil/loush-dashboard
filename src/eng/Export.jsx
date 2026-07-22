@@ -30,10 +30,10 @@ export default function Export({ snap, win, me }) {
 
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
       {PRESETS.map(p => <button key={p.id} onClick={() => { setPreset(p.id); setEdited(false) }} style={{
-        padding: '8px 14px', borderRadius: 9, cursor: 'pointer', textAlign: 'left', border: `1px solid ${preset === p.id ? BB : 'rgba(142,200,255,0.12)'}`,
-        background: preset === p.id ? 'rgba(142,200,255,0.12)' : 'transparent',
+        padding: '8px 14px', borderRadius: 9, cursor: 'pointer', textAlign: 'left', border: `1px solid ${preset === p.id ? BB : 'rgba(255,255,255,0.12)'}`,
+        background: preset === p.id ? 'rgba(255,255,255,0.12)' : 'transparent',
       }}>
-        <div style={{ font: `600 12.5px ${BODY}`, color: preset === p.id ? '#dbeafc' : '#93a2b4' }}>{p.label}</div>
+        <div style={{ font: `600 12.5px ${BODY}`, color: preset === p.id ? '#f0e7e0' : '#9a9089' }}>{p.label}</div>
         <div style={{ font: `400 9.5px ${MONO}`, color: DIM }}>{p.who}</div>
       </button>)}
     </div>
@@ -49,7 +49,7 @@ export default function Export({ snap, win, me }) {
       </div>
       <div style={{ ...PANEL, padding: '12px 16px' }}>
         <div style={{ font: `600 12px ${HEAD}`, color: HI, marginBottom: 8 }}>Preview</div>
-        <div className="md" style={{ maxHeight: 520, overflow: 'auto', color: '#c3cfdc', font: `400 12.5px/1.65 ${BODY}` }} dangerouslySetInnerHTML={{ __html: marked.parse(md || '') }} />
+        <div className="md" style={{ maxHeight: 520, overflow: 'auto', color: '#c8bdb4', font: `400 12.5px/1.65 ${BODY}` }} dangerouslySetInnerHTML={{ __html: marked.parse(md || '') }} />
       </div>
     </div>
   </section>

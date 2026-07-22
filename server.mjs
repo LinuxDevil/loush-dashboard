@@ -5,6 +5,7 @@ import os from 'node:os'
 import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
+import { toggleOffFile } from './customize-toggle.mjs'
 import mountCursor from './server-cursor.mjs'
 import mountConstitution from './server-constitution.mjs'
 import mountAtoms from './server-atoms.mjs'
@@ -299,6 +300,141 @@ app.put('/api/settings', (req, res) => {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, JSON.stringify(settings, null, 2))
   res.json({ ok: true, backup: bak })
+})
+
+// ---------- Customize: one unified inventory + REAL enable/disable across every category ----------
+// The presentation layer (CustomizeSection.jsx) shows skills/commands/subagents/rules/mcp/hooks/plugins as
+// grouped cards with a toggle. "Disable" must actually make Claude skip the item — so it is enforced at the
+// real source of truth, never a cosmetic flag:
+//   · skills/commands/agents/rules → rename the discovered file to `<file>.off` (Claude only loads a skill
+//     when SKILL.md exists; an agent/command/rule when its .md exists). Reversible, backed up on the way in.
+//   · mcp     → park the server config in `_disabledMcpServers` in ~/.claude.json (out of `mcpServers` = off).
+//   · plugins → the native `enabledPlugins` boolean in settings.json.
+//   · hooks   → move the matcher entry between `settings.hooks[event]` and `settings._disabledHooks[event]`.
+const OFF = '.off'
+function customizeRes(kind) { // skills/commands/agents
+  const out = []
+  for (const { scope, dir } of KINDS[kind].dirs()) {
+    if (!fs.existsSync(dir)) continue
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      let name, enabled, file
+      if (KINDS[kind].nested) {
+        if (!e.isDirectory()) continue
+        name = e.name
+        const live = path.join(dir, name, 'SKILL.md')
+        if (fs.existsSync(live)) { enabled = true; file = live }
+        else if (fs.existsSync(live + OFF)) { enabled = false; file = live + OFF }
+        else continue
+      } else {
+        if (e.name.endsWith('.md' + OFF)) { name = e.name.slice(0, -(3 + OFF.length)); enabled = false; file = path.join(dir, e.name) }
+        else if (e.name.endsWith('.md')) { name = e.name.slice(0, -3); enabled = true; file = path.join(dir, e.name) }
+        else continue
+      }
+      const { fm } = parseFM(fs.readFileSync(file, 'utf8'))
+      out.push({ kind, name, scope, group: scope, enabled, description: String(fm.description || ''), tokens: tokens(fs.readFileSync(file, 'utf8')), path: file, status: enabled ? 'on' : 'off' })
+    }
+  }
+  return out
+}
+const RULE_TARGETS = () => [
+  { name: '~/.claude/CLAUDE.md', scope: 'global', base: path.join(CLAUDE, 'CLAUDE.md') },
+  { name: '.claude/CLAUDE.md', scope: 'project', base: path.join(PROJECT, '.claude', 'CLAUDE.md') },
+  { name: 'CLAUDE.md', scope: 'project', base: path.join(PROJECT, 'CLAUDE.md') },
+  { name: 'AGENTS.md', scope: 'project', base: path.join(PROJECT, 'AGENTS.md') },
+  { name: '.cursorrules', scope: 'project', base: path.join(PROJECT, '.cursorrules') },
+]
+function customizeRules() {
+  const out = []
+  for (const r of RULE_TARGETS()) {
+    const on = fs.existsSync(r.base), off = fs.existsSync(r.base + OFF)
+    if (!on && !off) continue
+    const file = on ? r.base : r.base + OFF
+    out.push({ kind: 'rules', name: r.name, scope: r.scope, group: r.scope, enabled: on, description: `always-on rules · ${tokens(fs.readFileSync(file, 'utf8'))} tokens`, tokens: tokens(fs.readFileSync(file, 'utf8')), path: file, status: on ? 'always' : 'off' })
+  }
+  return out
+}
+function customizeMcp() {
+  const cj = readClaudeJson(), out = []
+  for (const [name, config] of Object.entries(cj.mcpServers || {}))
+    out.push({ kind: 'mcp', name, scope: 'user', group: 'mcp', enabled: true, description: (config.url || config.command || '') + '', tokens: tokens(JSON.stringify(config)), status: 'connected' })
+  for (const [name, config] of Object.entries(cj._disabledMcpServers || {}))
+    out.push({ kind: 'mcp', name, scope: 'user', group: 'mcp', enabled: false, description: (config.url || config.command || '') + '', tokens: tokens(JSON.stringify(config)), status: 'off' })
+  return out
+}
+function customizePlugins() {
+  let settings = {}; try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8')) } catch {}
+  return Object.entries(settings.enabledPlugins || {}).map(([full, on]) => ({
+    kind: 'plugins', name: full.split('@')[0], scope: 'user', group: 'plugins', enabled: !!on, description: full.includes('@') ? full.split('@')[1] : '', tokens: 0, status: on ? 'enabled' : 'off', ref: full,
+  }))
+}
+const hookKey = (event, entry) => `${event}::${entry.matcher || '*'}::${JSON.stringify(entry.hooks || [])}`
+function customizeHooks() {
+  let settings = {}; try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8')) } catch {}
+  const out = []
+  const emit = (bag, enabled) => { for (const [event, entries] of Object.entries(bag || {})) for (const entry of entries || []) {
+    const cmds = (entry.hooks || []).map(h => h.command || h.type).join(', ')
+    out.push({ kind: 'hooks', name: `${event} · ${entry.matcher || '*'}`, scope: 'user', group: event, enabled, description: cmds.slice(0, 120), tokens: 0, status: enabled ? 'active' : 'off', ref: hookKey(event, entry) })
+  } }
+  emit(settings.hooks, true); emit(settings._disabledHooks, false)
+  return out
+}
+function customizeAll() {
+  return {
+    skills: customizeRes('skills'), commands: customizeRes('commands'), agents: customizeRes('agents'),
+    rules: customizeRules(), mcp: customizeMcp(), hooks: customizeHooks(), plugins: customizePlugins(),
+  }
+}
+app.get('/api/customize', (req, res) => { try { res.json(customizeAll()) } catch (e) { res.status(500).json({ error: e.message }) } })
+
+// toggle one item on/off at its real source of truth. { kind, scope, name, enable, ref }
+app.post('/api/customize/toggle', (req, res) => {
+  try {
+    const { kind, scope, name, enable, ref } = req.body
+    if (kind === 'skills' || kind === 'commands' || kind === 'agents') {
+      const dir = scopeDir(kind, scope)
+      const live = safe(KINDS[kind].nested ? path.join(dir, name, 'SKILL.md') : path.join(dir, name + '.md'))
+      return res.json(toggleOffFile(live, enable))
+    }
+    if (kind === 'rules') {
+      const t = RULE_TARGETS().find(r => r.name === name && r.scope === scope)
+      if (!t) return res.status(404).json({ error: 'unknown rules file' })
+      return res.json(toggleOffFile(safe(t.base), enable))
+    }
+    if (kind === 'mcp') {
+      const cj = readClaudeJson()
+      cj._disabledMcpServers = cj._disabledMcpServers || {}
+      const bak = backup(CLAUDE_JSON)
+      if (enable) { const c = cj._disabledMcpServers[name]; if (c) { cj.mcpServers = cj.mcpServers || {}; cj.mcpServers[name] = c; delete cj._disabledMcpServers[name] } }
+      else { const c = (cj.mcpServers || {})[name]; if (c) { cj._disabledMcpServers[name] = c; delete cj.mcpServers[name] } }
+      fs.writeFileSync(CLAUDE_JSON, JSON.stringify(cj, null, 2))
+      return res.json({ ok: true, enabled: enable, backup: bak })
+    }
+    if (kind === 'plugins') {
+      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8'))
+      const key = ref && settings.enabledPlugins?.[ref] !== undefined ? ref : Object.keys(settings.enabledPlugins || {}).find(k => k.split('@')[0] === name)
+      if (!key) return res.status(404).json({ error: 'plugin not found' })
+      const bak = backup(SETTINGS_FILES.user)
+      settings.enabledPlugins[key] = !!enable
+      fs.writeFileSync(SETTINGS_FILES.user, JSON.stringify(settings, null, 2))
+      return res.json({ ok: true, enabled: enable, backup: bak })
+    }
+    if (kind === 'hooks') {
+      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8'))
+      settings.hooks = settings.hooks || {}; settings._disabledHooks = settings._disabledHooks || {}
+      const src = enable ? settings._disabledHooks : settings.hooks
+      const dst = enable ? settings.hooks : settings._disabledHooks
+      let moved = null
+      for (const [event, entries] of Object.entries(src)) {
+        const idx = (entries || []).findIndex(e => hookKey(event, e) === ref)
+        if (idx >= 0) { moved = entries.splice(idx, 1)[0]; if (!entries.length) delete src[event]; (dst[event] = dst[event] || []).push(moved); break }
+      }
+      if (!moved) return res.json({ ok: true, noop: true, enabled: enable })
+      const bak = backup(SETTINGS_FILES.user)
+      fs.writeFileSync(SETTINGS_FILES.user, JSON.stringify(settings, null, 2))
+      return res.json({ ok: true, enabled: enable, backup: bak })
+    }
+    res.status(400).json({ error: 'unknown kind' })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
 
 // ---------- artifacts ----------

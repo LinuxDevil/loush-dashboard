@@ -1271,7 +1271,12 @@ function warmBoot() {
   console.log(warm ? `[eng] snapshot cache warm from disk: ${[...snaps.keys()].join(', ')}` : '[eng] no usable snapshot cache on disk — first call fetches live')
   if (!cold.length) return
   console.log(`[eng] refreshing ${cold.map(p => p.key).join(', ')} in the background`)
-  for (const p of cold) refresh(p).catch(() => {})
+  // ponytail: refresh() is async in signature only — gh()/ghAuthed() are spawnSync, so it runs to completion
+  // synchronously. Called inline it blocks module eval, app.listen() never binds, and every proxied /api/* call
+  // gets ECONNREFUSED until the GitHub pagination ends. setImmediate lets eval finish and the port come up first.
+  // Ceiling: the refresh still blocks the event loop while it runs, so those first requests queue instead of
+  // failing. Move gh() to async spawn if the queueing pause itself becomes the problem.
+  setImmediate(() => { for (const p of cold) refresh(p).catch(() => {}) })
 }
 
 export default function mountEng(app) {

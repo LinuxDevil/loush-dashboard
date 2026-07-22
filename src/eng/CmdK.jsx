@@ -48,11 +48,11 @@ export default function CmdK({ snap, routes, onRoute, onOpenTicket, open, setOpe
           if (e.key === 'ArrowUp') { e.preventDefault(); setSel(s => Math.max(0, s - 1)) }
           if (e.key === 'Enter' && items[sel]) run(items[sel])
         }}
-        style={{ padding: '15px 18px', border: 'none', borderBottom: '1px solid rgba(142,200,255,0.1)', background: 'transparent', color: '#eaf1f9', font: `500 15px ${BODY}`, outline: 'none' }} />
+        style={{ padding: '15px 18px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#f6efe9', font: `500 15px ${BODY}`, outline: 'none' }} />
       <div style={{ overflowY: 'auto' }}>
         {items.map((it, i) => <div key={it.kind + it.id + i} onMouseEnter={() => setSel(i)} onClick={() => run(it)}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', cursor: 'pointer', background: i === sel ? 'rgba(142,200,255,0.1)' : 'transparent' }}>
-          <span style={{ font: `600 8.5px ${MONO}`, letterSpacing: '0.05em', width: 46, color: it.kind === 'ticket' ? BB : it.kind === 'pr' ? '#a894f0' : it.kind === 'copy' ? GOLD : DIM }}>{it.kind.toUpperCase()}</span>
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', cursor: 'pointer', background: i === sel ? 'rgba(255,255,255,0.1)' : 'transparent' }}>
+          <span style={{ font: `600 8.5px ${MONO}`, letterSpacing: '0.05em', width: 46, color: it.kind === 'ticket' ? BB : it.kind === 'pr' ? '#8b7cf6' : it.kind === 'copy' ? GOLD : DIM }}>{it.kind.toUpperCase()}</span>
           <span style={{ flex: 1, minWidth: 0, font: `500 12.5px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</span>
           <span style={{ font: `400 10px ${MONO}`, color: DIM, flexShrink: 0 }}>{it.sub}</span>
         </div>)}

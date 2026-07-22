@@ -76,10 +76,10 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
 
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="what needs a human in the next twenty minutes" title="Attention Queue" right={<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: 'rgba(10,15,22,0.6)' }}>
+      <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: 'rgba(13,11,10,0.6)' }}>
         {[[false, `The queue · ${rows0.length}`], [true, `Mine · ${mineN}`]].map(([v, l]) => <button key={String(v)} onClick={() => setMine(v)}
           title={v && !me ? 'set your GitHub handle in the header to resolve "mine"' : undefined}
-          style={{ padding: '6px 12px', border: 'none', borderRadius: 7, cursor: 'pointer', font: `600 12px ${BODY}`, background: mine === v ? 'rgba(142,200,255,0.2)' : 'transparent', color: mine === v ? '#dbeafc' : '#7f8ea1' }}>{l}</button>)}
+          style={{ padding: '6px 12px', border: 'none', borderRadius: 7, cursor: 'pointer', font: `600 12px ${BODY}`, background: mine === v ? 'rgba(255,255,255,0.2)' : 'transparent', color: mine === v ? '#f0e7e0' : '#8a807a' }}>{l}</button>)}
       </div>
       <button style={miniBtn} onClick={() => copy(standup(rows), 'standup')}>{copied === 'standup' ? '✓ copied' : 'Copy standup list'}</button>
     </div>} />
@@ -101,18 +101,18 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
         const k = KIND[r.kind] || { label: r.kind, c: DIM, why: '' }
         const iss = !isPr(r) && issueOf(r.subjectKey)
         const next = iss?.rec?.next
-        return <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', borderBottom: '1px solid rgba(142,200,255,0.05)', borderLeft: `3px solid ${SEV[r.severity] || DIM}` }}>
+        return <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)', borderLeft: `3px solid ${SEV[r.severity] || DIM}` }}>
           <span style={{ flexShrink: 0, width: 104, font: `700 8.5px ${MONO}`, letterSpacing: '0.05em', color: k.c }}>{k.label}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               {r.deepLink
                 ? <a href={r.deepLink} target="_blank" rel="noopener noreferrer" style={{ font: `600 12.5px ${BODY}`, color: HI, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.subject}</a>
                 : <span style={{ font: `600 12.5px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.subject}</span>}
-              {r.project && <span style={{ font: `600 8px ${MONO}`, padding: '1px 5px', borderRadius: 4, background: 'rgba(124,155,214,0.14)', color: '#9db6dc', flexShrink: 0 }}>{r.project}</span>}
+              {r.project && <span style={{ font: `600 8px ${MONO}`, padding: '1px 5px', borderRadius: 4, background: 'rgba(124,155,214,0.14)', color: '#c8bdb4', flexShrink: 0 }}>{r.project}</span>}
               {isMine(r) && <span style={{ font: `600 8px ${MONO}`, padding: '1px 5px', borderRadius: 4, background: 'rgba(95,211,154,0.15)', color: GREEN, flexShrink: 0 }}>MINE</span>}
             </div>
             <div style={{ font: `400 11px ${MONO}`, color: DIM, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {r.owner ? <b style={{ color: '#93a6bb', fontWeight: 600 }}>{r.owner.name || r.owner.login}</b> : <span style={{ color: GOLD }}>unowned</span>}
+              {r.owner ? <b style={{ color: '#a89f97', fontWeight: 600 }}>{r.owner.name || r.owner.login}</b> : <span style={{ color: GOLD }}>unowned</span>}
               {' · '}{r.detail}
               {r.waitingOn?.length ? ` · waiting on ${r.waitingOn.join(', ')}` : ''}
             </div>
@@ -150,9 +150,9 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
         you are closest to (self-only — there is NO team XP and NO XP on any person row up in the queue).
         It scopes `recent` to eng outcomes — ships, PRs merged, reviews given, red mains fixed. */}
     <div style={{ marginTop: 4 }}>
-      <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6f8199', margin: '2px 2px 8px' }}>Your delivery progress · just you, measured against your own past</div>
+      <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8a807a', margin: '2px 2px 8px' }}>Your delivery progress · just you, measured against your own past</div>
       <GameStats dashboard="eng" compact />
     </div>
   </section>
 }
-const Chip = ({ on, onClick, c, children, title }) => <button onClick={onClick} title={title} style={{ padding: '4px 10px', borderRadius: 7, cursor: 'pointer', font: `600 10px ${MONO}`, letterSpacing: '0.03em', border: `1px solid ${on ? c : 'rgba(142,200,255,0.12)'}`, background: on ? c + '22' : 'transparent', color: on ? c : '#7f8ea1' }}>{children}</button>
+const Chip = ({ on, onClick, c, children, title }) => <button onClick={onClick} title={title} style={{ padding: '4px 10px', borderRadius: 7, cursor: 'pointer', font: `600 10px ${MONO}`, letterSpacing: '0.03em', border: `1px solid ${on ? c : 'rgba(255,255,255,0.12)'}`, background: on ? c + '22' : 'transparent', color: on ? c : '#8a807a' }}>{children}</button>

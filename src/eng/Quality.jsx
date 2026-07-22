@@ -34,7 +34,7 @@ export default function Quality({ snap, issues, members, patch, reload }) {
     const id = field === 'ownerId' ? b.ownerId : b.fixerId
     const manual = field === 'ownerId' ? b.ownerManual : b.fixerManual
     return <select value={devIds.has(id) ? id : ''} disabled={saving === b.key + field} onChange={e => { e.stopPropagation(); setOwn(b.key, field, e.target.value) }} onClick={e => e.stopPropagation()}
-      style={{ ...sel, padding: '4px 7px', font: `500 11px ${BODY}`, maxWidth: 132, border: `1px solid ${manual ? 'rgba(95,211,154,0.4)' : 'rgba(142,200,255,0.14)'}` }}>
+      style={{ ...sel, padding: '4px 7px', font: `500 11px ${BODY}`, maxWidth: 132, border: `1px solid ${manual ? 'rgba(95,211,154,0.4)' : 'rgba(255,255,255,0.14)'}` }}>
       <option value="">— unset —</option>
       {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
       {id && !devIds.has(id) && <option value={id}>(non-dev — keep)</option>}
@@ -84,17 +84,17 @@ export default function Quality({ snap, issues, members, patch, reload }) {
         <CardHead title="Ownership concentration" meta="bus factor · ≥70% from one person is flagged" />
         {!Q.ownership.length && <Empty text="No delivered work with a component set." />}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflow: 'auto' }}>
-          {Q.ownership.map(o => <div key={o.area} style={{ padding: '9px 11px', borderRadius: 10, background: 'rgba(10,15,22,0.5)', border: `1px solid ${o.busFactor ? 'rgba(242,119,122,0.3)' : 'rgba(142,200,255,0.06)'}` }}>
+          {Q.ownership.map(o => <div key={o.area} style={{ padding: '9px 11px', borderRadius: 10, background: 'rgba(13,11,10,0.5)', border: `1px solid ${o.busFactor ? 'rgba(242,119,122,0.3)' : 'rgba(255,255,255,0.06)'}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ font: `600 12px ${BODY}`, color: HI, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.area}</span>
               {o.busFactor && <span style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: 'rgba(242,119,122,0.16)', color: RED }}>BUS FACTOR 1</span>}
               <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{o.total} tickets · {o.contributors} people</span>
             </div>
-            <div style={{ display: 'flex', height: 7, borderRadius: 4, overflow: 'hidden', background: 'rgba(142,200,255,0.06)' }}>
+            <div style={{ display: 'flex', height: 7, borderRadius: 4, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
               {o.rows.map((r, i) => <div key={r.who} title={`${r.who} — ${r.n} (${r.share}%)`} style={{ width: `${r.share}%`, background: [RED, GOLD, BB, GREEN, PURPLE][i % 5], opacity: i === 0 ? 1 : 0.65 }} />)}
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
-              <span style={{ font: `500 10px ${MONO}`, color: o.busFactor ? RED : '#93a6bb' }}>{o.top?.who} {o.top?.share}%</span>
+              <span style={{ font: `500 10px ${MONO}`, color: o.busFactor ? RED : '#a89f97' }}>{o.top?.who} {o.top?.share}%</span>
               {o.busFactor && <button style={{ ...miniBtn, padding: '2px 8px', fontSize: 10 }} onClick={() => copy(`Pairing plan — ${o.area}\n\n${o.top?.who} has delivered ${o.top?.share}% of ${o.total} tickets in ${o.area}. Propose a second owner: pair on the next 2 tickets in this area, then hand over the third.`, 'p' + o.area)}>{copied === 'p' + o.area ? '✓ copied' : 'Draft pairing plan'}</button>}
             </div>
           </div>)}
@@ -105,12 +105,12 @@ export default function Quality({ snap, issues, members, patch, reload }) {
     <DataTable title="Bug register" meta={pinned ? `pinned to ${pinned} — click the hotspot again to clear` : 'QA-reported · assigned to the team'} minWidth={980} pageSize={12}
       rows={bugs} getKey={b => b.key} initialSort={{ key: 'reported', dir: -1 }} raw={bugs}
       columns={[
-        { key: 'bug', label: 'Bug', width: '84px', sort: b => b.key, filter: b => b.key + ' ' + b.summary, render: b => <TicketLink i={b} color={b.live ? '#7f8ea1' : RED} style={{ font: `500 12px ${MONO}` }} /> },
-        { key: 'summary', label: 'Summary', width: '1.9fr', sort: b => b.summary, render: b => <span style={{ font: `400 12px ${BODY}`, color: '#c3cfdc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.linkedKey && <TicketLink i={{ key: b.linkedKey, host: b.host }} color="#647285" style={{ fontSize: 10 }}>↳{b.linkedKey}</TicketLink>} {b.summary}</span> },
+        { key: 'bug', label: 'Bug', width: '84px', sort: b => b.key, filter: b => b.key + ' ' + b.summary, render: b => <TicketLink i={b} color={b.live ? '#8a807a' : RED} style={{ font: `500 12px ${MONO}` }} /> },
+        { key: 'summary', label: 'Summary', width: '1.9fr', sort: b => b.summary, render: b => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{b.linkedKey && <TicketLink i={{ key: b.linkedKey, host: b.host }} color="#7a716a" style={{ fontSize: 10 }}>↳{b.linkedKey}</TicketLink>} {b.summary}</span> },
         { key: 'esc', label: 'Escaped', width: '76px', align: 1, sort: b => (b.escaped ? 1 : 0), render: b => <span style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, background: b.escaped ? 'rgba(242,119,122,0.14)' : 'rgba(95,211,154,0.12)', color: b.escaped ? RED : GREEN }}>{b.escaped ? 'prod' : 'in QA'}</span> },
-        { key: 'area', label: 'Component', width: '106px', sort: b => b.area || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.area ? '#9db6dc' : DIM }}>{b.area || '—'}</span> },
+        { key: 'area', label: 'Component', width: '106px', sort: b => b.area || '', render: b => <span style={{ font: `400 11px ${BODY}`, color: b.area ? '#c8bdb4' : DIM }}>{b.area || '—'}</span> },
         { key: 'status', label: 'Status', width: '92px', align: 1, sort: b => b.status, filter: b => b.status, render: b => <span style={{ font: `600 9px ${MONO}`, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', background: b.statusColor + '26', color: b.statusColor }}>{b.status}</span> },
-        { key: 'reported', label: 'Reported', width: '80px', align: 1, sort: b => b.created || '', render: b => <span style={{ font: `500 11px ${MONO}`, color: '#b3c1d1' }}>{fdate(b.created)}</span> },
+        { key: 'reported', label: 'Reported', width: '80px', align: 1, sort: b => b.created || '', render: b => <span style={{ font: `500 11px ${MONO}`, color: '#c8bdb4' }}>{fdate(b.created)}</span> },
         { key: 'owner', label: 'Assigned to', width: '140px', sort: b => b.owner?.name || '', render: b => ownSel(b, 'ownerId') },
         { key: 'fixer', label: 'Resolved by', width: '140px', sort: b => b.fixer?.name || '', render: b => ownSel(b, 'fixerId') },
       ]} />

@@ -38,8 +38,8 @@ export const prIn = (w, p) => { const t = Date.parse(p.mergedAt || p.createdAt |
 
 export function TimeLens({ value, from, to, onChange, sprints, resolved }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 2px 2px 8px', borderRadius: 9, background: 'rgba(142,200,255,0.07)', border: '1px solid rgba(142,200,255,0.16)' }}>
-      <span style={{ font: `500 9px ${MONO}`, letterSpacing: '0.06em', color: '#6f8199', textTransform: 'uppercase' }}>window</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 2px 2px 8px', borderRadius: 9, background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.16)' }}>
+      <span style={{ font: `500 9px ${MONO}`, letterSpacing: '0.06em', color: '#8a807a', textTransform: 'uppercase' }}>window</span>
       <select value={value} onChange={e => onChange({ win: e.target.value })} style={{ ...sel, border: 'none', background: 'transparent' }}>
         {WINDOWS.map(w => <option key={w} value={w} disabled={w === 'sprint' && !(sprints || []).length}>{LABELS[w]}</option>)}
       </select>
