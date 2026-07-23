@@ -10,6 +10,7 @@ import ChatSection from './ChatSection.jsx'
 import TeamsSection from './TeamsSection.jsx'
 import TeamDesigner from './TeamDesigner.jsx'
 import HarnessSection from './HarnessSection.jsx'
+import ContextExplorerSection from './ContextExplorerSection.jsx'
 import GovernanceSection from './GovernanceSection.jsx'
 import ReliabilitySection from './ReliabilitySection.jsx'
 import LibrarySection from './LibrarySection.jsx'
@@ -26,6 +27,7 @@ import QuickActions from './QuickActions.jsx'
 import CursorDashboard from './CursorDashboard.jsx'
 import CareerDashboard from './CareerDashboard.jsx'
 import ConstitutionSection from './ConstitutionSection.jsx'
+import FigmaCaptureSection from './FigmaCaptureSection.jsx'
 import MemorySection from './MemorySection.jsx'
 import MindwalkSection from './MindwalkSection.jsx'
 import DeliverySection from './DeliverySection.jsx'
@@ -74,11 +76,13 @@ const SECTIONS = [
       { label: 'Agents', el: <ResourceSection kind="agents" title="Agents" /> },
       { label: 'Flow', el: <FlowSection /> },
       { label: 'Inventory (linter)', el: <Inventory /> },
+      { label: 'Customize', el: <CustomizeSection /> },
     ]} />
   ) },
   { id: 'harness', label: 'Harness', icon: '⚙', kicker: 'Harness engineering', title: 'Harness — sessions, forensics, config & governance', el: (
     <Hub items={[
       { label: 'Sessions', el: <SessionsSection /> },
+      { label: 'Context Explorer', el: <ContextExplorerSection /> },
       { label: 'Forensics', el: <ForensicsSection /> },
       { label: 'Usage', el: <UsagePanel /> },
       { label: 'Config', el: <HarnessSection /> },
@@ -89,9 +93,9 @@ const SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
-  { id: 'customize', label: 'Customize', icon: '✦', kicker: 'Setup', title: 'Customize — skills, commands, subagents, rules, MCPs, hooks & plugins', el: <CustomizeSection /> },
   { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
   { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
+  { id: 'figma-capture', label: 'Figma Capture', icon: '▣', kicker: 'Design', title: 'Figma Capture — annotate design screenshots with component mappings', el: <FigmaCaptureSection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },

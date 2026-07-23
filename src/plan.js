@@ -26,7 +26,7 @@ export function extractPlan(blocks) {
 const CAP = 60
 // Paths are clipped from the HEAD (…/parent/file) — a tail-clip eats the basename, the only part worth
 // reading. Everything else (commands, prompts) reads left-to-right, so those clip from the tail.
-const shortArg = i => {
+export const shortArg = i => {
   if (i == null || typeof i !== 'object') return String(i ?? '')
   const path = i.file_path || i.path
   if (path && !i.command) {
@@ -38,7 +38,7 @@ const shortArg = i => {
   const v = i.command || i.pattern || i.prompt || i.description || i.url || ''
   return String(v).replace(/\s+/g, ' ').slice(0, CAP)
 }
-const toolName = b => b.name.startsWith('mcp__') ? (b.name.split('__')[2] || b.name) : b.name
+export const toolName = b => b.name.startsWith('mcp__') ? (b.name.split('__')[2] || b.name) : b.name
 export function blocksToPlan(blocks) {
   const steps = []
   let turn = 0, turnHasSteps = false, prevId = null

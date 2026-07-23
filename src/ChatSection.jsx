@@ -3,6 +3,8 @@ import { marked } from 'marked'
 import { api, fmtDate } from './api.js'
 import { extractPlan, blocksToPlan, diagnoseSession } from './plan.js'
 import PlanGraph from './PlanGraph.jsx'
+import { ContextTimeline } from './ContextExplorerSection.jsx'
+import ActivityTimeline from './ActivityTimeline.jsx'
 
 const short = (v, n = 200) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v)
@@ -231,6 +233,8 @@ export default function ChatSection() {
   const [model, setModel] = useState('')
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState('chat')
+  const [ctxData, setCtxData] = useState(null)
+  const [ctxHover, setCtxHover] = useState(null)
   const esRef = useRef(null)
   const endRef = useRef(null)
 
@@ -252,7 +256,7 @@ export default function ChatSection() {
   const attach = (id, chatCwd) => {
     esRef.current?.close()
     if (chatCwd) setCwd(chatCwd)
-    setEvents([]); setChatId(id); setView('chat')
+    setEvents([]); setChatId(id); setView('chat'); setCtxData(null)
     const es = new EventSource(`/api/chat/${id}/events`)
     es.onmessage = m => {
       const ev = JSON.parse(m.data)
@@ -287,7 +291,14 @@ export default function ChatSection() {
   const realPlan = extractPlan(blocks)
   const plan = realPlan || (blocks.some(b => b.kind === 'tool') ? blocksToPlan(blocks) : null)
   const ended = blocks.some(b => b.kind === 'closed')
-  const liveModel = events.find(e => e.type === 'system' && e.subtype === 'init')?.model
+  const initEvent = events.find(e => e.type === 'system' && e.subtype === 'init')
+  const liveModel = initEvent?.model
+  const realSessionId = initEvent?.session_id || null
+
+  useEffect(() => {
+    if (view !== 'context' || !realSessionId) return
+    api.get(`/api/context/${realSessionId}`).then(setCtxData).catch(() => setCtxData(null))
+  }, [view, realSessionId, events.length])
 
   if (!chatId)
     return (
@@ -357,12 +368,34 @@ export default function ChatSection() {
           {liveModel && <span className="dim" style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
-          {plan && <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? '#d97757' : undefined }} onClick={() => setView(view === 'plan' ? 'chat' : 'plan')}>{view === 'plan' ? 'chat' : `${realPlan ? 'plan' : 'activity'} graph (${plan.length})`}</button>}
+          <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? '#d97757' : undefined }} disabled={!plan}
+            title={plan ? undefined : 'no plan or tool activity yet'}
+            onClick={() => setView(v => v === 'plan' ? 'chat' : 'plan')}>
+            {view === 'plan' ? 'chat' : `${realPlan ? 'plan' : 'activity'} graph${plan ? ` (${plan.length})` : ''}`}
+          </button>
+          <button className="mini" style={{ marginTop: 0, color: view === 'context' ? '#d97757' : undefined }} disabled={!realSessionId}
+            title={realSessionId ? undefined : 'session not started yet'}
+            onClick={() => setView(v => v === 'context' ? 'chat' : 'context')}>
+            {view === 'context' ? 'chat' : 'context window'}
+          </button>
+          <button className="mini" style={{ marginTop: 0, color: view === 'activity' ? '#d97757' : undefined }} disabled={!blocks.length}
+            title={blocks.length ? undefined : 'nothing has happened yet'}
+            onClick={() => setView(v => v === 'activity' ? 'chat' : 'activity')}>
+            {view === 'activity' ? 'chat' : 'activity tree'}
+          </button>
           <button className="mini" style={{ marginTop: 0 }} onClick={stop}>{ended ? 'close' : 'stop session'}</button>
         </span>
       </div>
       {view === 'plan' && plan
         ? <div className="chat-log"><PlanGraph steps={plan} cwd={cwd} derived={!realPlan} diagnostics={diagnoseSession(blocks)} /></div>
+        : view === 'context'
+        ? <div className="chat-log">
+          {!ctxData
+            ? <div className="dim" style={{ padding: 16 }}>loading context timeline…</div>
+            : <ContextTimeline data={ctxData} hover={ctxHover} setHover={setCtxHover} playing={false} setPlaying={() => {}} cursor={-1} setCursor={() => {}} />}
+        </div>
+        : view === 'activity'
+        ? <div className="chat-log"><ActivityTimeline blocks={blocks} /></div>
         : <div className="chat-log">
         {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text') ? <Cap key={i} text={b.text}><Block b={b} /></Cap> : <Block key={i} b={b} />)}
         {busy && <div className="chat-line dim">✦ working…</div>}

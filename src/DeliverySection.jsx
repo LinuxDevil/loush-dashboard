@@ -33,6 +33,7 @@ export default function DeliverySection({ onNav }) {
       { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 14, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
       { label: 'Idea → prod funnel', el: <Funnel /> },
       { label: 'AI ROI', el: <Roi /> },
+      { label: 'DORA', el: <Dora /> },
       { label: '1:1 prep', el: <OneOnOne /> },
     ]} />
   )
@@ -141,6 +142,9 @@ function Roi() {
         <div className="kpi"><div className="kpi-label"><span>AI $ per shipped point</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>90d</span></div>
           <div className="kpi-value">${h.spendPerPoint ?? '—'}</div>
           <div className="kpi-sub">${h.spend.toLocaleString()} spend ÷ {h.shippedPoints} points</div></div>
+        <div className="kpi"><div className="kpi-label"><span>rework rate</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>90d</span></div>
+          <div className="kpi-value" style={{ color: h.reworkRate > 0.25 ? GOLD : undefined }}>{h.reworkRate == null ? '—' : Math.round(h.reworkRate * 100) + '%'}</div>
+          <div className="kpi-sub">{h.reworkedTickets} of {h.shippedTickets} shipped tickets bounced back (reopened / re-entered In Progress)</div></div>
         <div className="kpi"><div className="kpi-label"><span>unattributed spend</span></div>
           <div className="kpi-value" style={{ color: h.unattributedPct > 0.4 ? GOLD : undefined }}>{Math.round(h.unattributedPct * 100)}%</div>
           <div className="kpi-sub">on branches that map to no ticket — the honest denominator</div></div>
@@ -154,6 +158,7 @@ function Roi() {
 
       <div className="panel" style={{ marginBottom: 0 }}>
         <h3>$ per point <span className="muted">weekly · {d.days}d</span></h3>
+        <p className="small" style={{ marginTop: 0 }}>Read this against the rework rate above — cheap, fast points mean little if they bounce back. Rework is the quality guardrail on this number.</p>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 110 }}>
           {pts.map(t => (
             <div key={t.week} title={`${t.week}: $${t.perPoint}/pt · $${t.spend} · ${t.points} pts`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
@@ -190,6 +195,110 @@ function Roi() {
         <p className="small" style={{ color: GOLD }}>⚠ {d.caveat}</p>
         <p className="small">Cells with n&lt;5 are greyed — they are noise and should not be argued with. "AI-touched" means touched by <b>this machine's</b> Claude; harness telemetry is self-only, so it cannot mean anything else.</p>
       </div>
+    </div>
+  )
+}
+
+// ---------- DORA four keys — with 2023 Google Cloud benchmark bands ----------
+// Two of the four keys are genuinely measurable from what this repo collects (JIRA + GitHub PRs); the
+// other two are NOT, and are rendered as explicit "no data source" cards rather than faked from a proxy.
+// - Lead time: PR open→merge p50/p90 (working days) — already computed in review.mergeTime.
+// - Deploy frequency: merges to the default branch, trailing 30d → per-week rate. Labeled "merges to main",
+//   NOT "deploys" — there is no deploy pipeline wired, so calling it deployment count would be fabrication.
+// - Change failure rate + MTTR: no deploy-event or incident feed exists anywhere in the repo. Shown blank.
+// Bands are the DORA report's calendar-time ballpark; ours are WORKING days, so an elite lead-time reading
+// is if anything conservative. Cohort-level only by construction — no per-person split.
+const DORA_BANDS = [{ key: 'Elite', color: GREEN }, { key: 'High', color: BLUE }, { key: 'Medium', color: GOLD }, { key: 'Low', color: RED }]
+const DEPLOY_SEGS = ['multiple/day', '≥1/week', '≥1/month', '<1/month']
+const LEAD_SEGS = ['<1 day', '<1 week', '<1 month', '>1 month']
+const CFR_SEGS = ['0–15%', '16–30%', '31–45%', '46–60%']
+const MTTR_SEGS = ['<1 hr', '<1 day', '<1 week', '>1 week']
+const deployBand = pw => pw == null ? null : pw >= 7 ? 0 : pw >= 1 ? 1 : pw >= 0.23 ? 2 : 3 // 0.23/wk ≈ 1/month
+const leadBand = d => d == null ? null : d < 1 ? 0 : d < 7 ? 1 : d < 30 ? 2 : 3
+const LOW_N = 5 // mirror the n<5 suppression the Roi/Funnel tabs use — a band off 3 PRs is noise
+
+function BandStrip({ segs, active }) {
+  const dead = active == null
+  return (
+    <div style={{ display: 'flex', gap: 3, marginTop: 12 }}>
+      {DORA_BANDS.map((b, i) => {
+        const on = active === i
+        return (
+          <div key={b.key} style={{ flex: 1, textAlign: 'center' }}>
+            <div style={{ height: 6, borderRadius: 3, background: dead ? 'rgba(255,255,255,0.06)' : on ? b.color : b.color + '2e' }} />
+            <div style={{ font: `600 9px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 4, color: dead ? '#5a524c' : on ? b.color : DIM }}>{b.key}</div>
+            <div style={{ font: `400 8.5px ${MONO}`, color: dead ? '#4a433e' : '#6a615a' }}>{segs[i]}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DoraCard({ title, tag, value, unit, sub, segs, active, low, body }) {
+  const dead = active == null && !low
+  const valColor = dead || low ? '#6a615a' : (active != null ? DORA_BANDS[active].color : '#f6efe9')
+  return (
+    <div className="panel" style={{ marginBottom: 0 }}>
+      <h3>{title} <span className="muted">{tag}</span></h3>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ font: `700 30px ${HEAD}`, color: valColor }}>{value}</span>
+        {unit && <span style={{ font: `500 12px ${MONO}`, color: DIM }}>{unit}</span>}
+      </div>
+      {sub && <div style={{ font: `400 10.5px ${MONO}`, color: DIM, marginTop: 2 }}>{sub}</div>}
+      <BandStrip segs={segs} active={active} />
+      {body && <p className="small" style={{ marginTop: 12, marginBottom: 0 }}>{body}</p>}
+    </div>
+  )
+}
+
+function Dora() {
+  const S = useSnap()
+  const d = useMemo(() => {
+    if (!S?.available) return null
+    const cut = Date.now() - 30 * 86400_000
+    const merged = (S.prs || []).filter(p => p.state === 'Merged' && p.mergedAt)
+    const toMain = merged.filter(p => p.baseRefName && p.defaultBranch && p.baseRefName === p.defaultBranch && Date.parse(p.mergedAt) >= cut)
+    const perWeek = toMain.length / (30 / 7)
+    const lt = S.review?.mergeTime || {}
+    const ltN = merged.filter(p => typeof p.mergeDays === 'number').length
+    return { deployN: toMain.length, perWeek, ltP50: lt.p50, ltP90: lt.p90, ltN }
+  }, [S])
+
+  if (!S) return <Skeleton tiles={4} rows={4} />
+  if (!S.available) return <NotWired s={S} />
+
+  const deployLow = d.deployN < LOW_N
+  const leadLow = d.ltN < LOW_N
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="grid-2" style={{ marginBottom: 0 }}>
+        <DoraCard
+          title="Deployment frequency" tag="merges to main · 30d"
+          value={d1(d.perWeek)} unit="/ week"
+          sub={`${d.deployN} PRs merged to the default branch · trailing 30d${deployLow ? ` · n<${LOW_N}, greyed as noise` : ''}`}
+          segs={DEPLOY_SEGS} active={deployBand(d.perWeek)} low={deployLow} />
+        <DoraCard
+          title="Lead time for changes" tag="PR open → merge · working days"
+          value={d1(d.ltP50)} unit="d p50"
+          sub={`p90 ${d1(d.ltP90)}d · n=${d.ltN}${leadLow ? ` · n<${LOW_N}, greyed as noise` : ''}`}
+          segs={LEAD_SEGS} active={leadBand(d.ltP50)} low={leadLow} />
+        <DoraCard
+          title="Change failure rate" tag="no data source"
+          value="—" segs={CFR_SEGS} active={null}
+          body={<>Needs a deploy/incident data source this dashboard does not collect — only JIRA and GitHub PRs are wired, there is no deploy-event or rollback/hotfix feed. Escaped-defect or rework rate answers a different question (defects ÷ shipped tickets, not failed deploys ÷ deploys), so it is <b>not</b> shown here relabeled as CFR. Not fabricated.</>} />
+        <DoraCard
+          title="Time to restore (MTTR)" tag="no data source"
+          value="—" segs={MTTR_SEGS} active={null}
+          body={<>Needs an incident/restore feed this dashboard does not collect. Bug-created→closed is fix time, not service-restoration time, and no incident concept exists in the data — so there is no honest proxy. Not fabricated.</>} />
+      </div>
+      <p className="small">
+        Bands are the 2023 Google Cloud DORA ballpark (calendar time); our lead time is <b>working</b> days (10:00–18:00 Sun–Thu),
+        so an elite reading is if anything conservative. "Deployment frequency" here is <b>merges to the default branch</b>, not prod
+        deploys — there is no deploy pipeline wired, so it is a merge-frequency proxy, not a deploy count. All four keys are team
+        aggregates; there is no per-person split. Low-sample readings (n&lt;{LOW_N}) are greyed because a band off a handful of PRs is noise.
+      </p>
     </div>
   )
 }

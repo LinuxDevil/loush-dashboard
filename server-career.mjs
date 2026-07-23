@@ -47,7 +47,7 @@ function writeDrop(source, data) {
 const AUTHORED = new Set(['identity', 'projects', 'competency', 'learning', 'okrs', 'courses', 'ownership',
   'feedback', 'feedbackRequests', 'decisions', 'brag', 'retros', 'timeTarget', 'oneOnOnes',
   'pendingDecisions', 'afterHoursWindow', 'tzOffsetHours', 'focusActed', 'quests', 'kpiLinks',
-  'effortTaxonomy', 'oneOnOneAgenda', 'oneOnOnesByPerson'])
+  'effortTaxonomy', 'oneOnOneAgenda', 'oneOnOnesByPerson', 'pulse'])
 
 // Same-process loopback to endpoints that already exist in server.mjs (/api/flow, /api/harness,
 // /api/gov/*, /api/memory/search) and server-eng.mjs (/api/eng/ticket/:key). They are all SELF-PLANE
@@ -361,6 +361,18 @@ export default function mountCareer(app, deps = {}) {
   app.get('/api/career/brag', (req, res) => res.json({ candidates: bragCandidates(), entries: store.read().brag }))
   app.post('/api/career/brag', (req, res) => { const cfg = store.read(); const e = { id: 'b' + Date.now(), date: Date.now(), source: 'manual', ...req.body.entry }; store.write({ brag: [...cfg.brag, e] }); cache = null; res.json({ ok: true }) })
   app.post('/api/career/retro', (req, res) => { const cfg = store.read(); store.write({ retros: [...cfg.retros, { id: 'r' + Date.now(), ...req.body }] }); res.json({ ok: true }) })
+
+  // self-only weekly friction pulse — authored, never rolled up, never leaves this machine
+  app.get('/api/career/pulse', (req, res) => res.json({ entries: store.read().pulse }))
+  app.post('/api/career/pulse', (req, res) => {
+    const { blocked, note } = req.body || {}
+    const n = Number(blocked)
+    if (!Number.isInteger(n) || n < 1 || n > 5) return res.status(400).json({ error: 'blocked must be 1-5' })
+    const cfg = store.read()
+    const e = { id: 'p' + Date.now(), ts: Date.now(), blocked: n, note: (note || '').slice(0, 500) || undefined }
+    store.write({ pulse: [...cfg.pulse, e] }); cache = null
+    res.json({ ok: true, entry: e })
+  })
   app.get('/api/career/story-so-far', (req, res) => res.json({ markdown: storyMd(store.read()) }))
   app.get('/api/career/promo-packet', (req, res) => { const c = store.read(); res.json({ markdown: storyMd(c) + `\n\n## Competency self-assessment\nLevel: ${c.competency?.levelSelfAssessed || '—'}\n` }) })
 

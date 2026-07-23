@@ -1,6 +1,6 @@
 // career.json store: default shape, ordered migrations, versioned read/write.
 // version bump checklist: add a migration entry, bump CONFIG_VERSION, extend defaultConfig().
-export const CONFIG_VERSION = 3
+export const CONFIG_VERSION = 4
 
 export function defaultConfig() {
   return {
@@ -20,6 +20,7 @@ export function defaultConfig() {
     imports: {}, lessons: [], ticketLinks: {},
     focusActed: {},
     kpiLinks: [],                 // G2 business-impact links {id, ticket, kpi, metric, baseline, current, direction, at, note}
+    pulse: [],                    // self-only weekly friction pulse {id, ts, blocked:1-5, note?}
   }
 }
 
@@ -33,6 +34,8 @@ const MIGRATIONS = [
   (cfg) => ({ ...cfg, version: 2, focusActed: cfg.focusActed || {} }),
   // v2 -> v3: backfill kpiLinks (G2 business-impact linkage)
   (cfg) => ({ ...cfg, version: 3, kpiLinks: cfg.kpiLinks || [] }),
+  // v3 -> v4: backfill pulse (self-only weekly friction pulse)
+  (cfg) => ({ ...cfg, version: 4, pulse: cfg.pulse || [] }),
 ]
 
 export function migrate(cfg) {

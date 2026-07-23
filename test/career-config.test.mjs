@@ -33,6 +33,14 @@ test('migrate v1 -> v2 backfills focusActed', () => {
   assert.equal(cfg.brag[0].id, 'b1')
 })
 
+test('migrate v3 -> v4 backfills pulse', () => {
+  const { cfg, changed } = migrate({ version: 3, brag: [{ id: 'b1' }] })
+  assert.equal(cfg.version, CONFIG_VERSION)
+  assert.equal(changed, true)
+  assert.deepEqual(cfg.pulse, [])
+  assert.equal(cfg.brag[0].id, 'b1') // preserves existing data
+})
+
 test('makeStore read() persists a migration and write() deep-merges', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'career-'))
   const file = path.join(dir, 'career.json')

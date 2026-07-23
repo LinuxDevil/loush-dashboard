@@ -86,7 +86,7 @@ export default function CustomizeSection() {
   const visible = kind => {
     const ql = q.trim().toLowerCase()
     return (data?.[kind] || []).filter(i => !ql || (i.name + ' ' + (i.description || '')).toLowerCase().includes(ql))
-      .sort((a, b) => (b.enabled - a.enabled) || a.name.localeCompare(b.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }
   const groupsOf = items => { // group by item.group, preserving first-seen order
     const g = new Map()

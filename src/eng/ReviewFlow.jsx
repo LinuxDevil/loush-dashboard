@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, CardHead, Empty, H1, DataTable, PRLink, PrBadge, Checks, Kpi, miniBtn, primaryBtn, useCopy, fx } from './ui.jsx'
-import { MIN_N } from './stats.js'
+import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, CardHead, Empty, H1, DataTable, PRLink, PrBadge, Checks, Kpi, miniBtn, primaryBtn, useCopy, fx, Legend } from './ui.jsx'
+import { MIN_N, stat, pctl, thin, spread } from './stats.js'
 
 // §4 — the review board is keyed on PERSON, not on PR. Deliberately NOT a slowest-reviewer leaderboard:
 // the unit of accountability is the team's review SLA. The two currently-invisible killers get their own
@@ -22,6 +22,23 @@ export default function ReviewFlow({ snap, project }) {
   // least-loaded eligible reviewer — the default suggestion, never an auto-assign
   const lightest = R.reviewers.filter(r => r.given90 > 0).sort((a, b) => a.awaiting - b.awaiting)[0]
 
+  // §distribution — turn the two single-number KPI tiles above into shapes. Team-level only, no author split.
+  const prs = snap.prs || []
+  const pickup = stat(prs.filter(p => p.firstReviewFromRequestDays != null).map(p => p.firstReviewFromRequestDays))
+  const pkBuckets = [['< 0.25d', GREEN], ['0.25–0.5d', BB], ['0.5–1d', GOLD], ['1–2d', PURPLE], ['> 2d', RED]]
+  const pkCount = [0, 0, 0, 0, 0]
+  prs.forEach(p => { const v = p.firstReviewFromRequestDays; if (v == null) return; pkCount[v < 0.25 ? 0 : v < 0.5 ? 1 : v < 1 ? 2 : v < 2 ? 3 : 4]++ })
+  const szBuckets = [['XS <10', GREEN], ['S 10–50', BB], ['M 50–250', GOLD], ['L 250–1000', PURPLE], ['XL >1000', RED]]
+  const szVals = prs.map(p => (p.additions || 0) + (p.deletions || 0))
+  const szCount = [0, 0, 0, 0, 0]
+  szVals.forEach(v => { szCount[v < 10 ? 0 : v < 50 ? 1 : v < 250 ? 2 : v < 1000 ? 3 : 4]++ })
+  const szMedian = pctl(szVals, 0.5), szN = szVals.length
+  const szBig = szN ? (szCount[3] + szCount[4]) / szN * 100 : null
+  const bar = (counts, buckets, total) => <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+    {counts.map((c, i) => c > 0 && <div key={i} style={{ width: `${c / total * 100}%`, background: buckets[i][1] }} />)}</div>
+  const dist = (counts, buckets, total) => <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(118px,1fr))', gap: '6px 14px', marginTop: 10 }}>
+    {buckets.map((b, i) => <Legend key={b[0]} c={b[1]} label={b[0]} v={`${counts[i]} · ${fx(counts[i] / total * 100, 0)}%`} />)}</div>
+
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="by reviewer · not by PR" title="Review Flow" right={<span style={{ font: `400 11px ${MONO}`, color: DIM }}>rolling 30d / 90d · server window</span>} />
 
@@ -40,6 +57,19 @@ export default function ReviewFlow({ snap, project }) {
         <span style={{ marginLeft: 'auto', font: `400 10.5px ${MONO}`, color: DIM }}>top-1 {fx(conc.top1Share, 0)}% · {conc.total90} reviews</span>
       </div>
     </Card>}
+
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10 }}>
+      <Card style={thin(pickup) ? { opacity: 0.55 } : undefined}>
+        <CardHead title="PR pickup time" meta={thin(pickup) ? `n=${pickup.n} · too few to trust` : `n=${pickup.n} · request → 1st review`}
+          right={<span style={{ font: `600 12px ${MONO}`, color: HI }}>{spread(pickup)}</span>} />
+        {pickup.n ? <>{bar(pkCount, pkBuckets, pickup.n)}{dist(pkCount, pkBuckets, pickup.n)}</> : <Empty text="no reviewed PRs in window" />}
+      </Card>
+      <Card style={szN < MIN_N ? { opacity: 0.55 } : undefined}>
+        <CardHead title="PR size" meta={`n=${szN} · lines changed`}
+          right={<span style={{ font: `600 12px ${MONO}`, color: HI }}>{szMedian == null ? '—' : `median ${fx(szMedian, 0)} · ${fx(szBig, 0)}% L+XL`}</span>} />
+        {szN ? <>{bar(szCount, szBuckets, szN)}{dist(szCount, szBuckets, szN)}</> : <Empty text="no PRs in window" />}
+      </Card>
+    </div>
 
     <DataTable title="Reviewers" meta="operational facts, not a ranking · n<5 greyed" minWidth={860} pageSize={10}
       rows={R.reviewers} getKey={r => r.login} initialSort={{ key: 'awaiting', dir: -1 }} raw={R.reviewers}

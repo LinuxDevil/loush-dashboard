@@ -502,7 +502,7 @@ async function whoAmI() {
 //   timelineItems    → REVIEW_REQUESTED_EVENT, so first-review latency starts at the REQUEST,
 //                      not at PR-open (the old firstReviewDays blames the author for the reviewer's queue)
 //   commits(last:1)  → statusCheckRollup, a per-PR checks state
-const prQuery = (owner, name) => `query($cur:String){repository(owner:"${owner}",name:"${name}"){defaultBranchRef{name} pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}} reviewRequests(first:10){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name}}}} timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],first:20){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login} ... on Team{name}}}}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`
+const prQuery = (owner, name) => `query($cur:String){repository(owner:"${owner}",name:"${name}"){defaultBranchRef{name} pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName baseRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}} reviewRequests(first:10){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name}}}} timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],first:20){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login} ... on Team{name}}}}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`
 const GQL = prQuery('<owner>', '<name>') // §13: shipped in the snapshot so the UI can offer "copy the gh command"
 const ghCommandFor = repo => `gh api graphql -f query='${prQuery(...String(repo).split('/'))}'`
 const reviewerLogin = r => r?.login || r?.name || ''
@@ -516,6 +516,7 @@ function fetchPRs(cfg) {
     const args = ['api', 'graphql', '-f', `query=${q}`]
     if (cur) args.push('-F', `cur=${cur}`)
     const j = JSON.parse(gh(args))
+    const defaultBranch = j.data.repository.defaultBranchRef?.name || null
     const conn = j.data.repository.pullRequests
     for (const p of conn.nodes) {
       const m = (p.headRefName || '').match(cfg.ticketRegex) || (p.title || '').match(cfg.ticketRegex)
@@ -545,6 +546,7 @@ function fetchPRs(cfg) {
         num: p.number, project: cfg.key, repo: cfg.githubRepo, ticket, title: p.title, branch: p.headRefName, state,
         url: `https://github.com/${cfg.githubRepo}/pull/${p.number}`, checks,
         author: p.author?.login || '', createdAt: p.createdAt, mergedAt: p.mergedAt, closedAt: p.closedAt,
+        baseRefName: p.baseRefName || null, defaultBranch,
         additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles,
         comments: (p.comments?.totalCount || 0) + (p.reviewThreads?.totalCount || 0),
         firstReviewDays: firstReview ? +workDays(created, firstReview).toFixed(2) : null,

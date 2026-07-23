@@ -3,6 +3,7 @@ import { PANEL, HEAD, MONO, BODY, ACCENT, MUTE, INK, GREEN, PURPLE, RED, LINE, T
 import { HeaderPills, WhereTimeGoes, Card, Cmp, Empty, Headline, Btn } from './charts.jsx'
 import { useUsage, useEngSelf, useApi, timeAllocation, copy } from './data.jsx'
 import CareerGame from './CareerGame.jsx'
+import PulsePanel from './PulsePanel.jsx'
 import { CountUp, Stagger } from '../game/index.js'
 
 // Overview — what needs a decision today, and whether the last period's intervention worked.
@@ -100,6 +101,7 @@ export default function OverviewPage({ snap, onGoto }) {
             {d && <Mini label="rework / ticket" cur={d.reworkAvg} prev={pd?.reworkAvg} dir="down" />}
           </div>
         </Card>
+        <PulsePanel />
       </div>
     </div>
   )

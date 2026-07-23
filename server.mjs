@@ -14,6 +14,9 @@ import mountCareer from './server-career.mjs'
 import mountMemory from './server-memory.mjs'
 import mountMindwalk from './server-mindwalk.mjs'
 import mountGame from './server-game.mjs'
+import mountFigmaCapture from './server-figma-capture.mjs'
+import { computeUsageHealth, computeRegression } from './career-health.mjs'
+import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from './career-usage-trends.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -47,6 +50,7 @@ mountCareer(app, { track: (...a) => track(...a), readJson: (...a) => readJson(..
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 mountMindwalk(app) // /api/mindwalk/* — runs the mindwalk binary (Claude sessions, or transcoded Cursor ones)
 mountGame(app) // /api/game — XP/levels/achievements from outcome events. Self-only: no cross-person leaderboard, ever
+mountFigmaCapture(app) // /api/figma-capture/* — annotate Figma screenshots with design-system component mappings
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
@@ -648,6 +652,7 @@ function collectUsage() {
     all.files.push({
       path: f, proj, isAgent: f.includes('subagents'), mtime: st.mtimeMs, out: rec.out, msgs: rec.msgs, toolCalls: rec.toolCalls,
       in: rec.in, cc: rec.cc, cr: rec.cr, cost: rec.cost, first: rec.first, last: rec.last, cwd: rec.cwd, branches: rec.branches,
+      entries: rec.entries,
     })
   }
   all.entries.sort((a, b) => a.t - b.t)
@@ -707,9 +712,24 @@ app.get('/api/usage', (req, res) => {
   const recentSessions = files.filter(f => !f.isAgent && f.msgs > 0).sort((a, b) => b.mtime - a.mtime).slice(0, 6)
     .map(f => ({ sessionId: path.basename(f.path, '.jsonl'), proj: projNames[f.proj] || f.proj.split('-').pop(), mtime: f.mtime, out: f.out, msgs: f.msgs, toolCalls: f.toolCalls }))
   const tools = Object.entries(toolTotals).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([name, count]) => ({ name, count }))
+  const hiddenPerTurn = HARNESS_DEFAULTS.context.alwaysLoadedBudget.systemPrompt + HARNESS_DEFAULTS.context.alwaysLoadedBudget.toolDefs
+  // cache TTL waste + daily anomalies + month-end projection — all pure trend reads over `entries`
+  const { map: cacheMap, sortedDates: cacheDates } = buildDailyCacheMap(entries)
+  const rollingEff = rollingCacheEfficiency(cacheMap, cacheDates)
+  const waste = cacheWasteCost(entries, PRICE_PER_M, rollingEff.bestEffPct / 100)
+  const { map: usageMap, sortedDates: usageDates } = buildDailyUsage(entries, entryCost)
+  const anomalies = detectDailyAnomalies(usageMap, usageDates)
+  const dailyCostMap = {}; for (const d of usageDates) dailyCostMap[d] = usageMap[d].cost
+  const budget = Number(req.query.budget) || null
+  const projection = projectMonthEnd(dailyCostMap, dayOf(now), budget)
   res.json({
     perModel, activeBlock: active, totalMsgs: entries.length, since: entries[0]?.t || null,
     daily: series, streak, activeDays: days.length, tools, recentSessions,
+    health: computeUsageHealth(entries, entryCost, hiddenPerTurn, now),
+    regression: computeRegression(entries, now),
+    cacheTtl: { ...rollingEff, ...waste },
+    anomalies: anomalies.slice(0, 20),
+    costProjection: projection,
     kpis: {
       lines7d: { add: lines7Add, del: lines7Del },
       toolCallsToday: daily[todayKey]?.tools || 0, toolCallsTotal: entries.reduce((s, e) => s + e.tc, 0),
@@ -2879,6 +2899,58 @@ app.get('/api/sessions', (req, res) => {
   res.json({ days, plane: 'harness', totals, sessions: rows.slice(0, limit) })
 })
 
+// ---------- Context Window Explorer — real per-turn context occupancy for one session ----------
+// e.in + e.cc + e.cr on a turn IS the total prompt (context window) size the model saw for that turn —
+// Anthropic's usage block already reports it split fresh/cache-write/cache-read, no reconstruction needed.
+const BIG_CTX = 1_000_000, STD_CTX = 200_000
+const firstUserPrompt = file => {
+  try {
+    const lines = fs.readFileSync(file, 'utf8').split('\n')
+    for (const line of lines) {
+      if (!line.includes('"role":"user"') && !line.includes('"role": "user"')) continue
+      const j = JSON.parse(line)
+      if (j.type !== 'user' || !j.message) continue
+      const c = j.message.content
+      const text = typeof c === 'string' ? c : Array.isArray(c) ? c.find(p => p.type === 'text')?.text : ''
+      if (text && !text.startsWith('<')) return text.slice(0, 160)
+    }
+  } catch {}
+  return ''
+}
+app.get('/api/context/sessions', (req, res) => {
+  const { files } = collectUsage()
+  const projNames = {}
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[mangle(d)] = path.basename(d) } catch {}
+  const rows = files.filter(f => !f.isAgent && (f.entries || []).length >= 2).map(f => ({
+    sessionId: path.basename(f.path, '.jsonl'), project: projNames[f.proj] || f.proj.split('-').pop(),
+    turns: f.entries.length, last: f.last, model: f.entries[f.entries.length - 1]?.model || '',
+    peak: Math.max(...f.entries.map(e => e.in + e.cc + e.cr)),
+  })).sort((a, b) => b.last - a.last)
+  res.json({ sessions: rows.slice(0, 300) })
+})
+app.get('/api/context/:sessionId', (req, res) => {
+  const { files } = collectUsage()
+  const f = files.find(x => path.basename(x.path, '.jsonl') === req.params.sessionId)
+  if (!f || !(f.entries || []).length) return res.status(404).json({ error: 'session not found' })
+  const projNames = {}
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[mangle(d)] = path.basename(d) } catch {}
+  let prev = null
+  const entries = f.entries.map(e => {
+    const total = e.in + e.cc + e.cr
+    const isCompaction = prev != null && total < prev * 0.6 && prev > 5000
+    prev = total
+    return { t: e.t, total, in: e.in, cc: e.cc, cr: e.cr, out: e.out, toolCalls: e.tc, model: e.model, isCompaction }
+  })
+  const peak = Math.max(...entries.map(e => e.total))
+  const lastModel = entries[entries.length - 1]?.model || ''
+  const budget = (/\[1m\]/i.test(lastModel) || peak > STD_CTX) ? BIG_CTX : STD_CTX
+  res.json({
+    sessionId: req.params.sessionId, project: projNames[f.proj] || f.proj.split('-').pop(),
+    model: lastModel, budget, peak, firstPrompt: firstUserPrompt(f.path),
+    first: f.first, last: f.last, entries,
+  })
+})
+
 // ---------- 8: /api/roi — cohort-level AI ROI (THE ONLY CROSS-PLANE JOIN) ----------
 // Join: transcript gitBranch → cfg.ticketRegex → JIRA key (falling back to pr.branch → pr.ticket).
 // THE AUTHOR/ASSIGNEE FIELD IS DROPPED BEFORE ANY AGGREGATION. Cohorts only. Never per person.
@@ -2949,6 +3021,10 @@ app.get('/api/roi', async (req, res) => {
       attributedPct: total ? +(attributed / total).toFixed(3) : 0,
       unattributedPct: total ? +(1 - attributed / total).toFixed(3) : 1, // spend on branches that map to no ticket
       ticketsWithSpend: Object.keys(spendByTicket).length, shippedTickets: shipped.length,
+      // quality guardrail on spendPerPoint — cheap points mean nothing if they bounce back (rework = reopens + re-entered In Progress)
+      reworkRate: shipped.length ? +(shipped.filter(i => i.rework).length / shipped.length).toFixed(2) : null,
+      medianQaCycles: shipped.length ? +median(shipped.map(i => i.qaCycles || 0)).toFixed(2) : null,
+      reworkedTickets: shipped.filter(i => i.rework).length,
       // shipped tickets carrying no story points can't enter a points bucket — say so rather than hide them
       unpointedShipped: (snap.issues || []).filter(i => i.live && !(i.pts > 0) && Date.parse(i.closedAt || 0) >= cutoff).length,
     },

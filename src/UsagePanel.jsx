@@ -26,15 +26,100 @@ function Bars({ data, unit }) {
   )
 }
 
+const fmtCost = n => '$' + n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+
 export default function UsagePanel() {
   const [usage, setUsage] = useState(null)
   const [err, setErr] = useState(null)
-  useEffect(() => { api.get('/api/usage').then(setUsage).catch(e => setErr(e.message)) }, [])
+  const [budget, setBudget] = useState(() => Number(localStorage.getItem('dash-monthly-budget')) || '')
+  useEffect(() => {
+    api.get('/api/usage' + (budget ? `?budget=${budget}` : '')).then(setUsage).catch(e => setErr(e.message))
+  }, [budget])
   if (!usage) return err ? <p className="small">{err}</p> : <Skeleton tiles={0} rows={8} />
   const max = Math.max(...usage.daily.map(d => d.out), 1)
   const models = Object.entries(usage.perModel).map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5)
+  const GRADE_COLOR = { A: '#3fb96a', B: '#8bd450', C: '#e8a06a', D: '#e5a03a', F: '#e5484d' }
+  const reg = usage.regression
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {usage.health && (
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <div className="panel-head"><h3>Harness health <span className="muted">usage efficiency, not config completeness — see Harness ▸ Config for that</span></h3></div>
+          <div className="kpi-grid" style={{ margin: '0 16px 12px' }}>
+            <div className="kpi"><div className="kpi-label"><span>score</span></div>
+              <div className="kpi-value" style={{ color: GRADE_COLOR[usage.health.grade] }}>{usage.health.total} <span style={{ fontSize: 14 }}>{usage.health.grade}</span></div>
+              <div className="kpi-sub">weighted: cost trend, cache efficiency, context efficiency</div></div>
+            {usage.health.factors.map(f => (
+              <div className="kpi" key={f.name}><div className="kpi-label"><span>{f.name.replace(/([A-Z])/g, ' $1').toLowerCase()}</span></div>
+                <div className="kpi-value" style={{ fontSize: 20 }}>{f.na ? '—' : f.score}</div>
+                <div className="kpi-sub">
+                  {f.name === 'costTrend' && (f.na ? 'not enough history yet' : `${f.raw.changePct >= 0 ? '+' : ''}${f.raw.changePct}% vs prior 7d`)}
+                  {f.name === 'cacheEfficiency' && `${Math.round(f.raw.ratio * 100)}% of cache-eligible tokens were reads`}
+                  {f.name === 'contextEfficiency' && `${Math.round(f.raw.ratio * 100)}% of context is always-loaded overhead`}
+                </div></div>
+            ))}
+          </div>
+          {reg?.regressed && (
+            <p className="small" style={{ margin: '0 16px 12px', color: '#e5a03a' }}>
+              ⚠ tokens/turn up {reg.tokensPerTurn.deltaPct}% vs last week ({fmtTok(reg.tokensPerTurn.previous)} → {fmtTok(reg.tokensPerTurn.current)}){reg.cause ? ` — likely cause: ${reg.cause}` : ''}
+            </p>
+          )}
+        </div>
+      )}
+      <div className="grid-2" style={{ marginBottom: 0 }}>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Month-end cost projection</h3>
+            <input placeholder="monthly budget $" value={budget} type="number"
+              onChange={e => { const v = e.target.value; setBudget(v); localStorage.setItem('dash-monthly-budget', v) }} style={{ width: 130 }} />
+          </div>
+          {usage.costProjection ? (
+            <>
+              <div className="kpi-value" style={{ color: usage.costProjection.overBudget ? '#e5484d' : undefined }}>{fmtCost(usage.costProjection.projected)}</div>
+              <div className="kpi-sub">
+                {fmtCost(usage.costProjection.monthToDate)} MTD + {fmtCost(usage.costProjection.dailyAvg)}/day × {usage.costProjection.daysRemaining}d remaining
+                · confidence: {usage.costProjection.confidence}
+              </div>
+              {usage.costProjection.diff != null && (
+                <p className="small" style={{ color: usage.costProjection.overBudget ? '#e5484d' : '#3fb96a' }}>
+                  {usage.costProjection.overBudget ? 'over' : 'under'} budget by {fmtCost(Math.abs(usage.costProjection.diff))}
+                </p>
+              )}
+            </>
+          ) : <p className="small">not enough history yet — need ≥3 active days this week</p>}
+        </div>
+        <div className="panel">
+          <h3>Cache TTL impact <span className="muted">rolling 7d hit-rate</span></h3>
+          {usage.cacheTtl && (
+            <>
+              <div className="kpi-value">{usage.cacheTtl.bestEffPct}%<span style={{ fontSize: 14, color: '#8a807a' }}> best · {usage.cacheTtl.worstEffPct}% worst</span></div>
+              <div className="kpi-sub">
+                est. ${usage.cacheTtl.wasteCost?.toFixed(2)} spent on cache re-writes that a longer cache TTL would have avoided
+                (vs. this repo's own best-observed efficiency window)
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      {usage.anomalies?.length > 0 && (
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <h3>Usage anomalies <span className="muted">days &gt;2× the trailing baseline — runaway/looping-agent tell</span></h3>
+          <table className="data inv">
+            <thead><tr><th>Date</th><th>Tokens</th><th>vs baseline</th><th>Cost</th><th>vs baseline</th><th>Kind</th></tr></thead>
+            <tbody>
+              {usage.anomalies.map(a => (
+                <tr key={a.date}>
+                  <td className="mono">{a.date}</td><td className="num">{fmtTok(a.tokens)}</td>
+                  <td className="num" style={{ color: '#e8a06a' }}>{a.tokenRatio}×</td>
+                  <td className="num">${a.cost.toFixed(2)}</td>
+                  <td className="num" style={{ color: '#e8a06a' }}>{a.costRatio}×</td>
+                  <td className="mono" style={{ color: '#8a807a' }}>{a.kind}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
           <h3>Activity <span className="muted">output tokens · 18 wks · your machine only</span></h3>
