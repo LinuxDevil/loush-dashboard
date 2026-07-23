@@ -9,9 +9,11 @@ export function deriveRunMetrics(events) {
   const tEnd = term ? at(term) : at(events[events.length - 1])
   const openByLabel = {} // label -> queue of open step.started (handles repeated labels without orphaning)
   const steps = []
+  const outputs = [] // human-readable progress/notes the flow emitted (contract §13 `output` events)
   let toolCalls = 0
   for (const e of events) {
     if (e.type === 'tool.call') toolCalls++
+    else if (e.type === 'output' && (e.data?.text != null)) outputs.push({ text: String(e.data.text), at: at(e) })
     else if (e.type === 'step.started') (openByLabel[e.data?.label] ||= []).push(e)
     else if (e.type === 'step.completed') {
       const s = openByLabel[e.data?.label]?.shift()
@@ -21,7 +23,7 @@ export function deriveRunMetrics(events) {
   for (const q of Object.values(openByLabel)) for (const s of q) steps.push({ label: s.data?.label || 'step', agent: s.data?.agent || null, ms: null, status: 'running', at: at(s) })
   steps.sort((a, b) => a.at - b.at)
   const status = term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed') : 'running'
-  return { status, startedAt: t0, endedAt: term ? tEnd : null, durationMs: tEnd - t0, steps, toolCalls }
+  return { status, startedAt: t0, endedAt: term ? tEnd : null, durationMs: tEnd - t0, steps, toolCalls, outputs }
 }
 
 export const fmtDur = ms =>

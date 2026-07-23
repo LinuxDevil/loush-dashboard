@@ -4446,6 +4446,19 @@ function loushSafe(proj, ...rel) { // validate proj is a known repo and the path
   return p
 }
 const eventsCache = new Map() // file -> {mtime, size, events} — the runs list polls every 5s; skip re-parsing unchanged files
+// Coerce a raw event to the canonical contract-§13 shape {seq,t,type,phase,data} that scanRuns and
+// deriveRunMetrics read. Some flows emit a divergent shape ({ts,event,flow,...} instead of
+// {t,type,data}); tolerate both so every run renders regardless of which the flow wrote.
+function normalizeEvent(e, i) {
+  if (e.seq == null) e.seq = i + 1 // fallback seq so a missing-seq file still tails
+  if (e.t == null && e.ts != null) e.t = e.ts
+  if (e.type == null && e.event != null) e.type = e.event
+  if (e.data == null || typeof e.data !== 'object') e.data = {}
+  if (e.type === 'run.started' && e.data.flow == null && e.flow != null) e.data.flow = e.flow
+  // step events key on data.label; divergent flows put the phase name at top level instead
+  if ((e.type === 'step.started' || e.type === 'step.completed') && e.data.label == null && e.phase != null) e.data.label = e.phase
+  return e
+}
 function readEvents(file) {
   let st; try { st = fs.statSync(file) } catch { return [] }
   const c = eventsCache.get(file)
@@ -4453,7 +4466,7 @@ function readEvents(file) {
   let events = []
   try {
     events = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean)
-      .map((l, i) => { try { const e = JSON.parse(l); if (e.seq == null) e.seq = i + 1; return e } catch { return null } }) // fallback seq so a missing-seq file still tails
+      .map((l, i) => { try { return normalizeEvent(JSON.parse(l), i) } catch { return null } })
       .filter(Boolean)
   } catch { return [] }
   eventsCache.set(file, { mtime: st.mtimeMs, size: st.size, events })
@@ -4495,6 +4508,8 @@ function scanRuns() {
         phase: state.phase || null, phaseStatus: state.phase_status || null, retries: state.retries || null,
         headSha: state.head_sha || null, updatedAt: asMs(state.updated_at) || (fs.existsSync(evF) ? fs.statSync(evF).mtimeMs : null),
         events: events.length, startedAt: asMs(events[0]?.t), endedAt: asMs(term?.t), status,
+        branch: state.branch || null, base: state.base || null, note: state.note || null,
+        decision: state.decision || term?.data?.decision || null, // pr-review / fix outcome, if the flow recorded one
         hasReview: fs.existsSync(path.join(dir, 'review.json')),
         awaitingApproval: state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json')),
         verdict: computeVerdict(dir, state, term, state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json'))),
@@ -4536,6 +4551,19 @@ app.get('/api/runs/events', (req, res) => {
   const events = readEvents(path.join(runDir(req.query.proj, req.query.ticket), 'events.jsonl'))
   const after = Number(req.query.after) || 0
   res.json({ events: events.filter(e => (e.seq || 0) > after) })
+})
+// every file the flow left in .loush/<ticket>/ — the change requested (jira.md), the reviewed
+// code (scoped.diff), findings (review.md), etc. Content is fetched per-file via /artifact.
+app.get('/api/runs/files', (req, res) => {
+  const dir = runDir(req.query.proj, req.query.ticket)
+  let files = []
+  try {
+    files = fs.readdirSync(dir, { withFileTypes: true })
+      .filter(e => e.isFile() && e.name !== 'events.jsonl') // events have their own viewer
+      .map(e => { const st = fs.statSync(path.join(dir, e.name)); return { name: e.name, size: st.size, mtime: st.mtimeMs } })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {}
+  res.json({ files })
 })
 app.get('/api/runs/artifact', (req, res) => {
   const dir = runDir(req.query.proj, req.query.ticket)

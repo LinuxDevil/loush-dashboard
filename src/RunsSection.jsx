@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
-import { api, toast } from './api.js'
+import { api, toast, fmtSize } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { deriveRunMetrics, fmtDur, relTime } from './runMetrics.js'
 import { useVisiblePoll } from './hooks.js'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
+const SANS = '"IBM Plex Sans", sans-serif'
 const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
 // queued gray / running blue / completed green / failed red / aborted orange / blocked purple (feature 10)
 const STATUS = { unknown: '#6a6f78', running: '#5eb3f6', completed: '#3fb96a', failed: '#e5484d', aborted: '#e8a06a', blocked: '#a06ae5' }
@@ -101,8 +102,70 @@ function Approval({ run, onDone }) {
   )
 }
 
+const PRE = { margin: 0, font: `400 10.5px/1.6 ${MONO}`, color: '#b0a69e', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 420, overflow: 'auto', background: 'rgba(0,0,0,0.28)', borderRadius: 8, padding: 12 }
+
+// render a run artifact — diffs get +/- coloring, everything else is monospace text
+function FileBody({ name, content }) {
+  if (content == null) return <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>loading…</div>
+  if (name.endsWith('.diff') || name.endsWith('.patch')) {
+    return (
+      <pre style={PRE}>{content.split('\n').map((ln, i) => {
+        const col = (ln.startsWith('+') && !ln.startsWith('+++')) ? '#3fb96a'
+          : (ln.startsWith('-') && !ln.startsWith('---')) ? '#e5484d'
+          : ln.startsWith('@@') ? '#7cc4f7' : (ln.startsWith('diff ') || ln.startsWith('index ')) ? '#7a716a' : '#b0a69e'
+        return <div key={i} style={{ color: col }}>{ln || ' '}</div>
+      })}</pre>
+    )
+  }
+  return <pre style={PRE}>{content}</pre>
+}
+
+// the full .loush/<ticket>/ file set — click a file to view it inline
+function RunFiles({ run }) {
+  const [files, setFiles] = useState(null)
+  const [open, setOpen] = useState(null)
+  const [body, setBody] = useState(null)
+  useEffect(() => {
+    api.get(`/api/runs/files?proj=${encodeURIComponent(run.proj)}&ticket=${encodeURIComponent(run.ticket)}`)
+      .then(d => setFiles(d.files)).catch(() => setFiles([]))
+  }, [run.proj, run.ticket])
+  const view = name => {
+    if (open === name) { setOpen(null); setBody(null); return }
+    setOpen(name); setBody(null)
+    api.get(`/api/runs/artifact?proj=${encodeURIComponent(run.proj)}&ticket=${encodeURIComponent(run.ticket)}&name=${encodeURIComponent(name)}`)
+      .then(d => setBody(d.content)).catch(e => setBody('(could not load — ' + e.message + ')'))
+  }
+  if (!files) return null
+  if (!files.length) return <Dim>no files in .loush/{run.ticket}/</Dim>
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ font: `600 12px ${HEAD}` }}>Files</div>
+      {files.map(f => (
+        <div key={f.name}>
+          <div onClick={() => view(f.name)} style={{ display: 'flex', gap: 8, alignItems: 'baseline', cursor: 'pointer', font: `400 11px ${MONO}`, padding: '2px 0' }}>
+            <span style={{ color: open === f.name ? ACCENT : '#7cc4f7' }}>{open === f.name ? '▾' : '▸'} {f.name}</span>
+            <Dim style={{ marginLeft: 'auto' }}>{fmtSize(f.size)}</Dim>
+          </div>
+          {open === f.name && (
+            <div style={{ marginBottom: 6 }}>
+              <button className="mini" style={{ marginTop: 0, marginBottom: 4 }} onClick={() => body != null && navigator.clipboard.writeText(body).then(() => toast(f.name + ' copied', 'success'))}>copy</button>
+              <FileBody name={f.name} content={body} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const Dim = ({ children, style }) => <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', ...style }}>{children}</span>
+const ACCENT = '#7cc4f7'
+
+const DECISION_COLOR = { REQUEST_CHANGES: '#e8a06a', APPROVE: '#3fb96a', APPROVED: '#3fb96a', BLOCKED: '#e5484d' }
+
 function Detail({ run, onDone }) {
   const [events, setEvents] = useState(null)
+  const [showRaw, setShowRaw] = useState(false)
   useEffect(() => {
     let seq = 0, live = true
     const poll = () => api.get(`/api/runs/events?proj=${encodeURIComponent(run.proj)}&ticket=${encodeURIComponent(run.ticket)}&after=${seq}`)
@@ -127,10 +190,25 @@ function Detail({ run, onDone }) {
         {run.cost != null && <span title="estimated from transcript token usage in this run's time window">est. cost <b style={{ color: '#3fb96a' }}>${run.cost.toFixed(3)}</b></span>}
         {run.retries && <span>retries <b style={{ color: '#e8a06a' }}>{Object.entries(run.retries).map(([k, v]) => `${k}:${v}`).join(' ')}</b></span>}
       </div>
+      {(run.decision || run.branch || run.note) && (
+        <div style={{ display: 'grid', gap: 6, background: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', font: `400 11px ${MONO}` }}>
+            {run.decision && <span style={{ font: `600 10px ${MONO}`, color: DECISION_COLOR[run.decision] || '#b0a69e', background: (DECISION_COLOR[run.decision] || '#b0a69e') + '18', borderRadius: 5, padding: '2px 7px' }}>{run.decision.replace(/_/g, ' ')}</span>}
+            {run.branch && <span style={{ color: '#b0a69e' }}>branch <b style={{ color: '#e5dbd2' }}>{run.branch}</b>{run.base ? <> → <b style={{ color: '#e5dbd2' }}>{run.base}</b></> : ''}</span>}
+            {run.headSha && <span style={{ color: '#7a716a' }}>@ {String(run.headSha).slice(0, 7)}</span>}
+          </div>
+          {run.note && <div style={{ font: `400 11.5px ${SANS}`, color: '#b0a69e' }}>{run.note}</div>}
+        </div>
+      )}
+
       {run.awaitingApproval && <Approval run={run} onDone={onDone} />}
+
+      <RunFiles run={run} />
+
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <div style={{ font: `600 12px ${HEAD}` }}>Timeline</div>
+          {events?.length > 0 && <button className="mini" style={{ marginTop: 0 }} onClick={() => setShowRaw(r => !r)}>{showRaw ? 'hide raw' : 'raw events'}</button>}
           {events?.length > 0 && <button className="mini" style={{ marginTop: 0 }} onClick={() => navigator.clipboard.writeText(events.map(e => JSON.stringify(e)).join('\n')).then(() => toast('events.jsonl copied', 'success'))}>copy events</button>}
         </div>
         {events === null && <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>loading events…</div>}
@@ -143,7 +221,17 @@ function Detail({ run, onDone }) {
             <span style={{ color: '#7a716a' }}>{fmtDur(s.ms)}</span>
           </div>
         ))}
+        {showRaw && events && (
+          <pre style={{ ...PRE, marginTop: 8 }}>{events.map(e => `${e.t ? new Date(e.t).toLocaleTimeString() : '—'}  ${e.type || '?'}${e.data && Object.keys(e.data).length ? '  ' + JSON.stringify(e.data) : ''}`).join('\n')}</pre>
+        )}
       </div>
+
+      {m.outputs?.length > 0 && (
+        <div>
+          <div style={{ font: `600 12px ${HEAD}`, marginBottom: 6 }}>Notes</div>
+          <pre style={PRE}>{m.outputs.map(o => o.text).join('\n\n')}</pre>
+        </div>
+      )}
     </div>
   )
 }
