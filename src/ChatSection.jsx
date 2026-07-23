@@ -51,6 +51,20 @@ export function buildBlocks(events) {
   return blocks
 }
 
+// L1: per-output review trail — records that a human reviewed an assistant output (accept/reject),
+// so "review every output" is logged, not implicit. Fire-and-forget to /api/chat-review.
+function ReviewButtons({ text, chatId, cwd }) {
+  const [done, setDone] = useState(null)
+  const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
+  if (done) return <div className="dim" style={{ font: "400 10px 'IBM Plex Mono', monospace", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
+  return (
+    <div style={{ display: 'flex', gap: 6, padding: '1px 8px 4px' }}>
+      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & accepted" onClick={() => record('accept')}>✓ accept</button>
+      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & rejected" onClick={() => record('reject')}>✗ reject</button>
+    </div>
+  )
+}
+
 export function Block({ b }) {
   if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
   if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
@@ -397,7 +411,9 @@ export default function ChatSection() {
         : view === 'activity'
         ? <div className="chat-log"><ActivityTimeline blocks={blocks} /></div>
         : <div className="chat-log">
-        {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text') ? <Cap key={i} text={b.text}><Block b={b} /></Cap> : <Block key={i} b={b} />)}
+        {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
+          ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
+          : <Block key={i} b={b} />)}
         {busy && <div className="chat-line dim">✦ working…</div>}
         <div ref={endRef} />
       </div>}

@@ -5,6 +5,7 @@
 // straight from this server via the Figma REST API — /api/figma-capture/create needs FIGMA_TOKEN.
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 
@@ -12,6 +13,12 @@ const capturesDir = repo => path.join(repo, '.claude', 'figma-captures')
 const captureDir = (repo, slug) => path.join(capturesDir(repo), slug)
 
 const readJson = (p, fallback) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback } }
+
+// Figma PAT: env wins (CI / power users), otherwise a file the UI writes so a new device can be set
+// up from the dashboard without touching shell config. localhost-only server; never echoed back.
+const TOKEN_FILE = path.join(os.homedir(), '.claude', 'dashboard-figma-token.json')
+const figmaToken = () => process.env.FIGMA_TOKEN || readJson(TOKEN_FILE, {}).token || ''
+const figmaTokenSource = () => process.env.FIGMA_TOKEN ? 'env' : (readJson(TOKEN_FILE, {}).token ? 'file' : null)
 
 function contextMarkdown(capture, annotations) {
   const rows = annotations.map(a =>
@@ -37,7 +44,9 @@ const slugify = s => String(s || 'frame').toLowerCase().replace(/[^a-z0-9]+/g, '
 const shortHash = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 8)
 
 const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.turbo', '.output', 'out', 'coverage', '.cache', '.claude'])
-const COMPONENT_EXTS = new Set(['.jsx', '.tsx', '.js', '.ts'])
+// components live in the app/ package and are authored as .tsx — .styled.tsx are styled-component
+// helpers, not surfaceable UI components, so they're excluded.
+const COMPONENT_EXTS = new Set(['.tsx'])
 const MAX_FILES_SCANNED = 6000, MAX_PROJECT_COMPONENTS = 400
 // heuristic, not a parser: an exported PascalCase function/const/class is almost always a
 // component in a JS/TS UI codebase. ponytail: regex over source text, no AST — good enough to
@@ -60,7 +69,9 @@ function scanProjectComponents(repo) {
       if (out.length >= MAX_PROJECT_COMPONENTS || filesScanned >= MAX_FILES_SCANNED) return
       const p = path.join(dir, e.name)
       if (e.isDirectory()) { if (!IGNORE_DIRS.has(e.name) && !e.name.startsWith('.')) walk(p); continue }
+      if (e.name.endsWith('.styled.tsx')) continue // styled-component helpers, not surfaceable components
       if (!COMPONENT_EXTS.has(path.extname(e.name))) continue
+      if (!path.relative(repo, p).split(path.sep).includes('app')) continue // app/ package only (packages/app, apps/*/app, …)
       filesScanned++
       let src
       try { src = fs.readFileSync(p, 'utf8') } catch { continue }
@@ -163,9 +174,24 @@ export default function mountFigmaCapture(app) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
   })
 
+  // token status (never returns the secret) — {set, source: 'env'|'file'|null, envLocked}
+  app.get('/api/figma-capture/token', (req, res) => {
+    const source = figmaTokenSource()
+    res.json({ set: !!source, source, envLocked: !!process.env.FIGMA_TOKEN })
+  })
+  app.put('/api/figma-capture/token', (req, res) => {
+    if (process.env.FIGMA_TOKEN) return res.status(409).json({ error: 'FIGMA_TOKEN is set via env on the server — unset it there to manage the key from here.' })
+    const token = String(req.body?.token || '').trim()
+    try {
+      if (!token) fs.rmSync(TOKEN_FILE, { force: true }) // empty = clear it
+      else fs.writeFileSync(TOKEN_FILE, JSON.stringify({ token }, null, 2), { mode: 0o600 })
+      res.json({ set: !!token, source: token ? 'file' : null })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.post('/api/figma-capture/create', async (req, res) => {
-    const token = process.env.FIGMA_TOKEN
-    if (!token) return res.status(400).json({ error: 'FIGMA_TOKEN is not set on the dashboard server — either set it and restart, or run the /figma-capture skill from a Claude Code session in that repo instead.' })
+    const token = figmaToken()
+    if (!token) return res.status(400).json({ error: 'No Figma API key set — add one in the field above (or set FIGMA_TOKEN on the server), or run the /figma-capture skill from a Claude Code session in that repo instead.' })
     const repo = path.resolve(String(req.body?.repo || ''))
     const figmaLink = String(req.body?.figmaLink || '')
     if (!repo || !figmaLink) return res.status(400).json({ error: 'repo and figmaLink required' })

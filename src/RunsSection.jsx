@@ -10,6 +10,9 @@ const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,2
 // queued gray / running blue / completed green / failed red / aborted orange / blocked purple (feature 10)
 const STATUS = { unknown: '#6a6f78', running: '#5eb3f6', completed: '#3fb96a', failed: '#e5484d', aborted: '#e8a06a', blocked: '#a06ae5' }
 const sc = s => STATUS[s] || STATUS.unknown
+// L2: single aggregated verdict per run (server computes from review severity + phase + retry caps)
+const VERDICT = { PASSING: '#3fb96a', BLOCKED: '#e5484d', 'NEEDS-HUMAN': '#a06ae5' }
+const artifactName = flow => (flow === 'test-cases' || flow === 'jira-implement') ? 'test-cases/test-plan.md' : 'review.md'
 
 // URL-driven filters (feature 7): shareable, back/forward works, removable pills.
 const FKEYS = { proj: 'runProj', flow: 'runFlow', status: 'runStatus', ticket: 'runQ' }
@@ -21,6 +24,33 @@ function writeFilters(f) {
   const q = new URLSearchParams(window.location.search)
   for (const [k, p] of Object.entries(FKEYS)) f[k] ? q.set(p, f[k]) : q.delete(p)
   history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
+}
+
+function Dispatch({ projects, flows, onDone }) {
+  const [open, setOpen] = useState(false)
+  const [proj, setProj] = useState('')
+  const [flow, setFlow] = useState(flows[0] || '')
+  const [ticket, setTicket] = useState('')
+  const [busy, setBusy] = useState(false)
+  const go = () => {
+    if (!proj || !ticket.trim()) return alert('pick a project and a ticket')
+    setBusy(true)
+    api.post('/api/runs/dispatch', { proj, flow, ticket: ticket.trim() })
+      .then(() => { toast(`dispatched ${flow} · ${ticket.trim()}`, 'success'); setTicket(''); setOpen(false); onDone() })
+      .catch(e => alert(e.message)).finally(() => setBusy(false))
+  }
+  if (!open) return <button style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>＋ dispatch a run</button>
+  return (
+    <div style={{ ...PANEL, padding: '14px 18px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2' }}>Dispatch a run</span>
+      <select value={proj} onChange={e => setProj(e.target.value)}><option value="">pick project…</option>{projects.map(p => <option key={p.path} value={p.path}>{p.name}</option>)}</select>
+      <select value={flow} onChange={e => setFlow(e.target.value)}>{flows.map(fl => <option key={fl}>{fl}</option>)}</select>
+      <input value={ticket} onChange={e => setTicket(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="ticket (e.g. TRN-189)" style={{ width: 180 }} />
+      <button className="primary" disabled={busy} onClick={go}>{busy ? 'starting…' : '▸ Start'}</button>
+      <button disabled={busy} onClick={() => setOpen(false)}>cancel</button>
+      <span className="small" style={{ flexBasis: '100%', color: '#7a716a' }}>runs <code>claude -p /{flow || '…'} &lt;ticket&gt;</code> in the repo · appears below as running once it writes .loush/</span>
+    </div>
+  )
 }
 
 function Kpis({ runs }) {
@@ -39,7 +69,7 @@ function Kpis({ runs }) {
       {k('total runs', runs.length)}
       {k('running', n('running'), STATUS.running)}
       {k('failed', n('failed'), STATUS.failed)}
-      {k('blocked', n('blocked'), STATUS.blocked)}
+      {k('needs approval', runs.filter(r => r.verdict === 'NEEDS-HUMAN').length, VERDICT['NEEDS-HUMAN'])}
       {k('avg duration', fmtDur(avg))}
       {k('est. cost', totalCost ? '$' + totalCost.toFixed(2) : '—')}
     </div>
@@ -49,7 +79,7 @@ function Kpis({ runs }) {
 function Approval({ run, onDone }) {
   const [content, setContent] = useState(null)
   const [note, setNote] = useState('')
-  const name = run.flow === 'test-cases' || run.flow === 'jira-implement' ? 'test-cases/test-plan.md' : 'review.md'
+  const name = artifactName(run.flow)
   useEffect(() => {
     api.get(`/api/runs/artifact?proj=${encodeURIComponent(run.proj)}&ticket=${encodeURIComponent(run.ticket)}&name=${encodeURIComponent(name)}`)
       .then(d => setContent(d.content)).catch(() => setContent('(artifact not found — ' + name + ')'))
@@ -121,6 +151,7 @@ function Detail({ run, onDone }) {
 export default function RunsSection() {
   const [data, setData] = useState(null)
   const [open, setOpen] = useState(null)
+  const [selected, setSelected] = useState(() => new Set())
   const [f, setF] = useState(readFilters)
   const load = () => {
     const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, v])).toString()
@@ -133,9 +164,21 @@ export default function RunsSection() {
   const runs = data.runs
   const setFilter = (k, v) => setF(p => ({ ...p, [k]: v }))
   const activePills = Object.entries(f).filter(([, v]) => v)
+  const approvable = runs.filter(r => r.verdict === 'NEEDS-HUMAN')
+  const rid = r => r.proj + ':' + r.ticket
+  const toggleSel = r => setSelected(p => { const n = new Set(p); n.has(rid(r)) ? n.delete(rid(r)) : n.add(rid(r)); return n })
+  const approveBatch = list => {
+    if (!list.length) return
+    api.post('/api/runs/approve-batch', {
+      decision: 'approve',
+      runs: list.map(r => ({ proj: r.proj, ticket: r.ticket, artifact: artifactName(r.flow).split('/').pop().replace('.md', '') })),
+    }).then(d => { toast(`approved ${d.results.filter(x => x.ok).length}/${d.results.length} run${d.results.length === 1 ? '' : 's'}`, d.ok ? 'success' : 'error'); setSelected(new Set()); load() })
+      .catch(e => alert(e.message))
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Dispatch projects={data.allProjects || []} flows={data.dispatchFlows || []} onDone={load} />
       <Kpis runs={runs} />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <input value={f.ticket} onChange={e => setFilter('ticket', e.target.value)} placeholder="search ticket…" style={{ width: 160 }} />
@@ -151,16 +194,24 @@ export default function RunsSection() {
           ))}
         </div>
       )}
+      {approvable.length > 0 && (
+        <div style={{ ...PANEL, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, borderLeft: `3px solid ${VERDICT['NEEDS-HUMAN']}` }}>
+          <span style={{ font: `500 11px ${MONO}`, color: '#b0a69e' }}>{approvable.length} run{approvable.length === 1 ? '' : 's'} converged & awaiting approval{selected.size ? ` · ${selected.size} selected` : ''}</span>
+          {selected.size > 0 && <button onClick={() => approveBatch(approvable.filter(r => selected.has(rid(r))))}>✓ Approve selected ({selected.size})</button>}
+          <button className="primary" style={{ marginLeft: 'auto' }} onClick={() => approveBatch(approvable)}>✓ Approve all converged</button>
+        </div>
+      )}
       {runs.map(r => {
         const id = r.proj + ':' + r.ticket
         return (
           <div key={id} style={{ ...PANEL, padding: '14px 18px', borderLeft: `3px solid ${sc(r.status)}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setOpen(open === id ? null : id)}>
+              {r.verdict === 'NEEDS-HUMAN' && <input type="checkbox" checked={selected.has(id)} onClick={e => e.stopPropagation()} onChange={() => toggleSel(r)} title="select for batch approve" />}
               <span style={{ color: sc(r.status) }}>●</span>
               <span style={{ font: "600 13.5px 'IBM Plex Sans'", color: '#e5dbd2' }}>{r.ticket}</span>
               {r.flow && <span style={{ font: `500 10px ${MONO}`, color: '#7cc4f7', background: 'rgba(124,196,247,0.08)', borderRadius: 5, padding: '2px 7px' }}>{r.flow}</span>}
               {r.phase && <span style={{ font: `400 10.5px ${MONO}`, color: '#b0a69e' }}>{r.phase}{r.phaseStatus ? ` · ${r.phaseStatus}` : ''}</span>}
-              {r.awaitingApproval && <span style={{ font: `600 10px ${MONO}`, color: STATUS.blocked }}>⏸ needs approval</span>}
+              {r.verdict && <span style={{ font: `600 10px ${MONO}`, color: VERDICT[r.verdict], background: VERDICT[r.verdict] + '18', borderRadius: 5, padding: '2px 7px' }}>{r.verdict}</span>}
               <span style={{ font: `500 10.5px ${MONO}`, color: sc(r.status), marginLeft: 'auto' }}>{r.status}</span>
               <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{r.projName} · {relTime(r.updatedAt)}</span>
             </div>

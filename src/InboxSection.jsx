@@ -19,7 +19,46 @@ export default function InboxSection({ onNav }) {
       <Tabs tabs={['Inbox', 'Daily digest', 'Notifications']} tab={tab} setTab={setTab} />
       {tab === 'Inbox' && <Inbox onNav={onNav} />}
       {tab === 'Daily digest' && <Digest onNav={onNav} />}
-      {tab === 'Notifications' && <Notify />}
+      {tab === 'Notifications' && <><Notify /><Scheduler /></>}
+    </div>
+  )
+}
+
+// Gap B — cadence loop control. Opt-in (default off); results land in the Inbox as info items.
+function Scheduler() {
+  const [cfg, setCfg] = useState(null)
+  useEffect(() => { api.get('/api/scheduler').then(setCfg).catch(() => {}) }, [])
+  if (!cfg) return null
+  const save = next => { setCfg(next); api.put('/api/scheduler', next).catch(e => alert(e.message)) }
+  const addDispatch = () => save({ ...cfg, jobs: [...(cfg.jobs || []), { id: 'dispatch-' + Date.now().toString(36), kind: 'dispatch', label: 'Auto-dispatch backlog', cadenceMin: 60, enabled: false, maxDispatch: 1, dailyCeilingUSD: 10 }] })
+  const addRemediate = () => save({ ...cfg, jobs: [...(cfg.jobs || []), { id: 'remediate-' + Date.now().toString(36), kind: 'remediate', label: 'Propose remediations', cadenceMin: 30, enabled: false }] })
+  return (
+    <div style={{ ...PANEL, maxWidth: 640, marginTop: 16 }}>
+      <div style={{ font: `600 15px ${HEAD}`, marginBottom: 14 }}>Scheduler <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>(unattended cadence loop)</span></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <input type="checkbox" checked={cfg.enabled} onChange={e => save({ ...cfg, enabled: e.target.checked })} style={{ width: 14 }} />
+        <div>
+          <div style={{ font: "500 13px 'IBM Plex Sans'", color: '#e5dbd2' }}>Run scheduled jobs</div>
+          <div style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>runs jobs on their cadence and drops results into the Inbox (info-only, self-only) · never sends anything · uncheck = kill switch</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {(cfg.jobs || []).map((j, i) => (
+          <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 10, font: `400 11px ${MONO}`, color: '#b0a69e' }}>
+            <input type="checkbox" checked={j.enabled !== false} onChange={e => save({ ...cfg, jobs: cfg.jobs.map((x, k) => k === i ? { ...x, enabled: e.target.checked } : x) })} style={{ width: 13 }} />
+            <span style={{ color: '#e5dbd2' }}>{j.label || j.id}</span>
+            <span style={{ background: 'rgba(124,196,247,0.08)', color: '#7cc4f7', borderRadius: 5, padding: '1px 6px' }}>{j.kind}</span>
+            {j.kind === 'dispatch' && <span style={{ color: '#7a716a' }}>{j.triggerStage || 'backlog'} · max {j.maxDispatch || 1}{j.dailyCeilingUSD ? ` · ≤$${j.dailyCeilingUSD}/day` : ''}</span>}
+            {j.kind === 'remediate' && <span style={{ color: '#7a716a' }}>eval-regression · red-main → propose-only</span>}
+            <span style={{ marginLeft: 'auto' }}>every {j.cadenceMin >= 1440 ? (j.cadenceMin / 1440) + 'd' : j.cadenceMin + 'm'}{j.lastRun ? ' · last ' + fmtDate(j.lastRun) : ' · never run'}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="mini" onClick={addDispatch}>+ auto-dispatch backlog</button>
+        <button className="mini" onClick={addRemediate}>+ propose remediations</button>
+      </div>
+      <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', marginTop: 6 }}>dispatch auto-starts backlog tickets → same worktree + gated run as ▸Start. remediate maps eval-regression / red-main to the exact reversible command, dropped in the Inbox (propose-only — nothing auto-runs). Config in <code>~/.claude/dashboard-scheduler.json</code>.</div>
     </div>
   )
 }

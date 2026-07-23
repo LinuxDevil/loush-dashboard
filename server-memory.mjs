@@ -118,6 +118,17 @@ function searchTranscripts(query, projFilter, limit = 30) {
   return out
 }
 
+// Grounding for inline chat (L1): top curated-memory hits for a query, scoped to a project when it
+// has memories, else global. Curated facts only (never raw transcripts) — high-signal + self-authored.
+export function retrieveContext(query, projFilter = null, limit = 3) {
+  const terms = String(query || '').toLowerCase().split(/\s+/).filter(t => t.length > 2)
+  if (!terms.length) return []
+  let hits = searchMemories(terms, projFilter)
+  if (!hits.length && projFilter) hits = searchMemories(terms, null) // fall back to all projects
+  return hits.sort((a, b) => b.score - a.score).slice(0, limit)
+    .map(h => ({ name: h.name, path: h.path, excerpt: h.excerpt.replace(/\s+/g, ' ').slice(0, 240) }))
+}
+
 export default function mountMemory(app) {
   // list projects that have curated memory, for the filter dropdown
   app.get('/api/memory/projects', (req, res) => {

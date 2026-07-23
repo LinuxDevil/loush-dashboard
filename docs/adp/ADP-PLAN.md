@@ -103,13 +103,15 @@ The video's architecture is 3 layers. Here's what we already have vs. what's thi
 
 ## Roadmap — cheap-first, ordered
 
-1. **Finish L1 grounding** (days) — inject Atoms/Constitution/Memory hits into `/api/chat/complete`; add Chat review-trail JSON store; ship a default safety hook. *Makes L1 airtight and demoable.*
-2. **Close L2 wiring** (days–week) — single aggregated run verdict; batch-approve in Inbox/Runs; optional gated auto-merge on converged runs. *Turns the human into a batch supervisor — the L2 definition.*
-3. **Gap B: Scheduler→Inbox** (the unlock, ~Phase 2 in OS-ROADMAP) — cron/launchd + `claude -p` → Inbox; career-digest as first cadence output. *This is the single highest-leverage build — it's what moves us from L2 to L3.*
-4. **Durable run runtime** — persistence/retry/concurrency over `/api/runs`. *Makes unattended runs survivable.*
-5. **Ticket-triggered dispatch** — eng/triage → scheduler auto-enqueue; bug/red-main → auto-remediation, gated at `runs/approve`.
-6. **L4a (stretch)** — signal bus over existing detectors + dev-SLOs + 2 whitelisted autonomous verbs behind full guardrails.
-7. **L4b** — parked until we own prod telemetry + a deploy/incident path.
+1. ✅ **Finish L1 grounding** — `retrieveContext()` prepends curated-memory hits to the model's copy of each Chat turn (viewers see clean text) with `[memory:<name>]` citations; Chat review-trail JSON store + accept/reject buttons; safety-hook Inbox nudge (propose, not silent global write). *Shipped.*
+2. ✅ **Close L2 wiring** — `run-verdict.mjs` (pure, tested) → one PASSING/BLOCKED/NEEDS-HUMAN verdict; `?verdict=` filter; `POST /api/runs/approve-batch` + "approve all converged" bar. *Shipped.*
+3. ✅ **Gap B: Scheduler→Inbox** — `scheduler.mjs`: in-process cadence loop, reuses `runAgent` / `/api/career/digest`; results are info-only harness-plane Inbox items; `GET/PUT /api/scheduler` + toggle UI. Opt-in (default off = kill switch). *Shipped — the L2→L3 unlock.*
+4. ✅ **Durable run runtime** — `nextSchedule()` (pure, tested): bounded retry-with-backoff on job failure (retries ~5 min out, caps at `maxRetries`, then parks a cadence). Concurrency (`inFlight`) + persistence (`lastRun`) already held. *Shipped — no queue/worker layer needed (YAGNI).*
+5. ✅ **Ticket-triggered dispatch** — `dispatch` job kind + `dispatchPlan()` (pure, tested): auto-starts board tickets in a trigger stage via the existing `startTicket` path → worktree + tracked run, gated at code-review/`runs/approve`. Bounded by `maxDispatch` + a daily cost ceiling (`/api/gov/costs`) that halts dispatch; concurrency/dedup free from `startTicket`'s own guards. *Shipped (full auto-dispatch of the human-curated queue).*
+6. ✅ **L4a policy engine — PROPOSE-ONLY** — `remediate` job kind + `remediationPlan()` (pure, tested): maps the existing SLO-breach signals (`kind:'eval'` regression, `kind:'ci'` red-main) to the exact reversible verb (`gov-rollback` / `git-revert`) and drops the command in the Inbox for a human. **Autonomous execute on a shared repo is deliberately NOT wired** — it contradicts the app's copy-for-human invariant (`server.mjs` header) and is a real deploy/incident decision, not a scheduler default. Arming it is a separate, explicit build behind per-verb enable + one-click undo. *Shipped as the detector+policy layer; the trigger stays a human's.*
+7. 🔴 **L4b** — still parked, and genuinely unbuildable today: it needs production/runtime telemetry (Datadog/Grafana/OTel) and an owned deploy/incident path, neither of which exists in this dev-workflow control plane. Not skipped for effort — there is nothing to wire it to. Revisit when prod systems are in scope.
+
+**Guardrails honored across 3–6:** kill switch (scheduler + per-job `enabled`), cost ceiling that halts runs, self-only harness plane, never auto-send, and — for L4a — no autonomous write to a shared repo. Every autonomous action lands in the Inbox with its trace.
 
 ## Guardrails (inviolable at every level)
 - **Two-plane boundary** stays server-enforced: Plane A (work artifacts, team-safe, operational-only) vs Plane B (harness telemetry, self-only). No evaluative per-engineer scores.

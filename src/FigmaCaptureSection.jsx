@@ -119,6 +119,7 @@ function Editor({ repo, slug, catalog, onBack }) {
   const [contextMd, setContextMd] = useState(null)
   const [liveRect, setLiveRect] = useState(null) // dashed preview while dragging out a brand-new box
   const [projectComponents, setProjectComponents] = useState([])
+  const [imgSize, setImgSize] = useState(null) // set on <img> onLoad — the SVG viewBox needs a state, not a ref, so boxes re-render once the screenshot loads
   const imgRef = useRef(null)
   const dragRef = useRef(null) // { mode: 'draw'|'move'|'resize', id?, handle?, start, startRegion?, moved }
 
@@ -221,6 +222,8 @@ function Editor({ repo, slug, catalog, onBack }) {
     setDraft(null); setEditingId(null); setDirty(true)
   }
   const deleteAnnotation = id => { setAnnotations(prev => prev.filter(a => a.id !== id)); setDirty(true) }
+  // lock = click-through: the box stays visible but stops capturing the pointer, so you can draw a new box on top of it.
+  const toggleLock = id => { setAnnotations(prev => prev.map(a => a.id === id ? { ...a, locked: !a.locked } : a)); setEditingId(cur => cur === id ? null : cur); setDirty(true) }
 
   const persist = () => {
     api.post(`/api/figma-capture/${slug}/annotations?repo=${encodeURIComponent(repo)}`, { annotations })
@@ -249,13 +252,14 @@ function Editor({ repo, slug, catalog, onBack }) {
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'start' }}>
         <div style={{ position: 'relative', lineHeight: 0, userSelect: 'none', background: '#3a3633', borderRadius: 8, padding: 16 }}
           onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
-          <img ref={imgRef} src={screenshotUrl} alt={capture.frameName} style={{ maxWidth: '100%', display: 'block', cursor: 'crosshair' }} draggable={false} />
+          <img ref={imgRef} src={screenshotUrl} alt={capture.frameName} style={{ maxWidth: '100%', display: 'block', cursor: 'crosshair' }} draggable={false}
+            onLoad={e => setImgSize({ w: e.target.naturalWidth, h: e.target.naturalHeight })} />
           <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-            viewBox={imgRef.current ? `0 0 ${imgRef.current.naturalWidth} ${imgRef.current.naturalHeight}` : '0 0 1 1'} preserveAspectRatio="none">
+            viewBox={imgSize ? `0 0 ${imgSize.w} ${imgSize.h}` : '0 0 1 1'} preserveAspectRatio="none">
             {annotations.map(a => {
               const selected = a.id === editingId
               const hs = Math.max(4, Math.min(a.region.w, a.region.h) * 0.12) // handle half-size, scales down on tiny boxes
-              const handles = selected ? [
+              const handles = selected && !a.locked ? [
                 { key: 'nw', cx: a.region.x, cy: a.region.y },
                 { key: 'ne', cx: a.region.x + a.region.w, cy: a.region.y },
                 { key: 'sw', cx: a.region.x, cy: a.region.y + a.region.h },
@@ -264,9 +268,9 @@ function Editor({ repo, slug, catalog, onBack }) {
               return (
                 <g key={a.id}>
                   <rect x={a.region.x} y={a.region.y} width={a.region.w} height={a.region.h}
-                    fill={selected ? 'rgba(94,179,246,0.18)' : 'rgba(63,185,106,0.10)'}
-                    stroke={selected ? ACCENT : '#3fb96a'} strokeWidth={2}
-                    style={{ pointerEvents: 'auto', cursor: 'move' }} onMouseDown={startDrag('move', a)} />
+                    fill={selected ? 'rgba(94,179,246,0.18)' : a.locked ? 'rgba(122,113,106,0.06)' : 'rgba(63,185,106,0.10)'}
+                    stroke={selected ? ACCENT : a.locked ? '#7a716a' : '#3fb96a'} strokeWidth={2} strokeDasharray={a.locked ? '5 4' : undefined}
+                    style={{ pointerEvents: a.locked ? 'none' : 'auto', cursor: 'move' }} onMouseDown={a.locked ? undefined : startDrag('move', a)} />
                   {handles.map(h => (
                     <rect key={h.key} x={h.cx - hs} y={h.cy - hs} width={hs * 2} height={hs * 2}
                       fill={ACCENT} stroke="#141110" strokeWidth={1}
@@ -293,8 +297,9 @@ function Editor({ repo, slug, catalog, onBack }) {
             {annotations.length === 0 && <Dim>no annotations yet</Dim>}
             {annotations.map(a => (
               <div key={a.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', font: `400 11px ${SANS}`, color: '#d8cfc7' }}>
-                <span style={{ color: ACCENT, cursor: 'pointer' }} onClick={() => { setDraft(null); setEditingId(a.id) }}>{a.component || '(untitled)'}</span>
+                <span style={{ color: a.locked ? '#7a716a' : ACCENT, cursor: 'pointer' }} onClick={() => { setDraft(null); setEditingId(a.id) }}>{a.component || '(untitled)'}</span>
                 <Dim style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.note}</Dim>
+                <button style={{ font: `400 10px ${MONO}`, padding: '1px 6px' }} title={a.locked ? 'unlock (make editable)' : 'lock (click-through, so you can draw over it)'} onClick={() => toggleLock(a.id)}>{a.locked ? '🔒' : '🔓'}</button>
                 <button style={{ font: `400 10px ${MONO}`, padding: '1px 6px' }} onClick={() => deleteAnnotation(a.id)}>✕</button>
               </div>
             ))}
@@ -376,6 +381,35 @@ function BranchChip({ repo }) {
   return <Dim>⎇ {branch}</Dim>
 }
 
+// Figma personal-access-token setup — lets a new device set the key from the UI instead of the
+// server's env. The key is write-only over the API: status tells you if it's set, never the value.
+function FigmaTokenBar() {
+  const [status, setStatus] = useState(null)
+  const [val, setVal] = useState('')
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const load = () => api.get('/api/figma-capture/token').then(setStatus).catch(() => setStatus({ set: false }))
+  useEffect(() => { load() }, [])
+  const put = token => { setBusy(true); return api.put('/api/figma-capture/token', { token }).then(() => { setVal(''); setOpen(false); load() }).catch(e => alert(e.message)).finally(() => setBusy(false)) }
+  if (!status) return null
+  return (
+    <div style={{ ...PANEL, padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', font: `400 11px ${MONO}`, color: '#9a8f86' }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.set ? '#3fb96a' : '#e8a06a', display: 'inline-block' }} />
+      <span>Figma API key: <span style={{ color: status.set ? '#3fb96a' : '#e8a06a' }}>{status.set ? `set · ${status.source}` : 'not set'}</span></span>
+      {status.envLocked ? <Dim>managed via FIGMA_TOKEN env — unset it there to edit here</Dim>
+        : !open ? <button style={{ font: `400 10px ${MONO}`, padding: '2px 8px' }} onClick={() => setOpen(true)}>{status.set ? 'change' : '+ add key'}</button>
+        : <>
+            <input type="password" value={val} onChange={e => setVal(e.target.value)} placeholder="figd_… personal access token" autoFocus
+              onKeyDown={e => { if (e.key === 'Enter' && val.trim() && !busy) put(val.trim()) }} style={{ font: `400 11px ${MONO}`, minWidth: 280 }} />
+            <button onClick={() => put(val.trim())} disabled={busy || !val.trim()}>{busy ? 'saving…' : 'save'}</button>
+            {status.set && <button onClick={() => put('')} disabled={busy}>clear</button>}
+            <button onClick={() => { setOpen(false); setVal('') }}>cancel</button>
+          </>}
+      <Dim style={{ marginLeft: 'auto' }}>Figma → Settings → Security → personal access tokens</Dim>
+    </div>
+  )
+}
+
 export default function FigmaCaptureSection() {
   const [projects, setProjects] = useState(null)
   const [repo, setRepo] = useState('')
@@ -413,6 +447,7 @@ export default function FigmaCaptureSection() {
 
   if (!repo) return (
     <div style={{ display: 'grid', gap: 12 }}>
+      <FigmaTokenBar />
       <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#7a716a' }}>
         No projects found under Workspaces — paste a repo path below.
       </div>
@@ -422,6 +457,7 @@ export default function FigmaCaptureSection() {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
+      <FigmaTokenBar />
       {pathInput}
       {slug
         ? <Editor repo={repo} slug={slug} catalog={catalog} onBack={() => setSlug(null)} />

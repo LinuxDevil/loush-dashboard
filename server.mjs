@@ -11,10 +11,12 @@ import mountConstitution from './server-constitution.mjs'
 import mountAtoms from './server-atoms.mjs'
 import mountEng from './server-eng.mjs'
 import mountCareer from './server-career.mjs'
-import mountMemory from './server-memory.mjs'
+import mountMemory, { retrieveContext } from './server-memory.mjs'
 import mountMindwalk from './server-mindwalk.mjs'
 import mountGame from './server-game.mjs'
 import mountFigmaCapture from './server-figma-capture.mjs'
+import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
+import { verdictFrom } from './run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from './career-health.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from './career-usage-trends.mjs'
 
@@ -900,9 +902,19 @@ app.post('/api/chat/:id/message', (req, res) => {
   if (!chat.alive) return res.status(410).json({ error: 'session ended' })
   const content = (req.body.images || []).slice(0, 20).map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))
   content.push({ type: 'text', text: req.body.text })
-  const msg = { type: 'user', message: { role: 'user', content } }
-  chatBroadcast(chat, msg) // echo so all viewers see it
-  chat.child.stdin.write(JSON.stringify(msg) + '\n')
+  chatBroadcast(chat, { type: 'user', message: { role: 'user', content } }) // echo the CLEAN text to viewers
+  // L1 grounding: prepend top curated-memory hits to the MODEL's copy only, and ask it to cite them.
+  // Guarded: never fails the turn; curated memory only (self-authored, high-signal); off if no hits.
+  let modelContent = content
+  try {
+    const hits = req.body.text ? retrieveContext(req.body.text, mangle(chat.cwd)) : []
+    if (hits.length) {
+      const block = '[grounded context from your curated memory — cite as [memory:<name>] when you use a fact, and say if none apply]\n'
+        + hits.map(h => `- ${h.name}: ${h.excerpt}`).join('\n')
+      modelContent = [{ type: 'text', text: block }, ...content]
+    }
+  } catch {}
+  chat.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: modelContent } }) + '\n')
   res.json({ ok: true })
 })
 // autocomplete for the chat input: "/" = slash commands+skills (global + chat project), "@" = project files
@@ -2623,6 +2635,17 @@ async function inboxItems() {
       else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
     }
   } catch {}
+  try { items.push(...schedulerInbox(CLAUDE)) } catch {} // Gap B: scheduled-job results (info-only, self-only)
+  // L1: nudge (never auto-install) the two default safety hooks if absent. Global config is the user's
+  // to change — surface it, they click install in Hooks. Match on a distinctive message fragment so
+  // JSON-escaping of the command string doesn't matter.
+  try {
+    const MARK = { 'block-prod-file-edit': 'protected path', 'secret-scan-pre-write': 'looks like a secret' }
+    const userHooks = JSON.stringify(readJson(SETTINGS_FILES.user, {}).hooks || {})
+    const missing = Object.entries(MARK).filter(([, m]) => !userHooks.includes(m)).map(([n]) => n)
+    if (missing.length && !(readMeta().inboxDone || {})['hooks:safety'])
+      items.push({ key: 'hooks:safety', kind: 'recommendation', severity: 'info', section: 'hooks', text: `${missing.length} recommended safety hook${missing.length === 1 ? '' : 's'} not installed (${missing.join(', ')}) — install from Hooks` })
+  } catch {}
   for (const i of items) i.plane ||= 'harness' // everything above is this machine's own harness telemetry
   // plane A: delivery risk (JIRA + GitHub + CI), from the snapshot server-eng.mjs already caches.
   // Non-blocking: a cold snapshot (~80s) must not stall the badge — the work items land on the next 60s poll.
@@ -3404,6 +3427,22 @@ app.patch('/api/bugs/:id', (req, res) => {
   res.json(b)
 })
 app.delete('/api/bugs/:id', (req, res) => { writeBugs(readBugs().filter(b => b.id !== req.params.id)); res.json({ ok: true }) })
+
+// ---------- L1: chat review trail — record accept/reject per assistant output so "human reviews every
+// output" is logged, not implicit. Same git-tracked JSON-store pattern as bugs above. ----------
+const REVIEW_TRAIL_FILE = path.join(CLAUDE, 'chat-review-trail.json')
+const readReviewTrail = () => readJson(REVIEW_TRAIL_FILE, [])
+app.get('/api/chat-review', (req, res) => res.json(readReviewTrail()))
+app.post('/api/chat-review', (req, res) => {
+  const { chatId, cwd, verdict, text, note } = req.body
+  if (!['accept', 'reject'].includes(verdict)) return res.status(400).json({ error: 'verdict must be accept|reject' })
+  const trail = readReviewTrail()
+  const entry = { id: Math.random().toString(36).slice(2, 10), chatId: chatId || null, cwd: cwd || null, verdict, text: String(text || '').slice(0, 2000), note: String(note || '').slice(0, 500), ts: Date.now() }
+  trail.push(entry)
+  track(REVIEW_TRAIL_FILE, JSON.stringify(trail, null, 2), { summary: `chat review: ${verdict}` })
+  res.json({ ok: true, entry })
+})
+
 // auto-bisect: async, poll status — culprit commit + diffstat + author
 const bisects = new Map() // bugId -> {status, log, culprit}
 app.post('/api/bugs/:id/bisect', (req, res) => {
@@ -4426,6 +4465,13 @@ function runDir(proj, ticket) { // a run lives at .loush/<ticket>/ or (legacy si
   return (fs.existsSync(path.join(sub, 'events.jsonl')) || fs.existsSync(path.join(sub, 'state.json'))) ? sub : base
 }
 const asMs = v => (typeof v === 'number' ? v : Date.parse(v) || null)
+// verdict = the run's review.json (if any) fed into the pure gate logic in run-verdict.mjs.
+function computeVerdict(dir, state, term, awaitingApproval) {
+  let review = null
+  try { review = JSON.parse(fs.readFileSync(path.join(dir, 'review.json'), 'utf8')) } catch {}
+  return verdictFrom({ review, retries: state.retries, phase: state.phase, phaseStatus: state.phase_status,
+    terminalFailed: term?.type === 'run.failed', terminalDone: term?.type === 'run.completed', awaitingApproval })
+}
 function scanRuns() {
   const runs = []
   for (const proj of projectDirs()) {
@@ -4451,6 +4497,7 @@ function scanRuns() {
         events: events.length, startedAt: asMs(events[0]?.t), endedAt: asMs(term?.t), status,
         hasReview: fs.existsSync(path.join(dir, 'review.json')),
         awaitingApproval: state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json')),
+        verdict: computeVerdict(dir, state, term, state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json'))),
       })
     }
   }
@@ -4477,8 +4524,13 @@ app.get('/api/runs', (req, res) => {
   if (proj) runs = runs.filter(r => r.projName === proj)
   if (flow) runs = runs.filter(r => r.flow === flow)
   if (status) runs = runs.filter(r => r.status === status)
+  if (req.query.verdict) runs = runs.filter(r => r.verdict === req.query.verdict)
   if (ticket) runs = runs.filter(r => r.ticket.toLowerCase().includes(String(ticket).toLowerCase()))
-  res.json({ runs, projects: [...new Set(all.map(r => r.projName))].sort(), flows: [...new Set(all.map(r => r.flow).filter(Boolean))].sort() })
+  res.json({
+    runs, projects: [...new Set(all.map(r => r.projName))].sort(), flows: [...new Set(all.map(r => r.flow).filter(Boolean))].sort(),
+    allProjects: [...projectDirs()].map(p => ({ name: path.basename(p), path: p })).sort((a, b) => a.name.localeCompare(b.name)),
+    dispatchFlows: LOUSH_FLOWS,
+  })
 })
 app.get('/api/runs/events', (req, res) => {
   const events = readEvents(path.join(runDir(req.query.proj, req.query.ticket), 'events.jsonl'))
@@ -4500,6 +4552,39 @@ app.post('/api/runs/approve', (req, res) => {
   fs.writeFileSync(path.join(dir, 'approvals.json'), JSON.stringify({ artifact: artifact || 'test-plan', decision, comments: comments || [] }, null, 2))
   res.json({ ok: true })
 })
+// batch approve — the L2 shift: the human supervises a converged batch instead of one run at a time.
+app.post('/api/runs/approve-batch', (req, res) => {
+  const { runs, decision, comments } = req.body
+  if (!['approve', 'revise'].includes(decision)) return res.status(400).json({ error: 'decision must be approve|revise' })
+  if (!Array.isArray(runs) || !runs.length) return res.status(400).json({ error: 'runs must be a non-empty array' })
+  const results = runs.map(({ proj, ticket, artifact }) => {
+    try {
+      fs.writeFileSync(path.join(runDir(proj, ticket), 'approvals.json'), JSON.stringify({ artifact: artifact || 'test-plan', decision, comments: comments || [] }, null, 2))
+      return { proj, ticket, ok: true }
+    } catch (e) { return { proj, ticket, ok: false, error: e.message } }
+  })
+  res.json({ ok: results.every(r => r.ok), results })
+})
+// dispatch a fresh loush run: spawn `claude -p /<flow> <ticket>` in the repo; the flow owns .loush/<ticket>/ from there.
+const LOUSH_FLOWS = ['loush-jira-implement', 'loush-feature', 'loush-pr-review', 'loush-test-cases', 'loush-bug-fix']
+app.post('/api/runs/dispatch', (req, res) => {
+  const { proj, flow } = req.body || {}
+  const ticket = String(req.body?.ticket || '').trim()
+  if (!LOUSH_FLOWS.includes(flow)) return res.status(400).json({ error: 'unknown flow' })
+  if (!/^[\w.\/-]+$/.test(ticket)) return res.status(400).json({ error: 'ticket required (letters, digits, . _ / -)' })
+  let dir
+  try { dir = loushSafe(proj, ticket) } catch (e) { return res.status(e.status || 400).json({ error: e.message }) }
+  if (fs.existsSync(path.join(dir, 'state.json')) || fs.existsSync(path.join(dir, 'events.jsonl')))
+    return res.status(409).json({ error: 'a run for this ticket already exists — clear .loush/' + ticket + '/ first' })
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ ticket_id: ticket, flow, phase: 'dispatch', phase_status: 'running', updated_at: new Date().toISOString() }, null, 2))
+  runAgent({ cwd: path.resolve(proj), prompt: `/${flow} ${ticket}`, timeoutMs: 4 * 3600_000 }).catch(() => {}) // fire-and-forget; long-running
+  res.json({ ok: true })
+})
+
+// Gap B scheduler config — enable/disable the cadence loop and edit its jobs. enabled defaults false.
+app.get('/api/scheduler', (req, res) => res.json(readSchedulerConfig(CLAUDE)))
+app.put('/api/scheduler', (req, res) => res.json(writeSchedulerConfig(CLAUDE, req.body || {})))
 
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
@@ -4509,4 +4594,5 @@ app.listen(PORT, () => {
   // start the plane-A fetch at boot, not at first request: the inbox badge/notification/Slack push are wrong
   // until it lands, so the clock should start now. Failure is fine — it retries (short backoff), it never caches null.
   engSnapshot(true).then(s => console.log(`[claude-dashboard] eng snapshot ${s?.available ? 'warm' : 'unavailable (will retry)'}`)).catch(() => {})
+  startScheduler({ CLAUDE, port: PORT, runAgent, log: console.log }) // Gap B: cadence loop (opt-in, info-only)
 })
