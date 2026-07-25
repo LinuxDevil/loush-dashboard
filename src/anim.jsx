@@ -1,3 +1,8 @@
+// Presentational animation primitives — CountUp, Stagger, Draw, Spark, Shimmer.
+//
+// These used to live in src/game/ alongside the XP bar, streak flame and achievement wall. When the
+// gamification layer was deleted, these came with it by accident: they are plain React with no game
+// state, used by ten surviving panels. Motion is not a metric — only the scoring was the problem.
 import React, { useEffect, useRef, useState } from 'react'
 
 // Micro-animation primitives, shared by all four dashboards. CSS-first: every one of these is a thin

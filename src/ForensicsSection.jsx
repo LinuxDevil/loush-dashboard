@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
-import { Stagger, CountUp } from './game/index.js'
+import { Stagger, CountUp } from './anim.jsx'
 
 // ---------- 9: session forensics — failure signatures · context pressure · hook blast radius ----------
 // Three panels off the ONE extra parse that already lives in the failStats()/scanTranscripts() walkers.

@@ -6,20 +6,13 @@ import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { toggleOffFile } from './customize-toggle.mjs'
-import mountCursor from './server-cursor.mjs'
-import mountConstitution from './server-constitution.mjs'
-import mountAtoms from './server-atoms.mjs'
 import mountEng from './server-eng.mjs'
-import mountCareer from './server-career.mjs'
 import mountMemory, { retrieveContext } from './server-memory.mjs'
-import mountMindwalk from './server-mindwalk.mjs'
-import mountGame from './server-game.mjs'
-import mountFigmaCapture from './server-figma-capture.mjs'
 import mountFe from './server-fe.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
 import { verdictFrom } from './run-verdict.mjs'
-import { computeUsageHealth, computeRegression } from './career-health.mjs'
-import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from './career-usage-trends.mjs'
+import { computeUsageHealth, computeRegression } from './harness-health.mjs'
+import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from './harness-usage-trends.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -45,15 +38,8 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(express.json({ limit: '10mb' }))
-mountCursor(app, { testMcp: (...a) => mcpTest(...a) }) // /api/cursor/* — fully separate Cursor dashboard
-mountConstitution(app) // /api/constitution/* — .wakeel/constitution insights, shared by both dashboards
-mountAtoms(app) // /api/atoms/* — feature catalog + grounded ask-the-project search, shared by both dashboards
 mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
-mountCareer(app, { track: (...a) => track(...a), readJson: (...a) => readJson(...a) }) // /api/career/* — personal Career dashboard
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
-mountMindwalk(app) // /api/mindwalk/* — runs the mindwalk binary (Claude sessions, or transcoded Cursor ones)
-mountGame(app) // /api/game — XP/levels/achievements from outcome events. Self-only: no cross-person leaderboard, ever
-mountFigmaCapture(app) // /api/figma-capture/* — annotate Figma screenshots with design-system component mappings
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
 mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })

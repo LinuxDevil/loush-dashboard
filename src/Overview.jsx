@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
-import { GameStats, AchievementGrid, CountUp, Draw } from './game/index.js'
+import { CountUp, Draw } from './anim.jsx'
 
 // A number that counts up on mount — but ONLY when it is a real number. This app renders honest nulls
 // (a suppressed / not-configured / stale value is '—', never a fake 0), so anything non-numeric is passed
@@ -162,7 +162,6 @@ export default function Overview({ onNav }) {
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
   const [cap, setCap] = useState(null)
-  const [showAch, setShowAch] = useState(false)
 
   useEffect(() => {
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
@@ -286,16 +285,6 @@ export default function Overview({ onNav }) {
       {/* The reward, deliberately at the foot of the page — after the work that needs a human, not above it.
           Your own body of work over your own past: level, XP, streak, closest badge. Self-only, no leaderboard.
           The full wall lives one click away so it never competes with the delivery tiles for the fold. */}
-      <div style={{ marginTop: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', margin: '8px 2px 10px', flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ font: `600 12px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6a615a' }}>Your body of work</div>
-          <button className="mini press" style={{ marginTop: 0 }} onClick={() => setShowAch(s => !s)}>
-            {showAch ? 'hide achievements ▾' : 'all achievements →'}
-          </button>
-        </div>
-        <GameStats dashboard="claude" />
-        {showAch && <div className="enter"><AchievementGrid dashboard="claude" /></div>}
-      </div>
     </div>
   )
 }

@@ -6,7 +6,7 @@ import {
   TicketLink, PRLink, PrBadge, Checks, ProjTag, sel, miniBtn, primaryBtn, inp, useCopy, fx, lc, fdate, fdt, initials, colorFor,
 } from './eng/ui.jsx'
 import { of, stat, pos, pctl, MIN_N, spread, delta as statDelta } from './eng/stats.js'
-import { CountUp } from './game/index.js'
+import { CountUp } from './anim.jsx'
 import { Scatter, Lines, Split, typeColor } from './eng/charts.jsx'
 import { TimeLens, resolveWindow, prevWindow, shippedIn } from './eng/TimeLens.jsx'
 import { useUrlState } from './eng/urlState.js'

@@ -4,8 +4,6 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node --watch server.mjs\" \"vite --open\"",
-    "atoms:index": "node atoms/ingest.mjs",
-    "catalog:refresh": "node scripts/refresh-design-catalog.mjs",
     "start": "npm run dev",
     "test": "node --test"
   },

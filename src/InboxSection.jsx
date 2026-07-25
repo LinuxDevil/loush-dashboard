@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtDate, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { Tabs } from './GovernanceSection.jsx'
-import { Stagger, CountUp } from './game/index.js'
+import { Stagger, CountUp } from './anim.jsx'
 
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"

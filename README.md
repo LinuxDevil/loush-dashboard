@@ -6,6 +6,35 @@
 
 Local web UI to view and manage the real files that power your Claude Code setup. Not a mock — every write goes to the actual config files, with a timestamped backup taken first.
 
+## What was removed, and why
+
+Five adversarial audits of this repo found 32,757 LOC across 4 separate SPA shells and 81 leaf panels
+serving about 4 real jobs, with 48% of frontend modules having exactly one commit — written once,
+never revisited. The following were deleted rather than demoted, because "demote" was the repo's
+characteristic verb and it is how 81 panels accumulated:
+
+- **Cursor shell** (`CursorDashboard.jsx`, `src/cursor/`, `server-cursor*.mjs`) — a second product's
+  analytics inside a Claude Code dashboard, 33 endpoints, zero tests, reading Cursor's private SQLite.
+- **Career shell** (`CareerDashboard.jsx`, `src/career/`, `server-career.mjs`, 21 `career-*.mjs`) —
+  eleven tabs of self-reported journaling opened at review time, plus the `server-team.mjs` surface it
+  alone mounted. It was the best-tested area in the repo; that inversion was the point.
+- **Constitution + Atoms** — a repo-knowledge RAG keyed to a `.wakeel/` layout that does not exist
+  here, so both sections rendered a 404 string as their entire tab.
+- **Labs** (Mindwalk, Agent Squads, Squad Designer) — the README already called them demos. Mindwalk
+  shelled out to a `mindwalk` binary that is not in this repo.
+- **Gamification** (`src/game/`, `server-game.mjs`) — see below.
+- **Figma Capture** + `design-system-catalog.json` — the catalog was a regex scrape of one company's
+  remote Storybook, shipped as every project's component list, and the repo scanner required a path
+  segment literally named `app`, so it returned nothing for a standard `src/components/` layout.
+- **`dist/`** — a build artifact that was tracked, so a stale bundle shipped alongside every change.
+
+Kept deliberately, against the audit: `server-memory.mjs` (Overview's recall tile and chat grounding
+depend on it) and `harness-health.mjs` / `harness-usage-trends.mjs` (renamed from `career-*`, they
+feed the Harness Usage panel, not the deleted career shell).
+
+Net: **~15,300 lines and 100 endpoints removed**, with the full test suite still green and every
+surviving endpoint verified 200.
+
 ## Start
 
 ```
@@ -35,7 +64,6 @@ The only join between them is `/api/roi`, which **drops the author/assignee fiel
 | **Delivery** | `/api/eng/snapshot?project=all` (plane A) | The Engineering Metrics dashboard, **folded into this shell** — the four-shell portal is gone, because the split was the defect: the only genuinely team-wide data in the repo used to sit behind a chip nobody clicked. Tabs: **Engineering** (the whole Eng app: Attention Queue, **Review flow** — now also PR pickup-time and PR-size distributions, both team-level, no author breakdown — Quality, Investment, Predictability, Epics, CI, Load, Board, Members, OKRs, Export), **Idea → prod funnel** (median working-days per stage over 90d, split queue vs active, p50/p90, headlined by lead time − cycle time = "time it sat waiting on us"), **DORA** (deployment frequency + lead-time-for-changes against Google Cloud's elite/high/medium/low bands, both derived from existing JIRA+GitHub data; change-failure-rate and MTTR render as honest "no data source" cards rather than a fabricated proxy — this repo has no deploy/incident feed), **AI ROI** (cohort only; `$` per shipped point now paired with a **rework rate** guardrail tile — reopens/re-entries as a % of shipped tickets — so a cheap-and-fast cohort with rising rework doesn't read as a win), **1:1 prep**. |
 | **Capabilities** | `/api/capabilities`, `POST /api/capabilities/archive` | The **ROI ledger** leads: name / always-on tok / fires 30d / fires 90d / last fired / tok-per-fire / verdict (**DEAD** never fired · **COLD** not in 30d · **HOT**), headlined *"you pay N tok every session for M capabilities — K of them have never fired"*. Select rows → archive: **dry-run first, backed up, reversible** (same versioned write path as everything else). Then Skills / Commands / Agents CRUD, the Flow graph, and — demoted here from the landing page and reframed as an **authoring aid, not a metric** — the Inventory table with its static frontmatter lint. A perfect-scoring skill that never fires is worthless; a scruffy one invoked daily is your most valuable file. |
 | **Harness** | transcripts (read-only), `~/.claude/settings.json`, `/api/gov/*` | **Sessions**: sortable ledger with real per-session `$`, out tok, cache-read %, duration, tool calls, compactions, errors; copy `cd <cwd> && claude --resume <id>`, reveal in Finder, open raw. Keyboard layer: `/` focus filter, `j`/`k` move, `y` copy resume, `↵` open. **Context Explorer**: pick any real session and replay its context-window occupancy turn by turn — each point is one assistant turn's *total* prompt size (fresh + cache-write + cache-read, straight from Anthropic's usage block, no reconstruction needed), plotted against the 200k/1M budget with detected `/compact` resets marked. **Forensics**: failure signatures grouped and counted ("this has bitten you 181 times"), context pressure by tool (share of every byte pulled into context, median/p90, HOG flag) with **cap this tool** (installs a PostToolUse hook), and hook blast radius (firings / blocks / block rate / p50-p90 latency) with **disable**. **Usage**: a Harness health score (A–F; cost trend, cache efficiency, context overhead) with a week-over-week regression warning, month-end cost projection against an editable budget, cache-TTL waste estimate (best vs worst 7-day cache hit-rate), a usage-anomaly table (days spiking >2× the trailing baseline — a runaway/looping-agent tell), the 18-week output-token heatmap, tool bars and model bars — all demoted off the landing page. **Team baseline**: one row per team repo (on-baseline / drifted / never-scaffolded / not-cloned) against a `team-harness.json` committed in a shared repo. Plus Config, Governance, Reliability, Library, MCP. |
-| **Labs** | — | Mindwalk (3D repo replay), Agent Squads, Squad Designer. Demos. They cost money per run and they do not outrank delivery data in the sidebar. |
 | **Projects** | reads `~/.claude.json` → `projects`, each project's `.claude/{skills,commands,agents}` + `.mcp.json` + `.planning/ROADMAP.md`, and transcripts in `~/.claude/projects/` (read-only) | Card per project Claude Code has opened: **running now** (session/subagent transcript written within the last 5 min — pulsing dot, auto-refreshes every 30s), session count, per-project **token usage** (out / in+cache / messages) attributed from transcripts, most-used model, last-active time, **GSD progress** bar when a `.planning/ROADMAP.md` exists (checked vs unchecked items), and the project's own skills/commands/agents/MCP servers (expandable name lists). The current project is highlighted; deleted-but-remembered projects are flagged. |
 | **Skills** | `~/.claude/skills/<name>/SKILL.md` (+ `./.claude/skills` if it exists) | List, edit (CodeMirror), preview (parsed YAML frontmatter + rendered markdown + "what triggers this skill"), create from template, delete. Supporting assets (e.g. `references/*.md`) are listed in the preview. |
 | **Prompts / Commands** | `~/.claude/commands/*.md` (+ `./.claude/commands`) | Same CRUD. "Test run" panel substitutes your typed args into `$ARGUMENTS` and shows the exact expanded prompt. |
@@ -49,13 +77,11 @@ The only join between them is `/api/roi`, which **drops the author/assignee fiel
 | Feature | Where | Notes |
 |---|---|---|
 | **Flow Graph** | sidebar → Flow Graph | SVG orchestration topology: entry → skills/commands → agents → MCP. Toggle **defined** (parsed from skill/agent bodies) vs **observed** (real invocations from transcripts, edge width = frequency). Click a node to isolate its up/downstream path; flags dead ends (never ran), cycles, and the most-traveled path. Scope-aware. |
-| **Career dashboard** | sidebar footer → *switch dashboard* → `⇄ Career` (`?dash=career`) | Personal career-development shell: seven panels (Me/Now, Tasks + reco + risk + acted-on, Flow/SPACE, Quality/DORA, Insights/project, Brag + retro + promo, 1:1 Prep + log). Reads `~/.claude/usage-data/{facets,session-meta}`, taskboard, bugs. Writes `~/.claude/career.json` (versioned). Bug counts: escaped defects only (review findings tracked separately). Refresh: incremental (mtime-cached). **Friction pulse** on Me/Now: a weekly 1-tap self-report ("how blocked did you feel this week?" 1–5 + optional note) plus a 12-entry sparkline — the one self-report signal in an otherwise fully telemetry-derived dashboard. Stored in `career.json` under the existing authored-config boundary: self-only, never rolled up, never exported, no manager view. |
 | **Chat Insights** | sidebar → Chat Insights | Stats tab: chats, one-shot rate, cost/chat, day×hour heatmap, correction/abandon/reuse rates, leaderboards. Duplicate prompts tab: exact+fuzzy (Jaccard) clusters with **save as command** / **send to Prompt Studio** actions; similarity slider, project + time filters. |
 | **Inbox — digest & notifications** | sidebar → Inbox | Daily digest tab (shipped commits, spend, drift, attention items) and Notifications tab (desktop + Slack webhook; the server pushes new error/warning items every 60s while running). The Slack push posts to a **channel** — it never @-mentions a person on your behalf. The Notifications tab also hosts the **Scheduler** panel (below). |
 | **Scheduler — unattended cadence loop (ADP L3/L4a)** | Inbox → Notifications → *Scheduler* | An in-process cadence loop (`scheduler.mjs`, `dashboard-scheduler.json`) whose results land in the Inbox as info-only, self-only harness items. **Opt-in — off by default; the master checkbox is the kill switch.** Three job kinds: **digest** (no LLM — the weekly career digest on a timer), **dispatch** (auto-starts board tickets sitting in a trigger stage through the same worktree + gated `▸Start` path — bounded by `maxDispatch` and a **daily cost ceiling** that halts dispatch; concurrency/dedup come free from the board's own start guards), and **remediate** (maps the existing SLO-breach signals — a red main, a 0%-pass eval — to the exact reversible command, `git revert` / `gov-rollback`, dropped in the Inbox). **remediate is propose-only: nothing auto-runs on a shared repo** — the trigger stays a human's, matching this app's copy-for-human invariant. Add jobs with the two buttons; edit trigger stage / project / ceiling in `~/.claude/dashboard-scheduler.json`. Failed jobs retry with backoff before parking a cadence. |
 | **Run verdict & batch approve (ADP L2)** | Workflows → Loush Runs | Each run gets one aggregated verdict — **PASSING / BLOCKED / NEEDS-HUMAN** (`run-verdict.mjs`, pure) — from review severity + phase/terminal state + retry caps, shown as a badge with a `?verdict=` filter and a KPI. Converged runs awaiting sign-off get a checkbox and an **"approve all converged"** bar (`POST /api/runs/approve-batch`) — the human supervises a batch instead of one run at a time. |
 | **Chat grounding & review trail (ADP L1)** | Chat | Each turn prepends top curated-**memory** hits to the *model's* copy (viewers still see clean text) and asks it to cite `[memory:<name>]` (`retrieveContext()` in `server-memory.mjs`). Under every assistant reply, **✓ accept / ✗ reject** records a review-trail entry (`chat-review-trail.json`) so "a human reviewed every output" is logged, not implicit. |
-| **Team designer** | Labs → Squad Designer | Compose a team (members with brief, model, agent type, inputs/outputs, artifacts, initial tasks, skills, MCP connectors, ADRs). Live static config checklist, plus **✦ AI review**: a real `claude -p` pass that scores the design, gives per-member verdicts (keep / **just-a-prompt** / unnecessary / merge), derives IO contracts, artifacts, task lists, per-member skills/connectors/ADRs, the collaboration map, and risks (costs a few cents). "Launch team" hands the kickoff prompt to Chat. Designs persist in `~/.claude/team-designs.json`. The **⚡ Enable agent teams** button writes the experimental env flag to global settings.json (versioned; takes effect next CLI session). |
 | **Bugs** | sidebar → Bugs | Bug triage workspace (`~/.claude/bugs.json`): paste a trace/log/link — file paths, functions and stack frames auto-extracted. **Auto-bisect** runs real `git bisect` against your repro command and surfaces the culprit commit + author + diffstat. **Root-cause session** prefills Chat with the trace, `@suspect-files` and `git blame` context. Marking fixed records the active config version; regression-test generator and a copyable `gh pr create` command included. Filter by project/severity/status/age. |
 | **Hooks (extended)** | sidebar → Hooks | Real Claude Code hooks as first-class config: visual per-scope list with add/remove, **matcher tester** (live regex vs sample tool), **dry-run** (runs the actual command with a sample tool-call payload on stdin → allow/BLOCK/latency), **health** (firings by event parsed from transcripts, blocks observed), and a one-click **pattern library** (block-prod-file-edit, secret-scan-pre-write, require-tests-before-stop, log-tool-usage). |
 | **CI eval gate** | Reliability → CI gate | Generates the GitHub Action / GitLab CI config that runs the eval suite headlessly on PRs touching `.claude/` (evals copied into the repo), with a configurable merge-blocking pass-rate threshold. CI runs shown inline via `gh`, tagged CI vs manual. Dry-run preview before writing. |
@@ -75,7 +101,7 @@ The only join between them is `/api/roi`, which **drops the author/assignee fiel
 
 ## What was deleted, and why
 
-The gamification layer is **gone** — deleted, not hidden behind a flag.
+The gamification layer is **gone** — and this time the code agrees with the sentence. It was deleted once, re-added two commits later the same day as `src/game/` + `server-game.mjs`, and the tombstone comment sat three lines below the import that contradicted it until it was removed for real. The presentational helpers (`CountUp`, `Stagger`, `Draw`) survive as `src/anim.jsx`: motion is not a metric, only the scoring was the problem.
 
 - **Pilot Level, the XP bar, the 🔥 streak, the 10 achievement badges, the `Lv N · 🔥Nd` topbar chip.** XP was literally all-time assistant *message count*, so the fastest way to level up was a long, thrashing, unproductive conversation: the metric rewarded exactly the behaviour the tool exists to reduce. And a token-count level plus a streak is one product decision away from a per-engineer leaderboard, at which point every number on the screen stops being trusted. `src/Gamification.jsx` no longer exists.
 
@@ -84,8 +110,7 @@ Demoted rather than deleted:
 - **Setup-health ring, the Level/Specificity columns, the Quality distribution panel** → Capabilities, as an authoring aid. All three rendered the same static frontmatter heuristic. That is a linter, not a metric. What replaced it as *the* metric is fires × always-on cost (the ROI ledger).
 - **"cache saved $"** → out of the KPI row, down to small type on the Sessions page. It is an estimate (90% of input price) × an estimate (~4 chars/token), measured against a counterfactual that never happened, and it only ever goes up. No decision hangs on it.
 - **The Inventory table** → Capabilities. **Tool-usage bars, model bars, the 18-week output-token heatmap** → Harness → Usage. The heatmap is a green-squares clone measuring token volume — a proxy for "was he typing", and the first panel anyone would screenshot to judge someone.
-- **Mindwalk, Agent Teams, Team Designer** → one collapsed **Labs** entry.
-- **The four-shell portal.** Eng folded in as the Delivery section. Cursor and Career moved out of the topbar into a sidebar-footer *switch dashboard* menu — being one click from an IC's Overview is precisely what made this app feel like it was watching him.
+- **The four-shell portal.** Eng folded in as the Delivery section; Cursor and Career are deleted outright (see below).
 
 Two things this app will never do: **auto-nudge** (every nudge copies a line for a human to send) and **ingest another engineer's transcripts, tokens or active hours**.
 
@@ -107,7 +132,6 @@ Two things this app will never do: **auto-nudge** (every nudge copies a line for
 | `GET /api/scheduler` · `PUT /api/scheduler` | The cadence-loop config (`{enabled, jobs[]}`); jobs are digest / dispatch / remediate. Off by default |
 | `GET /api/runs[?verdict=]` · `POST /api/runs/approve-batch` | Loush runs with the aggregated PASSING/BLOCKED/NEEDS-HUMAN verdict; batch-approve converged runs |
 | `POST /api/chat-review` | Records a per-output accept/reject review-trail entry (L1) |
-| GET /api/cursor/export?kind=sessions\|bubbles\|blame\|tools\|spend\|accept\|join&days=N | Raw NDJSON dump of any Cursor panel's backing rows (local plane only) |
 
 ## Backups
 

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, Empty, H1, miniBtn, primaryBtn, useCopy, first, fx } from './ui.jsx'
-import { GameStats, Stagger } from '../game/index.js'
+import { Stagger } from '../anim.jsx'
 
 // §1 — THE landing route. ONE ranked list of the server's triage records. No charts. No kanban.
 // Row = subject · owner · what is stuck · how long · how far over budget · an ACTION.
@@ -149,10 +149,6 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
         This is the reward you scroll down to AFTER triage: your own XP/level/streak and the single badge
         you are closest to (self-only — there is NO team XP and NO XP on any person row up in the queue).
         It scopes `recent` to eng outcomes — ships, PRs merged, reviews given, red mains fixed. */}
-    <div style={{ marginTop: 4 }}>
-      <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8a807a', margin: '2px 2px 8px' }}>Your delivery progress · just you, measured against your own past</div>
-      <GameStats dashboard="eng" compact />
-    </div>
   </section>
 }
 const Chip = ({ on, onClick, c, children, title }) => <button onClick={onClick} title={title} style={{ padding: '4px 10px', borderRadius: 7, cursor: 'pointer', font: `600 10px ${MONO}`, letterSpacing: '0.03em', border: `1px solid ${on ? c : 'rgba(255,255,255,0.12)'}`, background: on ? c + '22' : 'transparent', color: on ? c : '#8a807a' }}>{children}</button>

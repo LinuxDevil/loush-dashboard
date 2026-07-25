@@ -7,8 +7,6 @@ import ArtifactsSection from './ArtifactsSection.jsx'
 import Overview from './Overview.jsx'
 import ProjectsSection from './ProjectsSection.jsx'
 import ChatSection from './ChatSection.jsx'
-import TeamsSection from './TeamsSection.jsx'
-import TeamDesigner from './TeamDesigner.jsx'
 import HarnessSection from './HarnessSection.jsx'
 import ContextExplorerSection from './ContextExplorerSection.jsx'
 import GovernanceSection from './GovernanceSection.jsx'
@@ -24,12 +22,6 @@ import BugsSection from './BugsSection.jsx'
 import QualitySection from './QualitySection.jsx'
 import BoardSection from './BoardSection.jsx'
 import QuickActions from './QuickActions.jsx'
-import CursorDashboard from './CursorDashboard.jsx'
-import CareerDashboard from './CareerDashboard.jsx'
-import ConstitutionSection from './ConstitutionSection.jsx'
-import FigmaCaptureSection from './FigmaCaptureSection.jsx'
-import MemorySection from './MemorySection.jsx'
-import MindwalkSection from './MindwalkSection.jsx'
 import DeliverySection from './DeliverySection.jsx'
 import WorkingSet from './WorkingSet.jsx'
 import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
@@ -38,7 +30,6 @@ import ForensicsSection from './ForensicsSection.jsx'
 import UsagePanel from './UsagePanel.jsx'
 import TeamBaseline from './TeamBaseline.jsx'
 import Palette from './Palette.jsx'
-import { UnlockToast } from './game/index.js'
 import { api, forceFresh } from './api.js'
 
 // THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
@@ -98,32 +89,17 @@ const SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
-  { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
-  { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
-  { id: 'figma-capture', label: 'Figma Capture', icon: '▣', kicker: 'Design', title: 'Figma Capture — annotate design screenshots with component mappings', el: <FigmaCaptureSection /> },
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
-  // Mindwalk + Agent Teams + Team Designer are demos. Both cost money per run and neither should outrank
-  // delivery data in the sidebar. One collapsed entry.
-  { id: 'labs', label: 'Labs', icon: '⚗', kicker: 'Experimental', title: 'Labs — demos, not delivery data', el: (
-    <Hub items={[
-      { label: 'Mindwalk', el: <MindwalkSection /> },
-      { label: 'Agent Squads', el: <TeamsSection /> },
-      { label: 'Squad Designer', el: <TeamDesigner /> },
-    ]} />
-  ) },
 ]
 
-const DASHBOARDS = [
-  ['cursor', '⇄ Cursor', 'read-only view of your Cursor usage'],
-  ['career', '⇄ Career', 'your personal growth dashboard'],
-]
 
-function SidebarFoot({ onDash }) {
+// There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;
+// both are deleted, so the switcher has nothing to switch to. What remains is the harness-health strip.
+function SidebarFoot() {
   const [h, setH] = useState(null)
   const [alerts, setAlerts] = useState([])
-  const [open, setOpen] = useState(false)
   useEffect(() => {
     const load = () => {
       api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
@@ -137,18 +113,6 @@ function SidebarFoot({ onDash }) {
   const issue = h && !h.ok ? h.conflicts[0] : alerts[0]?.text
   return (
     <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {open && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: 6, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          {DASHBOARDS.map(([id, label, hint]) => (
-            <button key={id} onClick={() => onDash(id)} title={hint}
-              style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '7px 10px', borderRadius: 9 }}>{label}</button>
-          ))}
-        </div>
-      )}
-      <button onClick={() => setOpen(o => !o)} title="the other shells — deliberately not one click from Overview"
-        style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <span className="nav-icon">⇄</span> switch dashboard {open ? '▾' : '▸'}
-      </button>
       <div className="sidebar-foot" style={{ marginTop: 0 }} title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
         <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
           {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
@@ -164,13 +128,6 @@ export default function App() {
   // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
   // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
   const initial = new URLSearchParams(window.location.search).get('dash') || 'claude'
-  const [dash, setDash] = useState(initial === 'eng' ? 'claude' : initial)
-  const goDash = (name) => {
-    const q = new URLSearchParams(window.location.search)
-    name === 'claude' ? q.delete('dash') : q.set('dash', name)
-    history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
-    setDash(name)
-  }
   const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview')
   const [inboxCount, setInboxCount] = useState(0)
   const [stale, setStale] = useState(null)
@@ -225,8 +182,6 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener('nav-chat', navChat) }
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
-  if (dash === 'cursor') return <CursorDashboard onSwitch={() => goDash('claude')} />
-  if (dash === 'career') return <CareerDashboard onExit={() => goDash('claude')} />
   return (
     <div className="app">
       <nav className="sidebar">
@@ -237,7 +192,7 @@ export default function App() {
             {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
         ))}
-        <SidebarFoot onDash={goDash} />
+        <SidebarFoot />
       </nav>
       <main className="content">
         <header className="topbar">
@@ -260,7 +215,6 @@ export default function App() {
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
-      <UnlockToast />
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
           {toasts.map(t => {

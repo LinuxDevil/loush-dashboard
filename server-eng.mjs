@@ -7,7 +7,7 @@
 //     whose review a PR waits on, what is stuck). Per-person EVALUATIVE scores are NOT:
 //     no composite score, no ranking, no "delivery skills" radar, no bugs-caused counter.
 //
-//   PLANE B (server.mjs / server-cursor.mjs) = HARNESS TELEMETRY: transcripts, tokens,
+//   PLANE B (server.mjs) = HARNESS TELEMETRY: transcripts, tokens,
 //     cost, session times, active hours. One machine's private data, self-only, forever.
 //
 //   HARD RULES for /api/eng/*:
@@ -1247,7 +1247,7 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
   return { md, model: out.model || 'claude' }
 }
 
-// Named exports for the other data-plane-A modules (server.mjs inbox, server-team.mjs, server-cursor-join.mjs).
+// Named exports for the other data-plane-A consumers (server.mjs inbox, scheduler).
 // Nothing here reads a transcript, a token count or a session — and nothing that does may import from it.
 export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
 

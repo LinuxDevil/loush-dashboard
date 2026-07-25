@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { api } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
-import { Stagger, CountUp, Draw } from './game/index.js'
+import { Stagger, CountUp, Draw } from './anim.jsx'
 
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value

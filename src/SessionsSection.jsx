@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
-import { Stagger, CountUp } from './game/index.js'
+import { Stagger, CountUp } from './anim.jsx'
 
 // ---------- 10: session ledger — real $, terminal escape hatches, keyboard layer ----------
 // The app's only previous "resume" spawned the session INSIDE the dashboard's chat pane, which is not

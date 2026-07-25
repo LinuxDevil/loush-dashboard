@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from './api.js'
 import Skeleton from './Skeleton.jsx'
 import { usePager } from './Pager.jsx'
-import { Stagger, CountUp } from './game/index.js'
+import { Stagger, CountUp } from './anim.jsx'
 
 // ---------- 5: capability ROI ledger — fires × always-on cost ----------
 // This REPLACES Overview's Inventory static-score columns. A "perfect" 92-scored skill that has never
