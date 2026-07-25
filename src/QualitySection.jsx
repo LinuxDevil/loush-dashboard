@@ -104,7 +104,7 @@ function Design() {
     .then(r => { alert(`manifest written: ${r.path} (${r.components} components) — let a Figma MCP session enrich it with node ids & variants`); load() }).catch(e => alert(e.message))
   if (!project) return <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>no projects</div>
   if (!d) return <Skeleton tiles={0} rows={6} />
-  const TYPE = { 'missing-in-code': '#e5484d', 'prop-drift': '#e8a06a', undocumented: '#8b7cf6' }
+  const TYPE = { 'missing-in-code': '#e5484d', 'prop-drift': '#e8a06a', 'variant-drift': '#e8a06a', undocumented: '#8b7cf6' }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -122,10 +122,28 @@ function Design() {
                 <span style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, color: TYPE[x.type], background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>{x.type}</span>
                 <span style={{ font: `500 12px ${MONO}`, color: '#eee3da', flexShrink: 0 }}>{x.component}</span>
                 <span style={{ font: "400 12px 'IBM Plex Sans'", color: '#b0a69e', flex: 1 }}>{x.detail}</span>
-                {x.figmaNode && <a href={`https://www.figma.com/design/?node-id=${encodeURIComponent(x.figmaNode)}`} target="_blank" rel="noreferrer" style={{ font: `400 10px ${MONO}`, color: '#7cc4f7', flexShrink: 0 }}>frame ↗</a>}
+                {/* A Figma URL needs the file key, which the manifest does not carry — the old link
+                    was https://www.figma.com/design/?node-id=… with no file, so it could never
+                    resolve. Show the node id (copyable) unless a real fileKey is present. */}
+                {x.figmaNode && (x.figmaFileKey
+                  ? <a href={`https://www.figma.com/design/${encodeURIComponent(x.figmaFileKey)}/?node-id=${encodeURIComponent(x.figmaNode)}`} target="_blank" rel="noreferrer" style={{ font: `400 10px ${MONO}`, color: '#7cc4f7', flexShrink: 0 }}>frame ↗</a>
+                  : <span title="no Figma fileKey in the manifest — add one to make this a link" style={{ font: `400 10px ${MONO}`, color: '#7a716a', flexShrink: 0 }}>node {x.figmaNode}</span>)}
               </div>
             ))}
-            {d.manifest && d.drifts.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ code and manifest agree</div>}
+            {/* A code-generated baseline cannot disagree with the code it was generated from, so an
+                empty drift list there is not an all-clear — it is "no measurement was possible". */}
+            {d.status?.state === 'baseline-only' && (
+              <div style={{ font: `400 12px ${MONO}`, color: '#e5a03a', lineHeight: 1.6 }}>
+                ⚠ cannot detect drift yet — this manifest was generated from the code, so diffing it
+                against the code will always agree. 0 of {d.status.total} components have a figmaNode
+                or variants. Have a Figma MCP session fill those in; drift becomes measurable from then on.
+              </div>
+            )}
+            {d.status?.driftDetectable && d.drifts.length === 0 && (
+              <div style={{ font: `400 12px ${MONO}`, color: '#3fb96a' }}>
+                ✓ code and manifest agree <span style={{ color: '#7a716a' }}>· {d.status.enriched}/{d.status.total} components carry design-side data</span>
+              </div>
+            )}
             {!d.manifest && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>bootstrap the manifest, then have a Figma MCP session fill in figmaNode ids and variants — drift is diffed against it from then on</div>}
           </div>
           <div style={{ ...PANEL }}>

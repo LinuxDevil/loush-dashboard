@@ -3851,20 +3851,51 @@ function scanComponents(project) {
   for (const d of [...new Set(dirs)]) walkC(d, 0)
   return [...comps.values()]
 }
+// Is this manifest capable of detecting drift at all?
+//
+// POST /api/design/manifest bootstraps the manifest BY SCANNING THE CODE. Diffing that against the
+// same code is diffing a file against a photocopy of itself: drift is zero by construction, and the
+// UI used to render that as a green "code and manifest agree". A manifest only carries information
+// once someone has enriched it from the DESIGN side — real figmaNode ids and real variant lists.
+// Until then we report "cannot detect drift", not "no drift".
+function manifestStatus(manifest) {
+  if (!manifest) return { state: 'none', enriched: 0, total: 0, driftDetectable: false }
+  const comps = Object.values(manifest.components || {})
+  const enriched = comps.filter(c => c.figmaNode || (c.variants || []).length).length
+  if (manifest.generatedFrom === 'code' && enriched === 0)
+    return { state: 'baseline-only', enriched: 0, total: comps.length, driftDetectable: false }
+  return { state: 'enriched', enriched, total: comps.length, driftDetectable: true }
+}
+// A Figma deep link needs the file key as well as the node id; the manifest may carry it per
+// component or once at the top level. Without it the UI shows the node id as text rather than a
+// link that cannot resolve.
+const fileKeyFor = (manifest, spec) => spec.figmaFileKey || manifest.figmaFileKey || null
 function designDrift(project) {
   const manifest = readJson(manifestPath(project), null)
   const code = scanComponents(project)
-  if (!manifest) return { manifest: null, code: code.length, drifts: [] }
+  const status = manifestStatus(manifest)
+  if (!manifest) return { manifest: null, code: code.length, drifts: [], status }
+  // A code-generated baseline cannot contradict the code it came from. Say so rather than
+  // returning an empty drift list that reads as a clean bill of health.
+  if (!status.driftDetectable) return { manifest: manifestPath(project), code: code.length, drifts: [], status }
   const drifts = []
   const byName = Object.fromEntries(code.map(c => [c.name, c]))
   for (const [name, spec] of Object.entries(manifest.components || {})) {
     const c = byName[name]
-    if (!c) { drifts.push({ component: name, type: 'missing-in-code', detail: 'in the Figma manifest but not implemented', figmaNode: spec.figmaNode || null }); continue }
-    for (const p of spec.props || []) if (!c.props.includes(p)) drifts.push({ component: name, type: 'prop-drift', detail: `manifest prop "${p}" not in code (${c.file}) — renamed or dropped?`, figmaNode: spec.figmaNode || null })
-    for (const v of spec.variants || []) if (!c.props.includes('variant') && !(spec.props || []).includes(v)) continue
+    if (!c) { drifts.push({ component: name, type: 'missing-in-code', detail: 'in the Figma manifest but not implemented', figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec) }); continue }
+    for (const p of spec.props || []) if (!c.props.includes(p)) drifts.push({ component: name, type: 'prop-drift', detail: `manifest prop "${p}" not in code (${c.file}) — renamed or dropped?`, figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec) })
+    // Was: `for (const v of spec.variants || []) if (…) continue` — a loop whose entire body was
+    // `continue`, so variants were never checked at all. The prop scan cannot see variant VALUES,
+    // only prop names, so the honest check is the one it can actually make: the design declares
+    // variants, and the component exposes no way to select one.
+    if ((spec.variants || []).length && !c.props.includes('variant'))
+      drifts.push({
+        component: name, type: 'variant-drift', figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec),
+        detail: `manifest declares ${spec.variants.length} variant(s) (${spec.variants.slice(0, 4).join(', ')}) but ${c.file} takes no "variant" prop`,
+      })
   }
   for (const c of code) if (!manifest.components?.[c.name] && c.props.length) drifts.push({ component: c.name, type: 'undocumented', detail: `${c.file} — in code but not in the Figma manifest`, figmaNode: null })
-  return { manifest: manifestPath(project), code: code.length, drifts: drifts.slice(0, 80) }
+  return { manifest: manifestPath(project), code: code.length, drifts: drifts.slice(0, 80), status }
 }
 app.get('/api/design/drift', (req, res) => {
   const project = req.query.project
@@ -3883,9 +3914,14 @@ app.post('/api/design/manifest', (req, res) => { // bootstrap manifest from code
   const project = req.body.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   const comps = scanComponents(project)
-  const manifest = { generatedFrom: 'code', createdAt: Date.now(), components: Object.fromEntries(comps.map(c => [c.name, { props: c.props, variants: [], figmaNode: null }])) }
+  const manifest = {
+    generatedFrom: 'code', createdAt: Date.now(),
+    // Stated in the artifact itself, so it survives being read by anything other than this UI.
+    _note: 'Bootstrapped FROM THE CODE. Until figmaNode ids and variants are filled in from the design side, this file cannot detect drift — it is a copy of the code, and diffing it against the code will always agree. /api/design/drift reports status.state="baseline-only" until then.',
+    components: Object.fromEntries(comps.map(c => [c.name, { props: c.props, variants: [], figmaNode: null }])),
+  }
   track(manifestPath(project), JSON.stringify(manifest, null, 2), { scope: project, summary: 'bootstrap design manifest from code' })
-  res.json({ ok: true, path: manifestPath(project), components: comps.length })
+  res.json({ ok: true, path: manifestPath(project), components: comps.length, driftDetectable: false })
 })
 
 // ---------- 30: code review loop — /review & /security-review history from transcripts ----------

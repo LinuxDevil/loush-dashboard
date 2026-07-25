@@ -13,13 +13,23 @@ const fmtChars = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.
 const ago = t => { if (!t) return '—'; const d = Math.round((Date.now() - t) / 86400_000); return d < 1 ? 'today' : d + 'd ago' }
 const TREND = { up: ['▲', RED], down: ['▼', GREEN], flat: ['–', DIM] }
 
-// "Cap this tool": a PostToolUse hook that truncates that tool's result. Written straight through the
-// existing GET/PUT /api/hooks path (the hook LIBRARY has no truncation pattern — see README).
-const capHook = tool => ({
+// "Flag this tool": a PostToolUse hook that WARNS when a tool result is oversized.
+//
+// This used to be called "cap" and its message told the model the result had been "truncated to 20k
+// to protect the context window". It truncated nothing. A PostToolUse hook receives the tool result
+// and can add context; there is no supported way for it to replace or shorten the result the model
+// already received. So the old hook did the exact opposite of its name: it ADDED tokens to an
+// already-oversized context, and it told the model a truncation had happened that had not — which is
+// worse than useless, because the model then reasons about output it believes was cut short.
+//
+// The honest version warns, and says what to do instead. The message is kept to one short line
+// precisely because it costs context: a warning that bloats the window it is warning about is silly.
+const OVERSIZE_CHARS = 20000
+const oversizeWarnHook = tool => ({
   matcher: tool,
   hooks: [{
     type: 'command', timeout: 10,
-    command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const r=JSON.stringify(j.tool_response??'');if(r.length>20000)console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:'[dashboard] ${tool} result was '+r.length+' chars — truncated to 20k to protect the context window'}}))})"`,
+    command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const r=JSON.stringify(j.tool_response??'');if(r.length>${OVERSIZE_CHARS})console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:'[dashboard] ${tool} returned '+r.length+' chars (>${OVERSIZE_CHARS}). Not truncated — narrow the next call instead (offset/limit, a tighter glob, or head).'}}))})"`,
   }],
 })
 
@@ -31,15 +41,15 @@ export default function ForensicsSection() {
   const load = () => api.get('/api/forensics?days=' + days).then(setD).catch(() => {})
   useEffect(() => { setD(null); load() }, [days])
 
-  const capTool = async name => {
-    if (!confirm(`Install a PostToolUse hook that flags ${name} results over 20k chars?\n\nWritten to ~/.claude/settings.json (backed up first).`)) return
+  const flagTool = async name => {
+    if (!confirm(`Install a PostToolUse hook that WARNS when a ${name} result exceeds ${OVERSIZE_CHARS.toLocaleString()} chars?\n\nIt does not truncate — Claude Code has no supported way for a PostToolUse hook to shorten a result the model has already received. It adds one short line telling the model to narrow the next call.\n\nWritten to ~/.claude/settings.json (backed up first).`)) return
     setBusy(true)
     try {
       const all = await api.get('/api/hooks')
       const hooks = { ...(all.user?.settings?.hooks || {}) }
-      hooks.PostToolUse = [...(hooks.PostToolUse || []), capHook(name)]
+      hooks.PostToolUse = [...(hooks.PostToolUse || []), oversizeWarnHook(name)]
       await api.put('/api/hooks', { scope: 'user', hooks })
-      toast(`capped ${name} · the old settings.json is backed up`, 'success')
+      toast(`${name} oversized results will now be flagged · the old settings.json is backed up`, 'success')
       load()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
   }
@@ -133,7 +143,7 @@ export default function ForensicsSection() {
                   <td className="num">{fmtChars(t.medianChars)}</td>
                   <td className="num" style={{ color: t.p90Chars > 50000 ? RED : undefined }}>{fmtChars(t.p90Chars)}</td>
                   <td className="num">{t.results}</td>
-                  <td><button className="mini" style={{ marginTop: 0 }} disabled={busy} title={`install a PostToolUse hook that flags ${t.name} results over 20k chars`} onClick={() => capTool(t.name)}>cap</button></td>
+                  <td><button className="mini" style={{ marginTop: 0 }} disabled={busy} title={`install a PostToolUse hook that warns when a ${t.name} result exceeds ${OVERSIZE_CHARS.toLocaleString()} chars. It does not truncate — no PostToolUse hook can.`} onClick={() => flagTool(t.name)}>flag</button></td>
                 </tr>
               ))}
             </tbody>
