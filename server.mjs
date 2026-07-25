@@ -10,6 +10,7 @@ import mountEng from './server-eng.mjs'
 import mountMemory, { retrieveContext } from './server-memory.mjs'
 import mountFe from './server-fe.mjs'
 import mountSetup from './server-setup.mjs'
+import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPABILITY_DAYS } from './harness-metrics.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
 import { verdictFrom } from './run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from './harness-health.mjs'
@@ -559,8 +560,12 @@ function overviewItems() {
         const content = fs.readFileSync(file, 'utf8')
         const { fm, body } = parseFM(content)
         const score = scoreItem(fm, body, kind)
+        // mtime is a lower bound on age — editing resets it — but that errs toward withholding a
+        // DEAD verdict rather than inventing one for a capability installed this morning.
+        let mtime = null
+        try { mtime = fs.statSync(file).mtimeMs } catch {}
         push(kind, name, {
-          scope, group: groupOf(name, kind),
+          scope, group: groupOf(name, kind), mtime,
           descTokens: tokens(String(fm.description || '')), // always in context (metadata listing)
           fullTokens: tokens(content),                       // loaded when invoked
           score, level: levelOf(score), specificity: specificityOf(fm, kind),
@@ -2762,29 +2767,41 @@ function capabilityLedger() {
   const real = sessions.filter(s => !s.isAgent)
   const sessions30 = real.filter(s => s.last >= d30).length
   const sessions90 = real.filter(s => s.last >= d90).length
+  const sessionTimes = real.map(s => s.last).filter(Boolean)
   const rows = items.filter(i => CAP_KIND[i.kind]).map(i => {
     const u = use[CAP_KIND[i.kind] + ':' + i.name] || { c30: 0, c90: 0, all: 0, last: 0 }
+    // Scope BOTH the verdict and the tax to the capability's own lifetime. Charging a skill
+    // installed yesterday for 90 days of sessions — and calling it DEAD for never having fired in
+    // sessions that predate it — is the same bug twice.
+    const ageDays = i.mtime ? (now - i.mtime) / 86400_000 : null
+    const sinceInstall = sessionsSince(sessionTimes, i.mtime ?? null, d90)
     return {
       kind: i.kind, name: i.name, scope: i.scope, group: i.group,
       alwaysOnTokens: i.descTokens || 0,   // in context on EVERY session (the metadata listing)
       fullTokens: i.fullTokens || 0,       // loaded only when it actually fires
       fires30: u.c30, fires90: u.c90, firesAll: u.all, last: u.last || null,
-      // the always-on tax you actually paid per fire over 90d (descTokens × sessions ÷ fires)
-      tokPerFire: u.c90 ? Math.round((i.descTokens || 0) * sessions90 / u.c90) : null,
-      verdict: !u.all ? 'DEAD' : u.c30 === 0 ? 'COLD' : 'HOT',
+      installedAt: i.mtime ?? null,
+      ageDays: ageDays == null ? null : Math.round(ageDays),
+      sessionsSinceInstall: sinceInstall,
+      tokPerFire: tokPerFire({ descTokens: i.descTokens || 0, fires: u.c90, sessionsSinceInstall: sinceInstall ?? sessions90 }),
+      verdict: capabilityVerdict({ firesAll: u.all, fires30: u.c30, ageDays }),
     }
   })
-  const rank = { DEAD: 0, COLD: 1, HOT: 2 }
+  const rank = { DEAD: 0, COLD: 1, NEW: 2, HOT: 3 }
   rows.sort((a, b) => rank[a.verdict] - rank[b.verdict] || b.alwaysOnTokens - a.alwaysOnTokens || b.fires90 - a.fires90)
   const sum = (l, f) => l.reduce((s, x) => s + f(x), 0)
   const dead = rows.filter(r => r.verdict === 'DEAD'), cold = rows.filter(r => r.verdict === 'COLD')
+  const fresh = rows.filter(r => r.verdict === 'NEW')
   const alwaysOn = sum(rows, r => r.alwaysOnTokens)
   return {
     items: rows, sessions30, sessions90,
     headline: {
       alwaysOnTokens: alwaysOn, deadCount: dead.length, deadTokens: sum(dead, r => r.alwaysOnTokens),
-      coldCount: cold.length, coldTokens: sum(cold, r => r.alwaysOnTokens), hotCount: rows.length - dead.length - cold.length,
-      text: `you pay ${alwaysOn.toLocaleString()} tok every session for ${rows.length} capabilities — ${dead.length} of them (${sum(dead, r => r.alwaysOnTokens).toLocaleString()} tok/session) have never fired`,
+      coldCount: cold.length, coldTokens: sum(cold, r => r.alwaysOnTokens),
+      newCount: fresh.length, newTokens: sum(fresh, r => r.alwaysOnTokens), newAfterDays: NEW_CAPABILITY_DAYS,
+      hotCount: rows.length - dead.length - cold.length - fresh.length,
+      text: `you pay ${alwaysOn.toLocaleString()} tok every session for ${rows.length} capabilities — ${dead.length} of them (${sum(dead, r => r.alwaysOnTokens).toLocaleString()} tok/session) have never fired`
+        + (fresh.length ? ` · ${fresh.length} more are too new to judge (installed < ${NEW_CAPABILITY_DAYS}d ago)` : ''),
     },
   }
 }
@@ -2855,15 +2872,13 @@ app.get('/api/forensics', (req, res) => {
     compactions += r.compactions
     if (r.compactions || r.turns) perSession.push({ sessionId: r.sessionId, proj: r.proj, compactions: r.compactions, turns: r.turns, errors: Object.values(r.toolErrs).reduce((a, b) => a + b, 0), last: r.last })
   }
-  const totalBytes = Object.values(bytes).reduce((a, b) => a + b, 0)
-  const tools = Object.keys(bytes).map(name => {
-    const med = median(sizes[name] || [0])
-    return {
-      name, chars: bytes[name], share: totalBytes ? +(bytes[name] / totalBytes).toFixed(3) : 0,
-      results: (sizes[name] || []).length, medianChars: Math.round(med), p90Chars: Math.round((sizes[name] || []).sort((a, b) => a - b)[Math.floor(((sizes[name] || []).length - 1) * 0.9)] || 0),
-      hog: med >= 20000, // median result over ~20k chars = this tool is eating your context window
-    }
-  }).sort((a, b) => b.chars - a.chars).slice(0, 20)
+  // `share` used to be presented under a context-WINDOW heading while actually being the share of
+  // tool-result characters — a different denominator that excludes the system prompt, CLAUDE.md,
+  // user turns and assistant output. Renamed, tokens estimated explicitly, medians null-safe, and
+  // the p90 no longer sorts the caller's array in place. See harness-metrics.mjs.
+  const pressure = contextPressure({ bytesByTool: bytes, sizesByTool: sizes })
+  const tools = pressure.tools
+  const totalBytes = pressure.totalChars
 
   // (c) hook blast radius
   const { hookEvents } = scanTranscripts()
@@ -2889,7 +2904,10 @@ app.get('/api/forensics', (req, res) => {
     days, plane: 'harness', sessions: recs.length,
     failures,
     context: {
-      tools, totalChars: totalBytes, compactions,
+      tools, totalChars: totalBytes,
+      totalEstTokens: pressure.totalEstTokens, charsPerToken: pressure.charsPerToken,
+      denominator: pressure.denominator, // so the client cannot re-label this as "share of context"
+      compactions,
       compactionsPerSession: recs.length ? +(compactions / recs.length).toFixed(2) : 0,
       biggest: big.sort((a, b) => b.chars - a.chars).slice(0, 10),
       worstSessions: perSession.sort((a, b) => b.compactions - a.compactions).slice(0, 10),
@@ -3044,11 +3062,27 @@ app.get('/api/roi', async (req, res) => {
     return { bucket: label, pts: lo, aiTouched: cut(ai), untouched: cut(un) }
   })
   const shippedPts = shipped.reduce((s, i) => s + i.pts, 0)
+  // DIMENSIONAL FIX. `spendPerPoint` was `total / shippedPts`: the numerator is THIS MACHINE's Claude
+  // spend (plane B is self-only) and the denominator was the WHOLE TEAM's shipped points, because
+  // the JQL is team-wide and this endpoint deliberately never reads assignee. One person's dollars
+  // divided by everyone's output — on a ten-person team the figure came out ~10x too low, and it
+  // moved when OTHER PEOPLE shipped. A manager scaling a budget on it would have been badly wrong.
+  //
+  // Both sides now describe the same cohort: spend attributed to tickets that shipped in the window,
+  // over the points of exactly those tickets. The team-wide total is still reported, separately and
+  // under a name that says what it is.
+  const shippedWithSpend = shipped.filter(i => spendByTicket[i.key])
+  const cohortSpend = shippedWithSpend.reduce((s, i) => s + (spendByTicket[i.key]?.cost || 0), 0)
+  const cohortPts = shippedWithSpend.reduce((s, i) => s + i.pts, 0)
   res.json({
-    available: true, plane: 'cohort', days, caveat: 'correlational, not causal · AI spend is the viewer\'s own Claude usage (plane B is self-only) · no author/assignee field is read or emitted',
+    available: true, plane: 'cohort', days, caveat: 'correlational, not causal · AI spend is the viewer\'s own Claude usage (plane B is self-only) · spendPerPoint is computed over AI-touched shipped tickets only, so numerator and denominator share a cohort · which tickets get pointed at Claude is a CHOICE, so the cohort split is selection-biased, not a controlled comparison · no author/assignee field is read or emitted',
     headline: {
       spend: +total.toFixed(2), shippedPoints: shippedPts,
-      spendPerPoint: shippedPts ? +(total / shippedPts).toFixed(2) : null,
+      // same-cohort figure: your spend on AI-touched shipped tickets ÷ those tickets' points
+      spendPerPoint: cohortPts ? +(cohortSpend / cohortPts).toFixed(2) : null,
+      spendPerPointBasis: { spend: +cohortSpend.toFixed(2), points: cohortPts, tickets: shippedWithSpend.length },
+      // kept, but named honestly: this is YOUR spend over the TEAM's output. It is not a unit cost.
+      selfSpendOverTeamPoints: shippedPts ? +(total / shippedPts).toFixed(2) : null,
       attributedPct: total ? +(attributed / total).toFixed(3) : 0,
       unattributedPct: total ? +(1 - attributed / total).toFixed(3) : 1, // spend on branches that map to no ticket
       ticketsWithSpend: Object.keys(spendByTicket).length, shippedTickets: shipped.length,

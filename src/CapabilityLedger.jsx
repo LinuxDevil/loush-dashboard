@@ -11,8 +11,15 @@ import { Stagger, CountUp } from './anim.jsx'
 // Plane B (this machine's own transcripts), self-only by construction.
 const MONO = "'IBM Plex Mono', monospace"
 const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', DIM = '#8a807a'
-const VERDICT = { DEAD: { c: RED, hint: 'never fired — in your context every session, for nothing' }, COLD: { c: GOLD, hint: 'fired at some point, but not in the last 30 days' }, HOT: { c: GREEN, hint: 'fired in the last 30 days' } }
+const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', BLUE = '#5eb3f6', DIM = '#8a807a'
+// NEW exists so a capability installed this morning is not labelled DEAD alongside one abandoned a
+// year ago — it has not had a chance to fire yet, which is not the same as never firing.
+const VERDICT = {
+  DEAD: { c: RED, hint: 'never fired, and old enough that it has had the chance — in your context every session, for nothing' },
+  COLD: { c: GOLD, hint: 'fired at some point, but not in the last 30 days' },
+  NEW: { c: BLUE, hint: 'installed too recently to judge — it has not had a fair chance to fire yet' },
+  HOT: { c: GREEN, hint: 'fired in the last 30 days' },
+}
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const ago = t => { if (!t) return 'never'; const d = Math.round((Date.now() - t) / 86400_000); return d < 1 ? 'today' : d + 'd ago' }
 
@@ -26,7 +33,7 @@ const ARCHIVABLE = new Set(['skills', 'commands', 'agents'])
 export default function CapabilityLedger() {
   const [d, setD] = useState(null)
   const [sel, setSel] = useState({})       // "kind:name:scope" -> item
-  const [verdicts, setVerdicts] = useState({ DEAD: true, COLD: true, HOT: true })
+  const [verdicts, setVerdicts] = useState({ DEAD: true, COLD: true, NEW: true, HOT: true })
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'alwaysOnTokens', dir: -1 })
   const [plan, setPlan] = useState(null)   // dry-run result awaiting confirmation
@@ -80,9 +87,10 @@ export default function CapabilityLedger() {
         <div style={{ font: `600 17px ${HEAD}`, color: '#f6efe9', lineHeight: 1.5 }}>
           You pay <b style={{ color: '#d97757' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
           <b style={{ color: RED }}><CountUp value={h.deadCount} /> of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
+          {h.newCount > 0 && <span style={{ color: BLUE }}> {h.newCount} more {h.newCount === 1 ? 'is' : 'are'} too new to judge — installed less than {h.newAfterDays}d ago.</span>}
         </div>
         <div style={{ display: 'flex', gap: 22, marginTop: 12, flexWrap: 'wrap' }}>
-          {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens]].map(([v, n, tok]) => (
+          {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['NEW', h.newCount || 0, h.newTokens || 0], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens - (h.newTokens || 0)]].map(([v, n, tok]) => (
             <div key={v} title={VERDICT[v].hint}>
               <div style={{ font: `700 22px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
               <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.08em', color: DIM }}>{v} · {fmtTok(tok)} tok/session</div>
@@ -170,7 +178,9 @@ export default function CapabilityLedger() {
         </table>
         {pg.pager}
         <p className="small">
-          DEAD = never fired, in any session we can see. COLD = fired, but not in 30d. HOT = fired in 30d.
+          DEAD = never fired, and installed long enough ago to have had the chance. NEW = installed &lt; {d.headline.newAfterDays || 14}d ago,
+          so "never fired" would not be a fair verdict yet. COLD = fired, but not in 30d. HOT = fired in 30d.
+          "Tok / fire" charges only the sessions that ran AFTER the file existed — it used to bill a day-old skill for 90 days of sessions.
           Archiving moves the file out (backed up, versioned, reversible) — it does not delete your work.
         </p>
       </div>

@@ -126,11 +126,13 @@ export default function ForensicsSection() {
       <div className="grid-2" style={{ marginBottom: 0 }}>
         <div className="panel">
           <div className="panel-head">
-            <h3>Context pressure <span className="muted">{fmtChars(ctx.totalChars)} chars pulled in · {ctx.compactions} compactions ({ctx.compactionsPerSession}/session)</span></h3>
+            <h3>Context pressure <span className="muted" title={ctx.denominator}>{fmtChars(ctx.totalChars)} chars ≈ {fmtChars(ctx.totalEstTokens)} tok (est. {ctx.charsPerToken} chars/tok) of TOOL RESULTS · {ctx.compactions} compactions ({ctx.compactionsPerSession}/session)</span></h3>
           </div>
           {worstTool && (
             <div style={{ font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4', marginBottom: 12 }}>
-              <b style={{ color: '#f2ebe4' }}>{worstTool.name}</b> is <b style={{ color: worstTool.share > 0.4 ? RED : GOLD }}>{Math.round(worstTool.share * 100)}%</b> of every byte ever pulled into your context.
+              {/* "of every byte pulled into your context" was wrong: the denominator is tool-result
+                  bytes, which excludes the system prompt, CLAUDE.md, user turns and assistant output. */}
+              <b style={{ color: '#f2ebe4' }}>{worstTool.name}</b> is <b style={{ color: worstTool.shareOfToolBytes > 0.4 ? RED : GOLD }}>{Math.round((worstTool.shareOfToolBytes || 0) * 100)}%</b> of all <span title={ctx.denominator} style={{ borderBottom: '1px dotted #8a807a', cursor: 'help' }}>tool-result bytes</span>.
             </div>
           )}
           <table className="data inv">
@@ -139,9 +141,9 @@ export default function ForensicsSection() {
               {ctx.tools.slice(0, 10).map(t => (
                 <tr key={t.name}>
                   <td className="mono" style={{ color: t.hog ? GOLD : '#eee3da' }}>{t.name}{t.hog && <span title="median result over 20k chars — this tool is eating your context window" style={{ marginLeft: 6, font: `700 8.5px ${MONO}`, color: GOLD }}>HOG</span>}</td>
-                  <td className="num">{Math.round(t.share * 100)}%</td>
-                  <td className="num">{fmtChars(t.medianChars)}</td>
-                  <td className="num" style={{ color: t.p90Chars > 50000 ? RED : undefined }}>{fmtChars(t.p90Chars)}</td>
+                  <td className="num">{t.shareOfToolBytes == null ? '—' : Math.round(t.shareOfToolBytes * 100) + '%'}</td>
+                  <td className="num">{t.medianChars == null ? '—' : fmtChars(t.medianChars)}</td>
+                  <td className="num" style={{ color: t.p90Chars > 50000 ? RED : undefined }}>{t.p90Chars == null ? '—' : fmtChars(t.p90Chars)}</td>
                   <td className="num">{t.results}</td>
                   <td><button className="mini" style={{ marginTop: 0 }} disabled={busy} title={`install a PostToolUse hook that warns when a ${t.name} result exceeds ${OVERSIZE_CHARS.toLocaleString()} chars. It does not truncate — no PostToolUse hook can.`} onClick={() => flagTool(t.name)}>flag</button></td>
                 </tr>

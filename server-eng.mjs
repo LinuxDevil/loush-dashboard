@@ -41,6 +41,7 @@ import {
   loadEngConfig, workMsWith, workDaysWith, addWorkTimeWith, offHoursWith, isWeekendWith,
   weekKeyWith, describeWork, invalidateEngConfig,
 } from './eng-config.mjs'
+import { estAccuracy, escapeRateSeries, busFactor } from './eng-metrics.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DAY = 864e5
@@ -146,11 +147,6 @@ function estDaysFromPts(pts) {
     if (pts > p0 && pts < p1) return d0 + (d1 - d0) * (pts - p0) / (p1 - p0)
   }
   const [pl, dl] = SP_DAYS[SP_DAYS.length - 1]; return dl * pts / pl
-}
-// reference accuracy: early/on-time -> ratio×50+50 (50–100%), late -> (est/actual)×100 (0–100%)
-function estAccuracy(est, actual) {
-  if (!(est > 0) || !(actual > 0)) return null
-  return actual <= est ? (actual / est) * 50 + 50 : (est / actual) * 100
 }
 
 // ---------- status model (§2) — matched case-insensitively; statusCategory is the fallback ----------
@@ -766,15 +762,16 @@ function quality(issues, prs) {
     b.escaped = isEscaped // escaped = filed AFTER the thing it belongs to went Live/Closed
     ;(isEscaped ? escaped : caught).push(b)
   }
-  const shippedBy = {}
-  for (const i of issues) if (i.live && !i.isBug && i.liveAt) (shippedBy[monthKey(Date.parse(i.liveAt))] ||= []).push(i)
-  const months = [...new Set([...Object.keys(shippedBy), ...bugs.map(b => monthKey(Date.parse(b.created)))])].sort().slice(-12)
-  const escapeRate = months.map(m => {
-    const shipped = (shippedBy[m] || []).length
-    const esc = escaped.filter(b => monthKey(Date.parse(b.created)) === m).length
-    const qa = caught.filter(b => monthKey(Date.parse(b.created)) === m).length
-    return { month: m, shipped, escaped: esc, qaCaught: qa, rate: shipped ? +(esc / shipped * 100).toFixed(1) : null }
+  // Cohort-correct: an escaped bug counts against the month ITS PARENT SHIPPED, so numerator and
+  // denominator describe the same release cohort. See eng-metrics.mjs for what this used to do.
+  const escapeReport = escapeRateSeries({
+    bugs: bugs.map(b => {
+      const parent = b.linkedKey ? byKey[b.linkedKey] : null
+      return { escaped: !!b.escaped, created: Date.parse(b.created) || null, parentLiveAt: parent?.liveAt ? Date.parse(parent.liveAt) : null }
+    }),
+    shipped: issues.filter(i => i.live && !i.isBug && i.liveAt).map(i => ({ liveAt: Date.parse(i.liveAt) })),
   })
+  const escapeRate = escapeReport.series
   // hotspots: bug → linkedKey → that ticket's prNums → prs[].files[].path, rolled up by the top-2 path segments
   const areaBugs = {}, areaShipped = {}
   const pathsOf = i => {
@@ -801,10 +798,13 @@ function quality(issues, prs) {
   }
   const ownership = Object.values(comp).map(c => {
     const rows = Object.entries(c.by).map(([who, n]) => ({ who, n, share: +(n / c.total * 100).toFixed(1) })).sort((a, b) => b.n - a.n)
-    return { area: c.area, total: c.total, contributors: rows.length, rows, top: rows[0] || null, busFactor: rows.length === 1 || (rows[0]?.share || 0) >= 70 }
+    // An area with a single ticket has exactly one contributor; that is not a bus-factor risk,
+    // it is one ticket. Below the floor the answer is null — unknown, not safe and not risky.
+    const bf = busFactor({ total: c.total, rows })
+    return { area: c.area, total: c.total, contributors: rows.length, rows, top: rows[0] || null, busFactor: bf.busFactor, busFactorReason: bf.reason, busFactorMinN: bf.minN }
   }).sort((a, b) => b.total - a.total)
   return {
-    escapeRate, hotspots, ownership,
+    escapeRate, escapeMeta: { measurable: escapeReport.measurable, linkablePct: escapeReport.linkablePct, note: escapeReport.note }, hotspots, ownership,
     totals: { bugs: bugs.length, escaped: escaped.length, qaCaught: caught.length, reopens: issues.filter(i => i.rework > 0).length },
   }
 }
@@ -1154,7 +1154,8 @@ const OKRS = {
   Q3: [
     { title: 'Cut engineering effort per feature', def: 'Reduce hands-on development effort to ship a feature, without sacrificing quality.', owner: 'Web Engineering', color: '#5fd39a', measures: [
       { t: 'Reduce Avg Development Time 40% vs baseline', auto: 'devTime', note: 'Working days in In Progress · vs earliest-month baseline', reducePct: 40, baselineOf: 'devTime', unit: 'd', dir: 'down' },
-      { t: 'Estimation accuracy above 85%', auto: 'estAcc', note: 'Story-point estimate vs actual dev time', target: 85, unit: '%', dir: 'up' },
+      { t: 'Estimation accuracy above 85%', auto: 'estAcc', target: 85, unit: '%', dir: 'up',
+        note: 'Story-point estimate vs actual dev time. SCALE CHANGED: accuracy is now min/max — symmetric, so finishing early is as inaccurate as finishing late, and padding an estimate no longer helps. 85% means landing within ~18% of the estimate. The previous formula scored any early finish >=50% and was trivially met by inflating estimates, so a target carried over from it is likely too high — re-baseline before treating a miss as a regression.' },
       { t: 'Code review time under 1 day', auto: 'crTime', note: 'Working days in In Code Review', target: 1.0, unit: 'd', dir: 'down' },
     ] },
     { title: 'Ship faster with fewer QA loops', def: 'Tighten the QA feedback loop so tickets spend less time bouncing between QA states.', owner: 'Web Engineering', color: '#8ec8ff', measures: [
@@ -1174,7 +1175,8 @@ const OKRS = {
       { t: 'Cycle time under 4 days', auto: 'cycle', note: 'In Progress → Live, avg shipped', target: 4.0, unit: 'd', dir: 'down' },
     ] },
     { title: 'Reach 90% estimation accuracy', def: 'Push planning quality to a 90% accuracy floor.', owner: 'Web Engineering', color: '#5fd39a', carried: 'Q3', measures: [
-      { t: 'Avg Estimation Accuracy ≥ 90%', auto: 'estAcc', note: 'Story-point estimate vs actual', target: 90, unit: '%', dir: 'up' },
+      { t: 'Avg Estimation Accuracy ≥ 90%', auto: 'estAcc', target: 90, unit: '%', dir: 'up',
+        note: 'Story-point estimate vs actual. SCALE CHANGED (see above): 90% now means landing within ~11% of the estimate. Re-baseline this target — it was set against a formula that rewarded padding.' },
     ] },
   ],
 }

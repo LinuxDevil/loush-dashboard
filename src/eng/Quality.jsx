@@ -87,7 +87,9 @@ export default function Quality({ snap, issues, members, patch, reload }) {
           {Q.ownership.map(o => <div key={o.area} style={{ padding: '9px 11px', borderRadius: 10, background: 'rgba(13,11,10,0.5)', border: `1px solid ${o.busFactor ? 'rgba(242,119,122,0.3)' : 'rgba(255,255,255,0.06)'}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ font: `600 12px ${BODY}`, color: HI, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.area}</span>
-              {o.busFactor && <span style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: 'rgba(242,119,122,0.16)', color: RED }}>BUS FACTOR 1</span>}
+              {/* tri-state: true = risk, false = measured and fine, null = too few tickets to judge */}
+              {o.busFactor === true && <span style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: 'rgba(242,119,122,0.16)', color: RED }}>BUS FACTOR 1</span>}
+              {o.busFactor === null && <span title={`only ${o.total} ticket(s) — below the n≥${o.busFactorMinN} floor, so ownership concentration is not judged`} style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, color: '#7a716a', border: '1px solid rgba(255,255,255,0.12)' }}>LOW n</span>}
               <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{o.total} tickets · {o.contributors} people</span>
             </div>
             <div style={{ display: 'flex', height: 7, borderRadius: 4, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>

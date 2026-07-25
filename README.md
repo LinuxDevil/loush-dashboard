@@ -153,8 +153,14 @@ is the most valuable file on your disk.
 
 **What it does.** The ROI ledger counts real invocations from your transcripts and pairs them with
 the always-on token cost, headlined *"you pay N tok every session for M capabilities — K of them have
-never fired."* Verdicts have stated thresholds: **DEAD** (never fired) · **COLD** (not in 30d) ·
-**HOT** (fired in 30d).
+never fired."* Verdicts have stated thresholds: **DEAD** (never fired, and old enough to have had the
+chance) · **COLD** (not in 30d) · **NEW** (installed < 14d ago) · **HOT** (fired in 30d).
+
+> **NEW exists because DEAD used to be unfair.** A skill installed this morning had never fired, so
+> it was labelled DEAD alongside one abandoned a year ago, and the headline invited you to archive it.
+> The same bug hit `tok / fire`, which multiplied by *every* session in the 90-day window — including
+> the hundreds that ran before the file existed — so a day-old skill was billed 90 days of always-on
+> tax. Both are now scoped to the capability's own lifetime.
 
 Then it closes the loop: select rows → **dry-run first** → archive. Backed up, versioned, reversible
 — it moves the file out, it does not delete your work.
@@ -180,6 +186,13 @@ grepping JSONL by hand.
 **Forensics.** Failure signatures grouped and counted, with a stated decision rule: *anything at 3+ is
 not bad luck, it is a bug in your setup.* Plus context pressure by tool, and hook blast radius
 (firings / blocks / block rate / p50–p90 latency) with **disable**.
+
+> **Context pressure names its denominator.** The share column was rendered under a context-*window*
+> heading while actually measuring share of tool-result **characters** — a different denominator that
+> excludes the system prompt, CLAUDE.md, user turns and assistant output, i.e. several of the window's
+> largest occupants. The field is now `shareOfToolBytes`, characters are converted to an explicitly
+> labelled token *estimate* (÷4), and a tool with no recorded results shows `—` rather than a median
+> of 0.
 *Solves:* the same tool error bites you weekly and you never notice, because each occurrence looks
 like a one-off. Grouping by normalized signature makes "this has cost you 181 times" visible — and
 there is a **file as bug** button next to it.
@@ -329,6 +342,27 @@ The app is held to four rules. They exist because it previously broke all four.
    contributors; percentile helpers return `null` on empty input rather than 0.
 4. **Every heuristic shows its arithmetic.** The Working Set rank prints its weights and inputs. No
    number is a black box, and anything resting on an assumed constant is labelled `assumed`.
+5. **A ratio's numerator and denominator must describe the same cohort.** Several did not:
+   - **Escape rate** bucketed escaped bugs by the month they were *filed* against tickets shipped
+     that month, so a bug filed today about a release from six months ago landed in today's
+     numerator — ship 2 things in a slow month, have 4 old bugs surface, and it reported **200%**.
+     An escaped bug now counts against the month **its parent shipped**. Recent months are marked
+     `provisional` (bugs have not had time to surface), and if no bug in the window links to a
+     parent the rate is `null` — a team that does not link bugs used to score a permanent,
+     fabricated **0%**.
+   - **`$` per shipped point** divided *this machine's* Claude spend (plane B is self-only) by the
+     *whole team's* shipped points, so on a ten-person team it read ~10× too low and moved when
+     other people shipped. It is now computed over AI-touched shipped tickets only. The old figure
+     is still emitted as `selfSpendOverTeamPoints`, named for what it is.
+6. **A heuristic must be monotone, or it can be gamed.** **Estimate accuracy** scored finishing 50×
+   faster than estimated (51%) as barely better than taking twice as long (50%) — and it fed an OKR
+   at ≥85%, so the reliable way to hit the target was to *inflate estimates*. It is now symmetric
+   `min/max`: being wrong by the same factor scores the same in either direction, and padding no
+   longer helps. **This changes the scale** — 85% now means landing within ~18% of the estimate — so
+   a target carried over from the old formula is probably too high and should be re-baselined.
+7. **No verdict without a fair sample.** **Bus factor** had no minimum: an area with a *single*
+   ticket has exactly one contributor, so it was flagged as a knowledge risk. Below 5 tickets the
+   answer is now `null` — unknown, not safe and not risky — and the UI shows `LOW n`.
 
 ---
 
