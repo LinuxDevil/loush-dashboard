@@ -22,12 +22,14 @@
 //       everywhere is copy-to-clipboard. Never an auto-ping.
 // ─────────────────────────────────────────────────────────────────────────────
 // Engineering Metrics dashboard — fully separate read-only routes under /api/eng/*.
-// Multi-project: each project = a JIRA board (project key) + a GitHub repo. Defaults ship two
-//   (AIR, TRN); more can be added at runtime via POST /api/eng/projects -> projects.json (gitignored).
+// Multi-project: each project = a JIRA board (project key) + a GitHub repo. There are no built-in
+//   projects — they all come from projects.json (gitignored; see projects.example.json), added by
+//   hand or at runtime via POST /api/eng/projects.
 // JIRA: REST v3 Basic auth (email + API token) from .eng.local.json / config.json / env, or reuse
 //   acli's OAuth token from the keychain. GitHub: shells out to the already-authed `gh` CLI.
-// Time model (§time): durations are WORKING time — 10:00–18:00, Sun–Thu, Asia/Riyadh (UTC+3, no DST).
-//   Estimates derive from story points via the org SP->days table (no dev-day custom field needed).
+// Time model (§time): durations are WORKING time. The hours, weekend days and UTC offset come from
+//   projects.json -> `work`; the week actually used is echoed in each payload's `provenance`.
+//   Estimates derive from story points via the org SP->days table (projects.json -> `storyPointDays`).
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -35,47 +37,49 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import {
+  loadEngConfig, workMsWith, workDaysWith, addWorkTimeWith, offHoursWith, isWeekendWith,
+  weekKeyWith, describeWork, invalidateEngConfig,
+} from './eng-config.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DAY = 864e5
 const H = 3600e3
-const KSA = 3 * H            // Asia/Riyadh offset, no DST
-const WORKDAY_MS = 8 * H     // 10:00–18:00 = 8h
 
-// ---------- projects (§0) — defaults + runtime-added, one JIRA board + repo each ----------
-const DEV_EMAILS = ['ali.mohammad@almosafer.com', 'ammar.mohammad@almosafer.com', 'yaser.kasem@almosafer.com', 'tony.jacob@almosafer.com']
-const DEFAULT_PROJECTS = [
-  { key: 'AIR', name: 'Flight Web', githubRepo: 'tajawal/ct-web-flights',
-    qaEmails: ['karim.said@almosafer.com', 'muhammad.abdullah@almosafer.com'],
-    productEmails: ['sumayah.abdalla@almosafer.com', 'nadeen.ahmed@almosafer.com'] },
-  { key: 'TRN', name: 'Transport Web', githubRepo: 'tajawal/ct-web-transport', devEmails: [...DEV_EMAILS, 'samvel.tadevosyan@almosafer.com'],
-    qaEmails: ['renuka.gopalakrishnan@almosafer.com', 'mohammad.awad@almosafer.com'],
-    productEmails: ['nadeen.ahmed@almosafer.com'] },
-]
+// ---------- projects (§0) — ALL of this is user config now, one JIRA board + repo each ----------
+// There are deliberately NO built-in projects, emails or JIRA host. This file used to ship one
+// company's production setup as its defaults — ten real employee addresses, two private repos and a
+// live JIRA host, committed to git and seeded unconditionally, so a fresh clone showed a stranger's
+// board and attributed your team's work to four people at another company. Everything org-specific
+// now lives in projects.json (gitignored); projects.example.json is the committed template.
 const PROJECTS_FILE = path.join(HERE, 'projects.json')
+const engCfg = () => loadEngConfig(PROJECTS_FILE)
+const WORK = () => engCfg().work
 function normalizeProject(p) {
   const key = (p.key || p.jiraProjectKey || '').toUpperCase()
   const pk = (p.jiraProjectKey || key).toUpperCase()
   return {
     key, name: p.name || key,
-    jiraHost: p.jiraHost || 'data4altayyargroup.atlassian.net',
+    jiraHost: p.jiraHost || engCfg().jiraHost || '',
     jiraProjectKey: pk, githubRepo: p.githubRepo || '',
     ticketRegex: new RegExp(`${pk}-\\d+`, 'i'),
     jql: p.jql || `project = ${pk} AND (updated >= -180d OR statusCategory != Done) ORDER BY updated DESC`,
     spField: p.spField || null,
-    devEmails: (p.devEmails && p.devEmails.length ? p.devEmails : DEV_EMAILS).map(e => e.toLowerCase()),
+    devEmails: (p.devEmails && p.devEmails.length ? p.devEmails : engCfg().defaultDevEmails).map(e => e.toLowerCase()),
     qaEmails: (p.qaEmails || []).map(e => e.toLowerCase()),
     productEmails: (p.productEmails || []).map(e => e.toLowerCase()),
     writes: p.writes === true, // §writes: JIRA transitions / gh pr comment stay behind this. Default: copy-to-clipboard.
   }
 }
-// projects.json is either a bare array (legacy) or {projects:[…], effortBuckets:{…}} (§7).
+// projects.json is a bare array (legacy), {projects:[…], effortBuckets:{…}}, or the current shape
+// {jiraHost, work, storyPointDays, defaultDevEmails, projects:[…]} — see projects.example.json.
 function projectsFile() { try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) } catch { return null } }
-function extraProjects() { const j = projectsFile(); return Array.isArray(j) ? j : (j?.projects || []) }
+function extraProjects() { return engCfg().projects }
 function loadProjects() {
+  // No seeded defaults. An unconfigured install has zero projects and every eng endpoint reports
+  // `available:false` — which is the honest answer, and better than a stranger's board.
   const map = new Map()
-  for (const p of DEFAULT_PROJECTS) map.set(p.key.toUpperCase(), p)
-  for (const p of extraProjects()) { const k = (p.key || p.jiraProjectKey || '').toUpperCase(); if (!k) continue; map.set(k, { ...(map.get(k) || {}), ...p, key: k }) } // extras override/extend defaults
+  for (const p of extraProjects()) { const k = (p.key || p.jiraProjectKey || '').toUpperCase(); if (!k) continue; map.set(k, { ...(map.get(k) || {}), ...p, key: k }) }
   return [...map.values()].map(normalizeProject)
 }
 function upsertProject(rec) {
@@ -85,8 +89,11 @@ function upsertProject(rec) {
   const idx = extra.findIndex(p => (p.key || p.jiraProjectKey || '').toUpperCase() === k)
   if (idx >= 0) extra[idx] = { ...extra[idx], ...rec, key: k }
   else extra.push({ ...rec, key: k })
-  const out = Array.isArray(j) || !j ? extra : { ...j, projects: extra } // keep the effortBuckets block intact
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(out, null, 2))
+  // Always write the object shape, so a legacy bare array is migrated on first edit rather than
+  // pinning the file to a format that cannot hold `work` / `jiraHost` / `storyPointDays`.
+  const base = j && !Array.isArray(j) ? j : {}
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify({ ...base, projects: extra }, null, 2))
+  invalidateEngConfig() // mtime has 1ms resolution; a same-ms write would otherwise serve a stale memo
 }
 // members editor from the UI: [{email, role}] -> role email lists (only when members supplied)
 function rostersFrom(members) {
@@ -98,39 +105,17 @@ const projectPill = p => ({ key: p.key, name: p.name, jiraProjectKey: p.jiraProj
 const projectList = () => loadProjects().map(projectPill)
 
 // ---------- working-time engine (§time) ----------
-// Only 10:00–18:00 Sun–Thu counts. Unix day 0 (1970-01-01) is Thursday, so (d+4)%7 gives 0=Sun..6=Sat.
-function workMs(from, to) {
-  if (!(to > from)) return 0
-  const L0 = from + KSA, L1 = to + KSA
-  const d0 = Math.floor(L0 / DAY), d1 = Math.floor(L1 / DAY)
-  let ms = 0
-  for (let d = d0; d <= d1; d++) {
-    const dow = ((d % 7) + 4) % 7
-    if (dow === 5 || dow === 6) continue // Fri/Sat weekend
-    const ws = d * DAY + 10 * H, we = d * DAY + 18 * H
-    ms += Math.max(0, Math.min(L1, we) - Math.max(L0, ws))
-  }
-  return ms
-}
-const workDays = (from, to) => workMs(from, to) / WORKDAY_MS
-// wall-clock instant `budgetMs` of working-time after `from`
-function addWorkTime(from, budgetMs) {
-  if (budgetMs <= 0) return from
-  let L = from + KSA, d = Math.floor(L / DAY), left = budgetMs
-  for (let guard = 0; guard < 500; guard++, d++) {
-    const dow = ((d % 7) + 4) % 7
-    if (dow === 5 || dow === 6) { L = 0; continue }
-    const ws = Math.max(L || 0, d * DAY + 10 * H), we = d * DAY + 18 * H
-    if (ws >= we) { L = 0; continue }
-    const avail = we - ws
-    if (avail >= left) return ws + left - KSA
-    left -= avail; L = we
-  }
-  return from + budgetMs // fallback
-}
-// true when an instant falls outside 10:00–18:00 Sun–Thu (a PR opened then is "off hours")
-const offHours = t => workMs(t, t + 60_000) === 0
-const isWeekend = t => { const dow = ((Math.floor((t + KSA) / DAY) % 7) + 4) % 7; return dow === 5 || dow === 6 }
+// Every duration in this dashboard — cycle time, lead time, stage budgets, off-hours, weekend work —
+// is measured in WORKING time, so the work week is the most load-bearing setting in the app. It was
+// hardcoded to 10:00–18:00 Sun–Thu Asia/Riyadh with no way to change it, which silently mis-measured
+// every user outside that one office. It now comes from projects.json → `work`, and the work week
+// actually in force is reported in each payload's `provenance`.
+const workMs = (from, to) => workMsWith(WORK(), from, to)
+const workDays = (from, to) => workDaysWith(WORK(), from, to)
+const addWorkTime = (from, budgetMs) => addWorkTimeWith(WORK(), from, budgetMs)
+const offHours = t => offHoursWith(WORK(), t)
+const isWeekend = t => isWeekendWith(WORK(), t)
+const WORKDAY_MS_OF = () => WORK().dayMs
 
 // ---------- percentiles (§2 — the client does its own too; these are the ones the server needs) ----------
 function pctl(arr, p) {
@@ -144,13 +129,16 @@ const median = a => pctl(a, 0.5)
 const round1 = v => (v == null ? null : +v.toFixed(1))
 const round2 = v => (v == null ? null : +v.toFixed(2))   // null in → null out: never turn "not measured" into 0
 const monthKey = t => new Date(t).toISOString().slice(0, 7)
-// ISO-ish week key (Sunday-start, matching the KSA work week)
-function weekKey(t) { const d = Math.floor((t + KSA) / DAY); const sun = d - (((d % 7) + 4) % 7); return new Date(sun * DAY).toISOString().slice(0, 10) }
+// Week bucket key, starting on the configured first working day (projects.json → work.weekStartDay).
+const weekKey = t => weekKeyWith(WORK(), t)
 
 // ---------- story points -> estimated working-days (org reference table) ----------
-const SP_DAYS = [[1, 0.4], [2, 0.8], [3, 1.5], [5, 3], [8, 6], [13, 10], [21, 22]] // 21 ≈ a month of working days
+// Org-specific by nature: a "5" means different things at different companies, so this comes from
+// projects.json → `storyPointDays`. Scoring estimate accuracy against another org's conversion table
+// is how you end up with an OKR nobody's team ever agreed to.
 function estDaysFromPts(pts) {
   if (!pts || pts <= 0) return 0
+  const SP_DAYS = engCfg().storyPointDays
   for (const [p, d] of SP_DAYS) if (pts === p) return d
   if (pts < SP_DAYS[0][0]) return SP_DAYS[0][1] * pts / SP_DAYS[0][0]
   for (let i = 0; i < SP_DAYS.length - 1; i++) {
@@ -314,13 +302,13 @@ function statusSegments(issue) {
   }
   add(cur, t0, Date.now())
   if (firstInProg == null && norm(cur) === 'in progress') { firstInProg = created; curSince = created }
-  const daysIn = {}; for (const k in days) daysIn[k] = days[k] / WORKDAY_MS
+  const daysIn = {}; for (const k in days) daysIn[k] = days[k] / WORKDAY_MS_OF()
   const endT = liveAt || Date.now()
   // cycle excludes time parked in On Hold / Paused — those don't count against the team
   const pausedMs = Object.entries(days).reduce((a, [k, v]) => a + (PAUSED.includes(norm(k)) ? v : 0), 0)
   // A ticket that never entered In Progress has NO delivery duration — it is null, not 0. A 0 is a measured
   // duration; a null is an absent one. Emitting 0 dragged every median (and the OKR ring) to zero.
-  const delivery = firstInProg == null ? null : Math.max(0, workMs(firstInProg, endT) - pausedMs) / WORKDAY_MS
+  const delivery = firstInProg == null ? null : Math.max(0, workMs(firstInProg, endT) - pausedMs) / WORKDAY_MS_OF()
   return { daysIn, delivery, firstInProg, liveAt, curStatus: cur, curSince, qaCycles: qaEntries, rework: reworkN + reopenN, fixer, sprintEvents }
 }
 const idList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean)
@@ -354,7 +342,7 @@ function recFor(status, pts, curSince) {
   else if (n === 'ready for qa' || n === 'in qa (dev)' || n === 'in qa') { next = 'Ready for Release'; budget = 1 }
   else if (n === 'qa blocked') { next = 'In Progress'; budget = 0.5 }
   else return null
-  const moveBy = addWorkTime(curSince, budget * WORKDAY_MS)
+  const moveBy = addWorkTime(curSince, budget * WORKDAY_MS_OF())
   const spent = workDays(curSince, Date.now())
   const remaining = +(budget - spent).toFixed(2)
   return { next, budget: +budget.toFixed(2), moveBy: new Date(moveBy).toISOString(), remaining, atRisk: remaining < 0 }
@@ -946,7 +934,7 @@ function epicRollup(issues) {
       const starts = g.kids.map(k => Date.parse(k.firstInProg || k.created)).filter(Boolean)
       const startedAt = starts.length ? Math.min(...starts) : null
       const escapedBugs = g.kids.flatMap(k => bugsByParent[k.key] || []).filter(b => b.escaped)
-      const forecast = perDay > 0 && ptsRemaining > 0 ? new Date(addWorkTime(Date.now(), (ptsRemaining / perDay) * WORKDAY_MS)).toISOString() : (ptsRemaining === 0 ? new Date().toISOString() : null)
+      const forecast = perDay > 0 && ptsRemaining > 0 ? new Date(addWorkTime(Date.now(), (ptsRemaining / perDay) * WORKDAY_MS_OF())).toISOString() : (ptsRemaining === 0 ? new Date().toISOString() : null)
       const epic = byKey[g.key]
       const due = targets[g.key]?.targetDate || epic?.duedate || null
       const slipDays = due && forecast ? +workDays(Date.parse(due), Date.parse(forecast)).toFixed(1) : null
@@ -1118,7 +1106,7 @@ async function computeSnapshot(cfg) {
     issues, prs, members, okrs: OKRS,
     byProject: [{ key: cfg.key, name: cfg.name, issues, prs }],
     errors, writes: cfg.writes,
-    provenance: { jql: cfg.jql, graphql: cfg.githubRepo ? prQuery(...cfg.githubRepo.split('/')) : GQL, ghCommand: cfg.githubRepo ? ghCommandFor(cfg.githubRepo) : null, workingTime: '10:00–18:00 Sun–Thu, Asia/Riyadh', ttlMs: SNAP_TTL },
+    provenance: { jql: cfg.jql, graphql: cfg.githubRepo ? prQuery(...cfg.githubRepo.split('/')) : GQL, ghCommand: cfg.githubRepo ? ghCommandFor(cfg.githubRepo) : null, workingTime: describeWork(WORK()), ttlMs: SNAP_TTL },
     ...derive(issues, prs, members, ci),
   }
   snaps.set(cfg.key, { at: Date.now(), data })
@@ -1151,7 +1139,7 @@ async function snapshotAll() {
     // §9: keep the project boundaries the old flatMap destroyed
     byProject: avail.map(p => ({ key: p.team.key, name: p.team.name, issues: p.issues, prs: p.prs })),
     errors, writes: avail.some(p => p.writes),
-    provenance: { jql: loadProjects().map(p => ({ project: p.key, jql: p.jql })), graphql: GQL, ghCommand: loadProjects().filter(p => p.githubRepo).map(p => ({ project: p.key, cmd: ghCommandFor(p.githubRepo) })), workingTime: '10:00–18:00 Sun–Thu, Asia/Riyadh', ttlMs: SNAP_TTL },
+    provenance: { jql: loadProjects().map(p => ({ project: p.key, jql: p.jql })), graphql: GQL, ghCommand: loadProjects().filter(p => p.githubRepo).map(p => ({ project: p.key, cmd: ghCommandFor(p.githubRepo) })), workingTime: describeWork(WORK()), ttlMs: SNAP_TTL },
     ...derive(issues, prs, members, ci),
   }
 }
@@ -1352,7 +1340,7 @@ export default function mountEng(app) {
     const { id, until, forever } = req.body || {}
     if (!id) return res.status(400).json({ error: 'id required' })
     const o = readTriage()
-    o[id] = { at: new Date().toISOString(), until: forever ? null : (until || new Date(addWorkTime(Date.now(), WORKDAY_MS)).toISOString()) }
+    o[id] = { at: new Date().toISOString(), until: forever ? null : (until || new Date(addWorkTime(Date.now(), WORKDAY_MS_OF())).toISOString()) }
     writeTriage(o)
     res.json({ ok: true, dismissed: o[id] })
   })

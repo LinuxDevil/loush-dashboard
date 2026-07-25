@@ -1,0 +1,36 @@
+{
+  "//": "Copy to projects.json (gitignored) and edit. Nothing here ships as a default — an unconfigured install reports 'not configured' rather than showing someone else's board.",
+
+  "//jiraHost": "Your Atlassian site host, no scheme. Per-project `jiraHost` overrides this.",
+  "jiraHost": "your-org.atlassian.net",
+
+  "//work": "THE MOST LOAD-BEARING SETTING IN THE APP. Every duration — cycle time, lead time, stage budgets, off-hours and weekend-work flags — is measured in working time using these values. Get the weekend wrong and the dashboard will tell you that you work weekends. tzOffsetHours is a fixed UTC offset with no DST handling, so pick the one your team actually works in. weekend and weekStartDay use 0=Sun … 6=Sat.",
+  "work": {
+    "tzOffsetHours": 0,
+    "startHour": 9,
+    "endHour": 17,
+    "weekend": [0, 6],
+    "weekStartDay": 1
+  },
+
+  "//storyPointDays": "[points, estimated working days] pairs, interpolated between. Org-specific: a '5' means different things at different companies, and estimate-accuracy scoring is only meaningful against your own team's conversion. Delete this key to use the built-in reference table.",
+  "storyPointDays": [[1, 0.4], [2, 0.8], [3, 1.5], [5, 3], [8, 6], [13, 10], [21, 22]],
+
+  "//defaultDevEmails": "Fallback dev roster for any project that does not set its own `devEmails`. Leave empty rather than guessing — a wrong roster attributes your team's work to other people.",
+  "defaultDevEmails": [],
+
+  "//projects": "One entry per JIRA board + GitHub repo. `key` is the JIRA project key. `writes` must be explicitly true before the dashboard will transition a ticket or comment on a PR; the default is copy-to-clipboard.",
+  "projects": [
+    {
+      "key": "ABC",
+      "name": "Web Storefront",
+      "githubRepo": "your-org/your-repo",
+      "jql": "project = ABC AND (updated >= -180d OR statusCategory != Done) ORDER BY updated DESC",
+      "spField": null,
+      "devEmails": ["dev@example.com"],
+      "qaEmails": ["qa@example.com"],
+      "productEmails": ["pm@example.com"],
+      "writes": false
+    }
+  ]
+}

@@ -86,7 +86,11 @@ export const MiniStat = ({ label, v, c = HI, sub }) => <div style={{ flex: 1, mi
 // ---------- deep links ----------
 const linkStyle = c => ({ color: c, textDecoration: 'none', borderBottom: `1px dotted ${c}66`, cursor: 'pointer' })
 export function TicketLink({ i, color = BB, children, style }) {
-  const url = i.url || `https://${i.host || 'data4altayyargroup.atlassian.net'}/browse/${i.key}`
+  // No hardcoded fallback host. This used to default to one specific company's Atlassian site, so a
+  // ticket that arrived without a host silently linked every user to a JIRA they cannot open.
+  // Render plain text instead of a link we know is wrong — same rule as PRLink below.
+  const url = i.url || (i.host ? `https://${i.host}/browse/${i.key}` : null)
+  if (!url) return <span style={style} title="no JIRA host configured for this project — see projects.json">{children || i.key}</span>
   return <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ ...linkStyle(color), ...style }}>{children || i.key}</a>
 }
 export function PRLink({ pr, color = PURPLE, children, style }) {

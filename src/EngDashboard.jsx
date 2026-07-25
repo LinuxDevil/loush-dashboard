@@ -837,13 +837,13 @@ function ProjectConfig({ mode, project, onClose, onSaved, onSelect }) {
           {field('Name', 'name', 'e.g. Transport Web')}
           {field('JIRA project key', 'jiraProjectKey', 'e.g. TRN', isEdit)}
         </div>
-        {field('GitHub repo (owner/name)', 'githubRepo', 'e.g. tajawal/ct-web-transport')}
-        {field('JIRA host', 'jiraHost', 'data4altayyargroup.atlassian.net')}
+        {field('GitHub repo (owner/name)', 'githubRepo', 'e.g. your-org/your-repo')}
+        {field('JIRA host', 'jiraHost', 'your-org.atlassian.net')}
       </div>
       <div style={{ font: `600 9.5px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#8a807a', margin: '18px 0 8px' }}>Team members & roles</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
         {members.map((m, i) => <div key={i} style={{ display: 'flex', gap: 7 }}>
-          <input value={m.email} onChange={e => setM(i, 'email', e.target.value)} placeholder="name@almosafer.com" style={{ ...inp, flex: 1 }} />
+          <input value={m.email} onChange={e => setM(i, 'email', e.target.value)} placeholder="name@example.com" style={{ ...inp, flex: 1 }} />
           <select value={m.role} onChange={e => setM(i, 'role', e.target.value)} style={{ ...inp, width: 108, flex: 'none', cursor: 'pointer' }}>{ROLES.map(r => <option key={r} value={r}>{r}</option>)}</select>
           <button onClick={() => setMembers(members.filter((_, j) => j !== i))} style={{ width: 34, flexShrink: 0, borderRadius: 9, border: '1px solid rgba(255,255,255,0.14)', background: 'transparent', color: '#9a9089', cursor: 'pointer' }}>✕</button>
         </div>)}

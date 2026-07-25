@@ -138,7 +138,7 @@ persist it, and surface it as an inbox item (`section:'career'`, `plane:'harness
     and the 30s client poll in `InboxSection.jsx`.
 - **Runtime config** — `config.json` at repo root is tiny and NOT a general config file:
   ```json
-  { "jiraAPIKey": "<secret>", "email": "ali.mohammad@almosafer.com" }
+  { "jiraAPIKey": "<secret>", "email": "you@example.com" }
   ```
   (Read by the eng/jira layer.) It is NOT where per-feature runtime state lives.
 - **De-facto runtime state store** = `~/.claude/dashboard-meta.json` via `readMeta()` /

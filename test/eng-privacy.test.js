@@ -23,8 +23,8 @@ const ISO = t => new Date(t).toISOString()
 const now = Date.now()
 const DAY = 864e5
 
-const ALI = { id: 'a1', name: 'Ali', email: 'ali.mohammad@almosafer.com' }
-const AMMAR = { id: 'a2', name: 'Ammar', email: 'ammar.mohammad@almosafer.com' }
+const ALI = { id: 'a1', name: 'Ali', email: 'dev-a@example.com' }
+const AMMAR = { id: 'a2', name: 'Ammar', email: 'dev-b@example.com' }
 
 const issue = o => ({
   key: 'TEST-1', project: 'AIR', host: 'x.atlassian.net', url: 'https://x/browse/TEST-1', type: 'Story', summary: 's',

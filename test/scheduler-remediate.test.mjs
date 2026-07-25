@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { remediationPlan } from '../scheduler.mjs'
 
 test('red main → proposes a git revert scoped to the repo', () => {
-  const p = remediationPlan([{ kind: 'ci', key: 'ci:red:tajawal/ct-web-flights', severity: 'error', text: 'main is red' }])
+  const p = remediationPlan([{ kind: 'ci', key: 'ci:red:acme/web-flights', severity: 'error', text: 'main is red' }])
   assert.equal(p.length, 1)
   assert.equal(p[0].verb, 'git-revert')
-  assert.equal(p[0].repo, 'tajawal/ct-web-flights')
+  assert.equal(p[0].repo, 'acme/web-flights')
   assert.match(p[0].action, /revert --no-edit HEAD/)
 })
 
