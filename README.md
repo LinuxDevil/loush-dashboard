@@ -1,142 +1,406 @@
 # Claude Code Dashboard
 
-**Design system**: dark-first, warm (base `#0d0b0a` with clay/violet radial glows; glassy panels `rgba(28,24,21,0.55)` + blur; clay-orange accent `#d97757`). Type: Space Grotesk (headings/stats), IBM Plex Sans (body), IBM Plex Mono (labels/identifiers/data). Fonts load from Google Fonts (offline falls back to system fonts). Lists over ~10 items paginate (Inventory 15/page, Projects 9, resource lists 20, artifacts 60, CSV/JSON tables 100).
+A local web UI for the real files and real history behind your Claude Code setup. Not a mock: every
+write goes to the actual config file, with a timestamped backup taken first, and every number is
+computed from transcripts and repos on your own disk.
 
-**Extra metrics parsed from transcripts** (all cached per-file by mtime): tool-call counts per tool (from `tool_use` blocks), lines added/removed (from Edit-tool `structuredPatch` diffs), sessions in 30d, recent sessions, per-project 14-day sparklines, and estimated cache savings (cache-read tokens × 90% of the model's input price — an estimate, labeled as such). Project cards add git commit counts (`git rev-list --count`) and language chips (file-extension histogram, 10-min cache).
+**The one thing it does that nothing else can.** Your `~/.claude/projects/**/*.jsonl` transcripts
+contain the full record of what an AI agent did to your codebase — every edit, with the file path,
+the diff text, the prompt that caused it, and the errors it hit on the way. That history is on your
+laptop and nowhere else. GitHub cannot see it, Linear cannot see it, Sentry cannot see it, and your
+IDE does not keep it. This dashboard joins that record to the code it happened to.
 
-Local web UI to view and manage the real files that power your Claude Code setup. Not a mock — every write goes to the actual config files, with a timestamped backup taken first.
+```
+npm install
+npm run dev          # http://localhost:5177 (Vite) → API on :5178 (Express)
+```
+
+Nothing needs configuring to start. **Working Set**, **Capabilities**, **Harness**, **Projects**,
+**Chat**, **Workflows** and **Hooks** all work five minutes after install with zero external
+services. JIRA and GitHub are needed only for the **Delivery** section, and it says so plainly rather
+than rendering empty charts.
+
+---
+
+## Contents
+
+- [Working Set](#working-set--what-the-agent-did-to-your-code) — the flagship, zero config
+- [Setup](#setup--every-config-and-credential-visually) — projects, credentials, work week
+- [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger
+- [Harness](#harness--sessions-forensics-and-usage) — sessions, forensics, usage
+- [Inbox](#inbox--what-needs-a-decision) · [Overview](#overview--what-needs-a-human-today) · [Delivery](#delivery--jira-github-ci)
+- [Everything else](#everything-else) — Chat, Workflows, Projects, Hooks, MCP, Artifacts, ⌘K
+- [The two data planes](#the-two-data-planes) — the privacy boundary
+- [Honesty rules](#honesty-rules) — why null is never rendered as 0
+- [What was removed, and why](#what-was-removed-and-why)
+- [API](#api--panels-backing-data) · [Backups](#backups) · [Risks](#risks--mitigations) · [Development](#development)
+
+---
+
+## Working Set — what the agent did to your code
+
+![Working Set](docs/screenshots/working-set.png)
+
+**The problem.** You let an agent work in your repo for two weeks. Which files did it struggle with?
+Which did it quietly rewrite six times? Which of the things it touched have no test? If you change
+`Button.tsx` now, what breaks? Git cannot answer any of this — git only kept the attempt that
+survived, not the four that didn't, and it has no idea which prompt produced any of them.
+
+**What it does.** Joins the Edit/Write `structuredPatch` blocks already in your transcripts — file
+path, ±lines, and up to 24 lines of real diff text — to an import graph parsed from the repo on disk.
+One row per file an agent **edited** (reads are not evidence of difficulty):
+
+| Column | What it tells you |
+|---|---|
+| **rank** | How much this file has fought you: `revisitSessions×3 + revisitDays×2 + failures×2 + extraEdits×1` |
+| **sessions / days** | How many separate times you came *back* to it |
+| **fails** | Tool errors attributed to that exact file |
+| **importers** | Blast radius — product code counted separately from tests |
+| **t/s** | Whether a test or a Storybook story actually covers it |
+| **dirty / orphan / gone** | Uncommitted, imported by nothing, or no longer on disk |
+
+The rank is **labelled a heuristic, not a measurement**: every input is in the row and the arithmetic
+is on the tooltip. A file edited in exactly one session scores `null`, not 0 — that is work, not
+rework, and scoring it 0 would rank it against files we actually have evidence about.
+
+**Why the rank is the interesting part.** A component the agent rewrote six times across four
+sessions is a component whose prop API nobody can guess — including you. That is a refactor signal,
+and it is invisible everywhere else.
+
+Coverage comes from the import graph, not just filenames: a test that *imports* the file counts even
+when the names share no stem, which naming-convention checks miss.
+
+### The file dossier
+
+![File dossier](docs/screenshots/working-set-dossier.png)
+
+Click any file for the causal chain git never recorded: **prompt → diff → error → retry → diff**, in
+order, with the real hunk text.
+
+Every row ends in an action, and the actions run **inside the app**:
+
+- **Resume the session that last edited this file** — not a `claude --resume <id>` string to paste
+  into a terminal. (Three panels used to hand you that string while the endpoint to do it properly
+  had existed all along.)
+- **New session with this context** — opens Chat pre-loaded with the file's blast radius, its recent
+  diffs, and the tool errors already hit there, so the agent does not rediscover them.
+- **Copy bundle**, or **mute** a noisy path so it stops dominating the rank.
+
+**Zero external config.** No JIRA, no `gh`, no team file, no network. Repos are discovered from the
+`cwd` recorded in your own transcripts. The walk cap and unresolved-import count are printed on
+screen, because a graph that silently truncates is a poster, not an instrument.
+
+---
+
+## Setup — every config and credential, visually
+
+![Setup](docs/screenshots/setup.png)
+
+**The problem.** Configuration used to mean hand-editing JSON in three separate places, and the only
+reason the app "worked out of the box" was that one company's production config — including ten real
+employee email addresses — was compiled into the source and committed to git.
+
+**What it does.** Five panels: **Credentials** (JIRA host, email, API token, with a real *Test
+connection*), **Projects** (JIRA key + repo + dev/QA/product rosters + an explicit per-project
+**writes** opt-in), the **work week**, the **story-point → days** table, and **notifications**.
+
+### How credentials are handled
+
+This is the part worth reviewing, because it is designed against a specific threat:
+
+- **No endpoint ever returns a secret value** — not masked, not partially, not once. The client is
+  told `set: true|false` and its source, and nothing else. A token therefore cannot leak through a
+  screenshot, a cached response, or the devtools network tab.
+- **Fields are always blank on load.** That is the design, not a bug. Submitting a blank field
+  *leaves* the stored value alone; clearing takes an explicit **Remove**. Without that rule, editing
+  the email would silently wipe the token — the form has no token to resubmit, because it was never
+  given one.
+- **Secret files are written `0600`** via atomic temp+rename, and are deliberately **not** copied into
+  the backups directory. A "helpful" backup of a credentials file is just a second plaintext copy of
+  your token somewhere you forgot about.
+- **`.gitignore` is checked on every read**, with a red banner if a secret file is committable —
+  exactly the check that would have caught those employee emails before they were pushed.
+- It **warns when `JIRA_EMAIL` / `JIRA_API_TOKEN` env vars are set**, because they take precedence and
+  would otherwise silently ignore anything you save.
+- **GitHub has no token field**, because this app stores no GitHub token — it uses the `gh` CLI's own
+  login. The panel says that rather than offering an input that does nothing.
+
+### The work week is the most load-bearing setting in the app
+
+Every duration in Delivery — cycle time, lead time, stage budgets, off-hours and weekend-work flags —
+is measured in *working* time. It was hardcoded to Sun–Thu 10:00–18:00 Asia/Riyadh with no way to
+change it, so a US engineer on Mon–Fri 9–5 had their whole Friday counted as weekend work and most of
+their day as off-hours. It is now hours + weekend days + UTC offset + week start, and the week
+actually in force is echoed in every payload's `provenance`.
+
+Validation rejects inputs that would corrupt downstream maths: a zero-length or inverted day (which
+would make every duration `Infinity`), an all-weekend week, out-of-range offsets, a descending
+story-point table, a repo that is not `owner/name`, and a JIRA host with a scheme.
+
+**Files written:** `projects.json` and `.eng.local.json` (both gitignored; `projects.example.json` is
+the committed template) plus `~/.claude/dashboard-meta.json`.
+
+---
+
+## Capabilities — what you pay for, and what actually fires
+
+![Capabilities ROI ledger](docs/screenshots/capabilities.png)
+
+**The problem.** Every skill, command and agent you install has a description loaded into context on
+*every single session*, forever, whether or not it ever runs. Nothing tells you which ones are
+earning that. A perfect-scoring skill that has never fired is worthless; a scruffy one invoked daily
+is the most valuable file on your disk.
+
+**What it does.** The ROI ledger counts real invocations from your transcripts and pairs them with
+the always-on token cost, headlined *"you pay N tok every session for M capabilities — K of them have
+never fired."* Verdicts have stated thresholds: **DEAD** (never fired) · **COLD** (not in 30d) ·
+**HOT** (fired in 30d).
+
+Then it closes the loop: select rows → **dry-run first** → archive. Backed up, versioned, reversible
+— it moves the file out, it does not delete your work.
+
+Also here: Skills / Commands / Agents CRUD, the Flow graph, and the Inventory frontmatter linter —
+demoted off the landing page and relabelled **an authoring aid, not a metric**, which is what it
+always was.
+
+---
+
+## Harness — sessions, forensics and usage
+
+![Sessions](docs/screenshots/harness-sessions.png)
+
+**Sessions.** A sortable ledger with real per-session `$`, output tokens, cache-read %, duration, tool
+calls, compactions and errors. Keyboard layer: `/` focus filter, `j`/`k` move, `r` **resume in-app**,
+`y` copy the shell command, `↵` open.
+*Solves:* "what did that expensive session actually cost, and how do I get back into it" — without
+grepping JSONL by hand.
+
+![Forensics](docs/screenshots/forensics.png)
+
+**Forensics.** Failure signatures grouped and counted, with a stated decision rule: *anything at 3+ is
+not bad luck, it is a bug in your setup.* Plus context pressure by tool, and hook blast radius
+(firings / blocks / block rate / p50–p90 latency) with **disable**.
+*Solves:* the same tool error bites you weekly and you never notice, because each occurrence looks
+like a one-off. Grouping by normalized signature makes "this has cost you 181 times" visible — and
+there is a **file as bug** button next to it.
+
+> **On the "flag this tool" button.** It used to be called *cap*, and its hook told the model the
+> result had been "truncated to 20k". It truncated nothing — a `PostToolUse` hook cannot shorten a
+> result the model already received. So it *added* tokens to an oversized context and lied to the
+> model about what happened. It now warns honestly and says what to do instead.
+
+**Context Explorer.** Replay any session's context-window occupancy turn by turn — each point is one
+assistant turn's total prompt size straight from the usage block, plotted against the 200k/1M budget
+with detected `/compact` resets marked.
+*Solves:* "why did this session compact three times" — visible instead of guessed.
+
+**Usage.** A harness health score (A–F), month-end cost projection against an editable budget, a
+usage-anomaly table (days spiking >2× the trailing baseline — a runaway-agent tell), the 18-week
+output-token heatmap, tool and model bars.
+
+> **The grade can say "I don't know".** Two of its three factors used to return a score of 50 when
+> they had no data, entering the weighted mean as if measured — so a brand-new install scored **D**,
+> one turn scored **F**, and a single good day flipped it to **A**. Factors with no data are now `na`
+> and dropped from the mean; below 25 turns there is no grade at all. `contextEfficiency` is flagged
+> as resting on an *assumed* constant, because it is.
+
+Also in this section: Config (settings.json editor), Governance (versions, drift, rollback),
+Reliability, Library, MCP and Team baseline.
+
+---
+
+## Inbox — what needs a decision
+
+![Inbox](docs/screenshots/inbox.png)
+
+**The problem.** Signals that need a human are scattered across GitHub, JIRA, CI and your own harness,
+and none is individually urgent enough to interrupt you.
+
+**What it does.** One severity-sorted list with two plane chips (**work** / **harness**). Work items:
+PRs with zero reviews past the 24/48 working-hour SLA, tickets past their stage budget, ≥3 QA cycles,
+rework re-entry, a JIRA status stale against a merged PR, a red main. Per row: **nudge**, **snooze
+24h**, **open**, **clear**. Drives the sidebar badge, a 60s poll, and optional desktop/Slack push.
+
+**Nudge copies a line; it never sends anything.** Deliberate: this app does not message your
+colleagues on your behalf. The Slack push posts to a *channel* and never @-mentions a person.
+
+---
+
+## Overview — what needs a human today
+
+![Overview](docs/screenshots/overview.png)
+
+Five delivery tiles (in flight, shipped 30d, cycle p50/p90, at-risk commitments, review queue), a
+cross-repo CI strip that goes red when a default branch is red, the capability-ROI headline, harness
+KPIs, top projects, recent sessions and recalled memory.
+
+The screenshot above is an **unconfigured install**, and it is here on purpose: the delivery tiles
+need JIRA + `gh`, so they say *"Nothing is fabricated here: no snapshot, no numbers"* instead of
+rendering a green zero. That is the rule the whole app is held to.
+
+---
+
+## Delivery — JIRA, GitHub, CI
+
+**The problem.** Cycle time, review latency and escaped defects live in three systems, and nobody
+computes them the same way twice.
+
+**What it does.** Tabs: **Engineering** (Attention Queue, Review flow with PR pickup-time and PR-size
+distributions, Quality, Investment, Predictability, Epics, CI, Load, Board, Members, OKRs, Export),
+**Idea → prod funnel** (median working-days per stage, headlined by *lead time − cycle time = "time
+it sat waiting on us"*), **DORA** (deployment frequency + lead time against Google Cloud's
+elite/high/medium/low bands — change-failure-rate and MTTR render as honest "no data source" cards
+rather than a fabricated proxy), **AI ROI** (cohort only, paired with a rework-rate guardrail), and
+**1:1 prep**.
+
+CI failures now have a **re-run failed** button. (`POST /api/ci/rerun` shells `gh run rerun`, was
+documented, and had zero callers anywhere in the UI — the panel that showed you the red run could not
+re-run it.)
+
+**Requires configuration:** JIRA credentials + an authenticated `gh`. Without them the section reports
+`available: false` and explains why.
+
+---
+
+## Everything else
+
+| Section | What it does | Problem it solves |
+|---|---|---|
+| **⌘K palette** | Jump anywhere, and search everything Claude ever said, ran or edited — prompts, assistant text, bash commands, Edit hunks — filterable by kind and **by file path** | *"What has Claude ever done to `src/auth.ts`?"* — a question no other tool on your machine can answer |
+| **Chat** | Talk to Claude Code from the browser; resume any session; per-turn memory grounding with `[memory:<name>]` citations; ✓/✗ review trail written to disk | Steering agent work without a terminal, with "a human checked this" recorded rather than assumed |
+| **Chat Insights** | One-shot rate, cost/chat, day×hour heatmap; duplicate-prompt clustering (exact + Jaccard) with **save as command** | You retype the same prompt weekly — this finds it and turns it into a `/command` |
+| **Workflows → Quick Actions** | One-shot `claude -p "/command"` against a chosen project, streamed live, result dropped in the Inbox | Running `/code-review` or `/security-review` without leaving what you're doing |
+| **Workflows → Task Board** | Agentic kanban: isolated git worktree per ticket, headless dev agent, manual review/QA/release gates, merge queue, first-class **Blocked** state you can reply to inline | Supervising several agent tasks at once without them colliding in one working tree |
+| **Workflows → Bugs** | Paste a trace; file paths and stack frames auto-extracted; **auto-bisect** runs real `git bisect` against your repro command and names the culprit commit | Finding the offending commit without babysitting a bisect |
+| **Workflows → Quality** | Analytics-event registry + taxonomy lint; **design drift** vs a manifest; `/review` history parsed from transcripts with a recurring-finding detector | Catching bad event names and prop drift before they land |
+| **Projects** | Card per project Claude Code has opened: running-now indicator, sessions, token usage, most-used model, roadmap progress, its own skills/commands/agents/MCP | Seeing which projects the agent is actually active in |
+| **Skills / Commands / Agents** | CRUD with CodeMirror, frontmatter preview, "what triggers this", template scaffolding | Authoring capability files without hunting for paths |
+| **Hooks** | Per-scope visual list, **matcher tester** (live regex vs a sample tool), **dry-run** (executes the real command with a sample payload → allow/BLOCK/latency), health from transcripts, pattern library | Hooks are invisible until they misfire; this makes them testable *before* they block your work |
+| **MCP** | JSON editor per server + **Test connection** that actually speaks MCP (JSON-RPC `initialize`, reports latency and server version) | Distinguishing "unreachable" from "reachable but needs OAuth" — the state everyone gets wrong |
+| **Governance** | Versioned writes, drift vs a baseline bundle, rollback, batch ops across projects | Undoing a config change you cannot remember making |
+| **Artifacts** | Read-only scan of `~/.claude` with rename/delete and per-type viewers | Finding what is actually taking up space |
+| **Authoring** | Prompt Studio: compose, expand `$ARGUMENTS`, save as a command | Iterating on a prompt before committing it |
+
+**Design drift, honestly.** `POST /api/design/manifest` bootstraps a manifest *by scanning the code* —
+so diffing it against that same code is diffing a file against a photocopy of itself, and drift is
+zero by construction. The endpoint now reports `status.state = "baseline-only"` and the UI shows
+*"cannot detect drift yet — 0 of N components have design-side data"* instead of a green "code and
+manifest agree". Variant drift is now checked for real; that loop's body used to be a bare
+`continue`.
+
+---
+
+## The two data planes
+
+Every panel declares which plane it draws from, and the boundary is enforced in the server, not in
+policy.
+
+- **Plane A — work artifacts** (JIRA tickets, GitHub PRs, reviews, CI, bugs). Already visible to
+  everyone on the team, therefore safe to show per person. This is Delivery and the `work` half of
+  the Inbox.
+- **Plane B — harness telemetry** (transcripts, tokens, cost, session hours). **One machine's private
+  data, self-only, forever.** No endpoint accepts a machine or user parameter for transcript data and
+  none ever will. This is Working Set, Harness, Capabilities and the `harness` half of the Inbox.
+
+The only join is `/api/roi`, which **drops the author/assignee field before aggregating** — cohorts
+only, never a person. There is no team-adoption view, no tokens-per-engineer, no cost-per-engineer,
+no leaderboard. That is a boundary, not a preference: measure the work (cycle time, escaped defects,
+review latency), not the keystrokes.
+
+`test/eng-privacy.test.js` enforces this structurally — it walks payloads for banned fields and fails
+the build if one appears.
+
+Two things this app will never do: **auto-nudge** (every nudge copies a line for a human to send) and
+**ingest another engineer's transcripts, tokens or active hours**.
+
+---
+
+## Honesty rules
+
+The app is held to four rules. They exist because it previously broke all four.
+
+1. **`null` is never rendered as `0`.** "Not measured" and "measured, and it is zero" are different
+   facts, and the idiom `Math.round((n || 0) * 100)` erased the difference wherever it appeared. An
+   unknown renders as `—`.
+2. **No green tick over an absent source.** A clean bill of health requires having *read* something.
+   An empty bug log now says *"no bugs have been recorded here yet — this is an empty log, not a
+   clean bill of health."*
+3. **Small samples get no score.** The harness grade needs 25 turns; team aggregates suppress below 5
+   contributors; percentile helpers return `null` on empty input rather than 0.
+4. **Every heuristic shows its arithmetic.** The Working Set rank prints its weights and inputs. No
+   number is a black box, and anything resting on an assumed constant is labelled `assumed`.
+
+---
 
 ## What was removed, and why
 
-Five adversarial audits of this repo found 32,757 LOC across 4 separate SPA shells and 81 leaf panels
-serving about 4 real jobs, with 48% of frontend modules having exactly one commit — written once,
-never revisited. The following were deleted rather than demoted, because "demote" was the repo's
-characteristic verb and it is how 81 panels accumulated:
+Five adversarial audits of this repo found **32,757 LOC across 4 separate SPA shells and 81 leaf
+panels serving about 4 real jobs**, with 48% of frontend modules having exactly one commit — written
+once, never revisited. The repo's characteristic verb was *demote*, not *delete*, which is how 81
+panels accumulated. These were deleted:
 
-- **Cursor shell** (`CursorDashboard.jsx`, `src/cursor/`, `server-cursor*.mjs`) — a second product's
-  analytics inside a Claude Code dashboard, 33 endpoints, zero tests, reading Cursor's private SQLite.
-- **Career shell** (`CareerDashboard.jsx`, `src/career/`, `server-career.mjs`, 21 `career-*.mjs`) —
-  eleven tabs of self-reported journaling opened at review time, plus the `server-team.mjs` surface it
-  alone mounted. It was the best-tested area in the repo; that inversion was the point.
-- **Constitution + Atoms** — a repo-knowledge RAG keyed to a `.wakeel/` layout that does not exist
-  here, so both sections rendered a 404 string as their entire tab.
-- **Labs** (Mindwalk, Agent Squads, Squad Designer) — the README already called them demos. Mindwalk
-  shelled out to a `mindwalk` binary that is not in this repo.
-- **Gamification** (`src/game/`, `server-game.mjs`) — see below.
+- **Cursor shell** — a second product's analytics inside a Claude Code dashboard: 33 endpoints, zero
+  tests, reading Cursor's private SQLite.
+- **Career shell** — eleven tabs of self-reported journaling opened at review time, plus the
+  `server-team.mjs` surface nothing else mounted. It was the best-tested area in the repo; that
+  inversion was the point.
+- **Constitution + Atoms** — keyed to a `.wakeel/` layout that does not exist here, so both sections
+  rendered a 404 string as their entire tab.
+- **Labs** (Mindwalk, Agent Squads, Squad Designer) — the README already called them demos, and
+  Mindwalk shelled out to a binary that is not in this repo.
+- **Gamification** — XP was all-time assistant *message count*, so the fastest way to level up was a
+  long, thrashing, unproductive conversation: the metric rewarded exactly the behaviour the tool
+  exists to reduce. It had been deleted once with that rationale and resurrected two commits later
+  the same day; `src/App.jsx` carried the tombstone comment three lines below the import that
+  contradicted it. The presentational helpers survive as `src/anim.jsx` — motion is not a metric,
+  only the scoring was the problem.
 - **Figma Capture** + `design-system-catalog.json` — the catalog was a regex scrape of one company's
-  remote Storybook, shipped as every project's component list, and the repo scanner required a path
+  remote Storybook shipped as every project's component list, and the repo scanner required a path
   segment literally named `app`, so it returned nothing for a standard `src/components/` layout.
 - **`dist/`** — a build artifact that was tracked, so a stale bundle shipped alongside every change.
 
 Kept deliberately, against the audit: `server-memory.mjs` (Overview's recall tile and chat grounding
-depend on it) and `harness-health.mjs` / `harness-usage-trends.mjs` (renamed from `career-*`, they
+depend on it) and `harness-health.mjs` / `harness-usage-trends.mjs` (renamed from `career-*`; they
 feed the Harness Usage panel, not the deleted career shell).
 
-Net: **~15,300 lines and 100 endpoints removed**, with the full test suite still green and every
-surviving endpoint verified 200.
+Demoted rather than deleted: the frontmatter linter (→ Capabilities, as an authoring aid), the
+"cache saved $" estimate (→ small type on Sessions; it is an estimate × an estimate against a
+counterfactual that never happened, and it only ever goes up), and the 18-week token heatmap (→
+Harness ▸ Usage; it measures volume, which is a proxy for "was he typing").
 
-## Start
+**Net: ~15,300 lines and 100 endpoints removed**, full test suite green, every surviving endpoint
+verified `200`.
 
-```
-cd dashboard && npm run dev
-```
-
-Opens http://localhost:5177 (frontend, Vite) proxying to the API on :5178 (Express). First time only: `npm install`.
-
-## The two data planes
-
-Every panel declares which plane it draws from, and the boundary is enforced in the server, not in policy.
-
-- **Plane A — work artifacts** (JIRA tickets, GitHub PRs, reviews, CI, bugs). Already visible to everyone on the team, therefore safe to show per person. This is the Delivery section and the `work` half of the Inbox.
-- **Plane B — harness telemetry** (transcripts, tokens, cost, session hours). **One machine's private data, self-only, forever.** No endpoint accepts a machine or user parameter for transcript data and none ever will. This is the Harness and Capabilities sections and the `harness` half of the Inbox.
-
-The only join between them is `/api/roi`, which **drops the author/assignee field before aggregating** — cohorts only, never a person. There is no "team Claude Code adoption", no tokens-per-engineer, no cost-per-engineer, no active-hours panel, and no leaderboard. That is a boundary, not a preference: measure the work (cycle time, escaped defects, review latency), not the keystrokes.
-
-**There is no view / lens / role switcher anywhere in this app.** The planes are a server-side boundary, not a UI mode — they surface only as two filter chips on the Inbox, both on by default.
-
-## Sections — what they read/write
-
-| Section | Reads / writes | Notes |
-|---|---|---|
-| **Overview** | `/api/eng/snapshot` (plane A) + `/api/usage`, `/api/ci/health`, `/api/capabilities` (plane B) | Answers one question: *what needs a human today?* Five delivery tiles — **in flight** (+ how many are past their stage budget), **shipped 30d** with a 12-week sparkline, **cycle p50/p90** with a delta vs the previous 30d, **at-risk commitments**, **review queue** with the oldest wait in working days. Every tile links into the section that explains it. Below them: a cross-repo **CI strip** that goes red when a default branch is red, the capability-ROI headline, four harness KPIs, top projects **ranked by sessions** (not by output tokens — that rewarded whichever project made Claude write the most text), recent sessions and recalled memory. If the eng snapshot is not configured it says so; it never renders a fabricated zero. |
-| **Setup** | `/api/setup/*` → `projects.json`, `.eng.local.json` (both gitignored), `dashboard-meta.json` | Visual configuration for everything the app needs, so nothing has to be hand-edited on disk. Projects (JIRA key + repo + dev/QA/product rosters + an explicit per-project **writes** opt-in), the **work week** (hours, weekend days, UTC offset, week start — the setting every duration in Delivery is measured against), the story-point→days table, JIRA credentials, and notifications. **Credentials are write-only**: no endpoint here returns a stored secret, not masked and not partially, so a token cannot leak through a screenshot, a cached response or the devtools network tab. The fields are therefore always blank on load; submitting a blank one leaves the stored value alone and clearing one takes an explicit Remove. Secret files are written `0600`, are never copied into the backups directory, and are checked against `.gitignore` on every read — the UI shows a red banner if one is committable. **Test connection** authenticates against JIRA for real; GitHub is the `gh` CLI's own login, so there is no token to enter and the panel says so. |
-| **Working Set** | `/api/fe/workingset`, `/api/fe/dossier`, `POST /api/fe/mute` (plane B + local source) | **The only section scoped to your code rather than your harness, and the only one that needs zero external config** — no JIRA, no `gh`, no team file. Built by joining the Edit/Write `structuredPatch` blocks already in your transcripts (file path, ±lines and up to 24 lines of real diff text) to an import graph parsed from the repo on disk. **Rework Radar**: one row per file an agent *edited*, ranked by how often you had to come back to it — `revisitSessions×3 + revisitDays×2 + failures×2 + extraEdits×1`, `null` (not 0) below 2 sessions, because one session is work, not rework. A component the agent rewrote six times across four sessions is a component whose prop API nobody can guess; git only kept the attempt that survived, so that signal exists nowhere else. Per row: importers (blast radius, product code counted separately from tests), whether a test or story actually covers it, orphan flag, uncommitted flag, and tool errors attributed to that exact file. **File dossier**: the causal chain — *prompt → diff → error → retry → diff* — for one file. Actions close in-app: **resume the session that last edited this file** (not a `claude --resume` string to paste into a terminal), **start a new session pre-loaded with the blast radius and the errors already hit here**, copy the bundle, or mute a noisy path. |
-| **Inbox** | `/api/inbox`, `POST /api/inbox/done` | Every item that needs a decision, severity-sorted, with two plane chips (**work** / **harness**, both on). Work items: PRs with zero reviews past the 24/48 working-hour SLA, tickets past their stage budget, ≥3 QA cycles, rework re-entry, a JIRA status stale against a merged PR, a red main. Per row: **nudge** (copies a ready-to-send line naming the ticket, who is waiting and how long — *it never sends anything, ever*), **snooze 24h**, **open** (deep link), **clear**. Badge + 60s poll + desktop/Slack notification are wired to this. |
-| **Delivery** | `/api/eng/snapshot?project=all` (plane A) | The Engineering Metrics dashboard, **folded into this shell** — the four-shell portal is gone, because the split was the defect: the only genuinely team-wide data in the repo used to sit behind a chip nobody clicked. Tabs: **Engineering** (the whole Eng app: Attention Queue, **Review flow** — now also PR pickup-time and PR-size distributions, both team-level, no author breakdown — Quality, Investment, Predictability, Epics, CI, Load, Board, Members, OKRs, Export), **Idea → prod funnel** (median working-days per stage over 90d, split queue vs active, p50/p90, headlined by lead time − cycle time = "time it sat waiting on us"), **DORA** (deployment frequency + lead-time-for-changes against Google Cloud's elite/high/medium/low bands, both derived from existing JIRA+GitHub data; change-failure-rate and MTTR render as honest "no data source" cards rather than a fabricated proxy — this repo has no deploy/incident feed), **AI ROI** (cohort only; `$` per shipped point now paired with a **rework rate** guardrail tile — reopens/re-entries as a % of shipped tickets — so a cheap-and-fast cohort with rising rework doesn't read as a win), **1:1 prep**. |
-| **Capabilities** | `/api/capabilities`, `POST /api/capabilities/archive` | The **ROI ledger** leads: name / always-on tok / fires 30d / fires 90d / last fired / tok-per-fire / verdict (**DEAD** never fired · **COLD** not in 30d · **HOT**), headlined *"you pay N tok every session for M capabilities — K of them have never fired"*. Select rows → archive: **dry-run first, backed up, reversible** (same versioned write path as everything else). Then Skills / Commands / Agents CRUD, the Flow graph, and — demoted here from the landing page and reframed as an **authoring aid, not a metric** — the Inventory table with its static frontmatter lint. A perfect-scoring skill that never fires is worthless; a scruffy one invoked daily is your most valuable file. |
-| **Harness** | transcripts (read-only), `~/.claude/settings.json`, `/api/gov/*` | **Sessions**: sortable ledger with real per-session `$`, out tok, cache-read %, duration, tool calls, compactions, errors; copy `cd <cwd> && claude --resume <id>`, reveal in Finder, open raw. Keyboard layer: `/` focus filter, `j`/`k` move, `y` copy resume, `↵` open. **Context Explorer**: pick any real session and replay its context-window occupancy turn by turn — each point is one assistant turn's *total* prompt size (fresh + cache-write + cache-read, straight from Anthropic's usage block, no reconstruction needed), plotted against the 200k/1M budget with detected `/compact` resets marked. **Forensics**: failure signatures grouped and counted ("this has bitten you 181 times"), context pressure by tool (share of every byte pulled into context, median/p90, HOG flag) with **cap this tool** (installs a PostToolUse hook), and hook blast radius (firings / blocks / block rate / p50-p90 latency) with **disable**. **Usage**: a Harness health score (A–F; cost trend, cache efficiency, context overhead) with a week-over-week regression warning, month-end cost projection against an editable budget, cache-TTL waste estimate (best vs worst 7-day cache hit-rate), a usage-anomaly table (days spiking >2× the trailing baseline — a runaway/looping-agent tell), the 18-week output-token heatmap, tool bars and model bars — all demoted off the landing page. **Team baseline**: one row per team repo (on-baseline / drifted / never-scaffolded / not-cloned) against a `team-harness.json` committed in a shared repo. Plus Config, Governance, Reliability, Library, MCP. |
-| **Projects** | reads `~/.claude.json` → `projects`, each project's `.claude/{skills,commands,agents}` + `.mcp.json` + `.planning/ROADMAP.md`, and transcripts in `~/.claude/projects/` (read-only) | Card per project Claude Code has opened: **running now** (session/subagent transcript written within the last 5 min — pulsing dot, auto-refreshes every 30s), session count, per-project **token usage** (out / in+cache / messages) attributed from transcripts, most-used model, last-active time, **GSD progress** bar when a `.planning/ROADMAP.md` exists (checked vs unchecked items), and the project's own skills/commands/agents/MCP servers (expandable name lists). The current project is highlighted; deleted-but-remembered projects are flagged. |
-| **Skills** | `~/.claude/skills/<name>/SKILL.md` (+ `./.claude/skills` if it exists) | List, edit (CodeMirror), preview (parsed YAML frontmatter + rendered markdown + "what triggers this skill"), create from template, delete. Supporting assets (e.g. `references/*.md`) are listed in the preview. |
-| **Prompts / Commands** | `~/.claude/commands/*.md` (+ `./.claude/commands`) | Same CRUD. "Test run" panel substitutes your typed args into `$ARGUMENTS` and shows the exact expanded prompt. |
-| **Agents** | `~/.claude/agents/*.md` (+ `./.claude/agents`) | Same CRUD. Preview shows the `tools` list as chips. |
-| **MCP Servers** | `~/.claude.json` → `mcpServers` (user scope) and `projects[*].mcpServers` | JSON editor per server. **Test connection** actually speaks MCP: spawns stdio servers / POSTs to http servers with a JSON-RPC `initialize` and reports latency + server name/version. |
-| **Hooks** | `~/.claude/settings.json` → `hooks` (user), `./.claude/settings.json` (project), `./.claude/settings.local.json` (local) | Left pane: flattened view of every hook (event, matcher, command, timeout). Right pane: raw JSON editor of the `hooks` block only — the rest of settings.json is preserved untouched. |
-| **Artifacts** | read-only scan of `~/.claude` (rename/delete write) | Excluded from the scan: `plugins/`, `node_modules/`, `.git/`, `file-history/`, `paste-cache/`, `telemetry/`, `todos/`, `statsig/`, SQLite/lock files, dotfiles. Cap: 8000 files. |
-
-### Newer sections & global features
-
-| Feature | Where | Notes |
-|---|---|---|
-| **Flow Graph** | sidebar → Flow Graph | SVG orchestration topology: entry → skills/commands → agents → MCP. Toggle **defined** (parsed from skill/agent bodies) vs **observed** (real invocations from transcripts, edge width = frequency). Click a node to isolate its up/downstream path; flags dead ends (never ran), cycles, and the most-traveled path. Scope-aware. |
-| **Chat Insights** | sidebar → Chat Insights | Stats tab: chats, one-shot rate, cost/chat, day×hour heatmap, correction/abandon/reuse rates, leaderboards. Duplicate prompts tab: exact+fuzzy (Jaccard) clusters with **save as command** / **send to Prompt Studio** actions; similarity slider, project + time filters. |
-| **Inbox — digest & notifications** | sidebar → Inbox | Daily digest tab (shipped commits, spend, drift, attention items) and Notifications tab (desktop + Slack webhook; the server pushes new error/warning items every 60s while running). The Slack push posts to a **channel** — it never @-mentions a person on your behalf. The Notifications tab also hosts the **Scheduler** panel (below). |
-| **Scheduler — unattended cadence loop (ADP L3/L4a)** | Inbox → Notifications → *Scheduler* | An in-process cadence loop (`scheduler.mjs`, `dashboard-scheduler.json`) whose results land in the Inbox as info-only, self-only harness items. **Opt-in — off by default; the master checkbox is the kill switch.** Three job kinds: **digest** (no LLM — the weekly career digest on a timer), **dispatch** (auto-starts board tickets sitting in a trigger stage through the same worktree + gated `▸Start` path — bounded by `maxDispatch` and a **daily cost ceiling** that halts dispatch; concurrency/dedup come free from the board's own start guards), and **remediate** (maps the existing SLO-breach signals — a red main, a 0%-pass eval — to the exact reversible command, `git revert` / `gov-rollback`, dropped in the Inbox). **remediate is propose-only: nothing auto-runs on a shared repo** — the trigger stays a human's, matching this app's copy-for-human invariant. Add jobs with the two buttons; edit trigger stage / project / ceiling in `~/.claude/dashboard-scheduler.json`. Failed jobs retry with backoff before parking a cadence. |
-| **Run verdict & batch approve (ADP L2)** | Workflows → Loush Runs | Each run gets one aggregated verdict — **PASSING / BLOCKED / NEEDS-HUMAN** (`run-verdict.mjs`, pure) — from review severity + phase/terminal state + retry caps, shown as a badge with a `?verdict=` filter and a KPI. Converged runs awaiting sign-off get a checkbox and an **"approve all converged"** bar (`POST /api/runs/approve-batch`) — the human supervises a batch instead of one run at a time. |
-| **Chat grounding & review trail (ADP L1)** | Chat | Each turn prepends top curated-**memory** hits to the *model's* copy (viewers still see clean text) and asks it to cite `[memory:<name>]` (`retrieveContext()` in `server-memory.mjs`). Under every assistant reply, **✓ accept / ✗ reject** records a review-trail entry (`chat-review-trail.json`) so "a human reviewed every output" is logged, not implicit. |
-| **Bugs** | sidebar → Bugs | Bug triage workspace (`~/.claude/bugs.json`): paste a trace/log/link — file paths, functions and stack frames auto-extracted. **Auto-bisect** runs real `git bisect` against your repro command and surfaces the culprit commit + author + diffstat. **Root-cause session** prefills Chat with the trace, `@suspect-files` and `git blame` context. Marking fixed records the active config version; regression-test generator and a copyable `gh pr create` command included. Filter by project/severity/status/age. |
-| **Hooks (extended)** | sidebar → Hooks | Real Claude Code hooks as first-class config: visual per-scope list with add/remove, **matcher tester** (live regex vs sample tool), **dry-run** (runs the actual command with a sample tool-call payload on stdin → allow/BLOCK/latency), **health** (firings by event parsed from transcripts, blocks observed), and a one-click **pattern library** (block-prod-file-edit, secret-scan-pre-write, require-tests-before-stop, log-tool-usage). |
-| **CI eval gate** | Reliability → CI gate | Generates the GitHub Action / GitLab CI config that runs the eval suite headlessly on PRs touching `.claude/` (evals copied into the repo), with a configurable merge-blocking pass-rate threshold. CI runs shown inline via `gh`, tagged CI vs manual. Dry-run preview before writing. |
-| **Quality** | sidebar → Quality | Three tabs. **Analytics events** (28): live registry of tracking calls (`.track/.capture/logEvent/…`) with file:line, naming-convention + taxonomy validation (`.claude/analytics-taxonomy.json`, bootstrappable from code), and an uncommitted-diff drift check so bad event names never land. **Design drift** (29): diffs code components vs `.claude/design-manifest.json` (missing-in-code / prop-drift / undocumented, Figma frame links) + Figma MCP call budget from transcripts; feeds Recommendations. **Review loop** (30): /review & /security-review history parsed from `ReportFindings` calls in transcripts — findings with fixed/dismissed outcomes, per-finding source (main vs subagent), and a recurring-finding detector that recommends a blocking hook. |
-| **Task Board** | sidebar → Task Board | Agentic kanban per project (`~/.claude/taskboard.json`, every write versioned). Paste JIRA content → ticket; **✂ analyze** proposes an editable sub-ticket breakdown (real `claude -p` pass). **▸ Start** creates an isolated git worktree branch under `~/.claude/board-worktrees/` and runs a headless dev agent; done → Code Review (idle). **Review / QA / Release are always manual triggers**: review agent returns severity-tagged findings (auto-fix loop capped at 3 → Blocked), clean review auto-provisions the **preview env** (per-project plug-in command; first printed URL becomes the QA base URL; build failure → Blocked; idle teardown). QA agent derives AC + test cases from the ticket + changed files, executes them, and **auto-files failing cases as linked bug sub-tickets** with evidence + exact commit. Release = human gate: per-repo **merge queue** with rebase-first, conflict → Blocked with hunks (or require-PR mode that only hands you a `gh pr create`). **Blocked** is first-class — distinct from idle-waiting, shows the agent's own question, reply inline to resume the same session (`--resume`), surfaces in Inbox as an error. **Agent teams** (dev/review/QA model + instructions, versioned) and **pipeline templates** (custom stages, WIP limits, versioned — in-flight tickets keep the version they started on) configured in the Setup tab. Deps (blocks/blocked-by) enforced at start; stacked branches base on their blocker's branch; overlapping-file conflict warnings across in-flight branches. Every run logs its **context handoff** (what was passed vs deliberately excluded — e.g. QA never sees review findings unless opted in). |
-| **Task Board analytics** | Task Board → analytics | All computed live from ticket history/runs: funnel + column counts, avg/p90 time-in-column, cycle p50/p90, throughput per day, bug ratio (QA bugs ÷ released), QA-cycles-per-ticket distribution, blocked-time by reason, per-team and per-model quality tables (released, cycle, bug ratio, findings, escalations, human touches, cost), cost by stage (dev/review/QA), cost per released vs sunk in unreleased, stale regression-case detector. |
-| **⌘K palette — search my past self** | anywhere | Jump to any section/project/skill/agent/MCP server, run actions (evals, scaffolder), and **search everything Claude ever said, ran or edited**: your prompts, assistant text, bash commands and Edit hunks, filterable by kind. The killer filter is the file box — *"only sessions that touched `src/auth.ts`"* answers "what has Claude ever done to this file", which the old prompt-only search literally could not express. `↵` copies the session's `cd <cwd> && claude --resume <id>`. |
-| **Scaffolder** | Projects → "+ Scaffold harness" | Pick a profile and/or clone another project's setup; dry-run preview, then writes `.claude/settings.json`, starter CLAUDE.md, chosen skills, and registers the project in `~/.claude.json`. |
-| **Batch ops** | Governance → Batch ops | Set a settings field / enable-disable a skill / push a CLAUDE.md rule / sync drift across many projects at once. Dry-run required before apply; every write versioned. |
-| **Quick capture** | Chat, hover any message → ⤴ | Promote a message to a command, skill, Prompt Studio entry, or note (`~/.claude/notes/`). |
-| **Pins & resume** | Chat session lists → ☆ | Pin/label sessions (stored in dashboard-meta.json with the config version active at pin time); pinned surface on Overview and resume in one click. |
-| **Context bundles** | Library → Context bundles | Named sets of file refs/URLs/notes (`~/.claude/context-bundles.json`); "Load in chat" prefills a session prompt with `@ref` lines. |
-
-## Creating & editing
-
-**+ New** opens a right-side drawer with type-specific fields (skills: name/description/argument-hint/allowed-tools; agents add tools/model/color; MCP: transport, command/args/env or URL). **Edit fields** on any detail view opens the same drawer prefilled from the parsed frontmatter — saving rewrites only the frontmatter block in the on-disk conventions (quoted strings, YAML lists, inline agent tools) and preserves the markdown body, including unsaved inline-editor changes. The body itself is still edited inline with the CodeMirror editor.
-
-## What was deleted, and why
-
-The gamification layer is **gone** — and this time the code agrees with the sentence. It was deleted once, re-added two commits later the same day as `src/game/` + `server-game.mjs`, and the tombstone comment sat three lines below the import that contradicted it until it was removed for real. The presentational helpers (`CountUp`, `Stagger`, `Draw`) survive as `src/anim.jsx`: motion is not a metric, only the scoring was the problem.
-
-- **Pilot Level, the XP bar, the 🔥 streak, the 10 achievement badges, the `Lv N · 🔥Nd` topbar chip.** XP was literally all-time assistant *message count*, so the fastest way to level up was a long, thrashing, unproductive conversation: the metric rewarded exactly the behaviour the tool exists to reduce. And a token-count level plus a streak is one product decision away from a per-engineer leaderboard, at which point every number on the screen stops being trusted. `src/Gamification.jsx` no longer exists.
-
-Demoted rather than deleted:
-
-- **Setup-health ring, the Level/Specificity columns, the Quality distribution panel** → Capabilities, as an authoring aid. All three rendered the same static frontmatter heuristic. That is a linter, not a metric. What replaced it as *the* metric is fires × always-on cost (the ROI ledger).
-- **"cache saved $"** → out of the KPI row, down to small type on the Sessions page. It is an estimate (90% of input price) × an estimate (~4 chars/token), measured against a counterfactual that never happened, and it only ever goes up. No decision hangs on it.
-- **The Inventory table** → Capabilities. **Tool-usage bars, model bars, the 18-week output-token heatmap** → Harness → Usage. The heatmap is a green-squares clone measuring token volume — a proxy for "was he typing", and the first panel anyone would screenshot to judge someone.
-- **The four-shell portal.** Eng folded in as the Delivery section; Cursor and Career are deleted outright (see below).
-
-Two things this app will never do: **auto-nudge** (every nudge copies a line for a human to send) and **ingest another engineer's transcripts, tokens or active hours**.
+---
 
 ## API — panels' backing data
 
 | Endpoint | What |
 |---|---|
+| `GET /api/fe/workingset?root=&days=` · `GET /api/fe/dossier?root=&file=` · `POST /api/fe/mute` | Working Set: rework rank, import graph, coverage; per-file prompt→diff→error timeline and context bundle |
+| `GET /api/setup` · `PUT /api/setup/{eng,project,credentials,notify}` · `DELETE /api/setup/project` · `POST /api/setup/test/jira` · `GET /api/setup/test/gh` | Visual config. **`GET /api/setup` never returns a secret value** — only `set: true\|false` |
 | `GET /api/inbox[?plane=work\|harness]` · `POST /api/inbox/done` | Every attention item; `{key,done}` clears, `{key,snoozeHours:24}` defers |
 | `GET /api/eng/snapshot?project=all` | The plane-A delivery snapshot (JIRA changelog + GitHub PRs), 2h cache |
-| `GET /api/ci/health?days=14` · `POST /api/ci/rerun` | Cross-repo default-branch failure rate, time-to-green, flakes, `mainRed` |
+| `GET /api/ci/health?days=14` · `POST /api/ci/rerun` | Cross-repo default-branch failure rate, time-to-green, flakes, `mainRed`; re-run a failed run |
 | `GET /api/capabilities` · `POST /api/capabilities/archive` | The ROI ledger; archive is dry-run → backed up → reversible |
 | `GET /api/forensics?days=30` | Failure signatures · context pressure by tool · hook blast radius |
 | `GET /api/sessions?days=7` | Session ledger with real `$` and a `resume` command per row |
-| `GET /api/context/sessions` · `GET /api/context/:sessionId` | Context Window Explorer: replayable-session list, then per-turn context occupancy (fresh/cache-write/cache-read) + detected `/compact` events for one session |
-| `GET /api/usage[?budget=N]` | Token/cost activity, per-model mix, Harness health score + regression, cache-TTL waste, usage anomalies, month-end cost projection |
-| `GET /api/roi?days=90` | Cohort AI $/shipped-point, paired with a cohort rework-rate guardrail. Author/assignee dropped before aggregation |
+| `GET /api/context/sessions` · `GET /api/context/:sessionId` | Context Explorer: replayable-session list, then per-turn occupancy + detected `/compact` events |
+| `GET /api/usage[?budget=N]` | Token/cost activity, per-model mix, harness health + regression, cache-TTL waste, anomalies, month-end projection |
+| `GET /api/roi?days=90` | Cohort AI $/shipped-point + a cohort rework-rate guardrail. Author/assignee dropped before aggregation |
 | `GET /api/search?q=&file=&kind=` | Prompts, assistant text, bash commands, Edit hunks; `?file=` = "only sessions that touched this path" |
+| `GET /api/design/drift?project=` · `POST /api/design/manifest` | Component drift with a `status` that reports when drift is *not* detectable |
 | `GET /api/gov/team` · `POST /api/gov/team/{baseline,export,sync}` | Team harness baseline + per-repo drift |
-| `GET /api/scheduler` · `PUT /api/scheduler` | The cadence-loop config (`{enabled, jobs[]}`); jobs are digest / dispatch / remediate. Off by default |
-| `GET /api/runs[?verdict=]` · `POST /api/runs/approve-batch` | Loush runs with the aggregated PASSING/BLOCKED/NEEDS-HUMAN verdict; batch-approve converged runs |
-| `POST /api/chat-review` | Records a per-output accept/reject review-trail entry (L1) |
+| `GET /api/scheduler` · `PUT /api/scheduler` | The cadence-loop config (`{enabled, jobs[]}`); digest / dispatch / remediate. Off by default |
+| `GET /api/runs[?verdict=]` · `POST /api/runs/approve-batch` | Runs with an aggregated PASSING/BLOCKED/NEEDS-HUMAN verdict; batch-approve converged runs |
+| `POST /api/chat-review` | Records a per-output accept/reject review-trail entry |
+
+---
 
 ## Backups
 
-Before **any** destructive write (save, delete, rename target overwrite, settings/mcp edits), the current file (or whole skill directory) is copied to:
+Before **any** destructive write (save, delete, rename overwrite, settings/mcp edits), the current
+file — or whole skill directory — is copied to:
 
 ```
 ~/.claude/dashboard-backups/<ISO-timestamp>__<full~path~with~tildes>
@@ -144,49 +408,96 @@ Before **any** destructive write (save, delete, rename target overwrite, setting
 
 Nothing auto-prunes this directory; clean it out yourself occasionally.
 
-## How the artifact viewer picks a renderer
+**Credentials are the one exception**: they are written `0600` and never backed up, because a spare
+plaintext copy of a token is a liability, not a safety net.
 
-By file extension, in `src/viewers.jsx`:
-
-- `.md` → rendered markdown (marked)
-- `.html` → sandboxed `<iframe sandbox="allow-scripts">` (no same-origin, no top-navigation, no forms)
-- `.svg` → rendered via `<img>` (scripts inside the SVG can never execute in an img)
-- `.png .jpg .jpeg .gif .webp` → image preview on a checkerboard
-- `.csv` → parsed (quote-aware) into a sortable table, first 1000 rows
-- `.json` → array-of-objects becomes a sortable table; anything else pretty-printed
-- `.jsx .tsx` → live-mounted in a sandboxed iframe using React + Babel standalone from CDN (imports are stripped; needs internet; if no component is found, flip to Source)
-- everything else (`.py .js .ts .sh .jsonl …`) → syntax-highlighted read-only CodeMirror with a copy button
-
-Every artifact has a **Rendered / Source** toggle, plus Reveal in Finder, Copy path, Download, Rename, Delete.
-
-Files over 2 MB are not rendered inline (use Download). Text content is fetched via `/api/artifacts/content`, binaries streamed via `/api/artifacts/raw`.
+---
 
 ## Risks & mitigations
 
-- **Untrusted HTML/JSX artifacts contain arbitrary code.** They are rendered only inside `sandbox="allow-scripts"` iframes: no cookies/localStorage access to the dashboard origin, no parent-frame access, no navigation. Don't add `allow-same-origin` — that would let a malicious artifact call the dashboard API (which can write to your `~/.claude`).
-- **The API can write your real config.** It binds to localhost only and refuses any path outside `~/.claude`, `~/.claude.json`, and this project's `.claude/`. Still: anything running on your machine can hit `localhost:5178`. Don't leave it running on shared machines / don't port-forward it.
-- **Hooks/settings edits take effect on the next Claude Code session.** A JSON typo is caught client-side before writing, but a *semantically* wrong hook can block tool calls — the timestamped backup is your undo.
-- **JSX live preview loads React/Babel from unpkg** — offline it falls back to a message; use the Source toggle.
+- **Untrusted HTML/JSX artifacts contain arbitrary code.** They render only inside
+  `sandbox="allow-scripts"` iframes: no cookies/localStorage on the dashboard origin, no parent-frame
+  access, no navigation. Don't add `allow-same-origin` — that would let a malicious artifact call the
+  dashboard API, which can write to your `~/.claude`.
+- **The API can write your real config.** It binds to localhost only and refuses any path outside
+  `~/.claude`, `~/.claude.json` and this project's `.claude/`. Still: anything running on your machine
+  can hit `localhost:5178`. Don't leave it running on shared machines, and don't port-forward it.
+- **Hooks/settings edits take effect on the next Claude Code session.** A JSON typo is caught
+  client-side before writing, but a *semantically* wrong hook can block tool calls — the timestamped
+  backup is your undo.
+- **JSX live preview loads React/Babel from unpkg** — offline it falls back to a message; use the
+  Source toggle.
 
-## Layout
+### How the artifact viewer picks a renderer
+
+By file extension, in `src/viewers.jsx`: `.md` → rendered markdown · `.html` → sandboxed iframe ·
+`.svg` → via `<img>` so embedded scripts can never execute · images → preview on a checkerboard ·
+`.csv` → quote-aware sortable table (first 1000 rows) · `.json` → array-of-objects becomes a sortable
+table, else pretty-printed · `.jsx/.tsx` → live-mounted in a sandboxed iframe with React + Babel
+standalone · everything else → syntax-highlighted read-only CodeMirror.
+
+Every artifact has a **Rendered / Source** toggle, plus Reveal in Finder, Copy path, Download, Rename,
+Delete. Files over 2 MB are not rendered inline.
+
+---
+
+## Development
 
 ```
-server.mjs               Express API (CRUD, backups, inbox, capabilities, forensics, sessions, roi, search, CI)
-server-eng.mjs           plane A: JIRA changelog + GitHub PRs → the delivery snapshot
-src/App.jsx              sidebar + section switch + sidebar-footer dashboard menu
-src/Overview.jsx         the five delivery tiles + CI strip + harness KPIs
-src/InboxSection.jsx     plane chips · nudge (copies, never sends) · snooze 24h
-src/DeliverySection.jsx  mounts EngDashboard + funnel + AI ROI + 1:1 prep
-src/CapabilityLedger.jsx the ROI ledger (+ the demoted Inventory linter)
-src/SessionsSection.jsx  session ledger, real $, keyboard layer
-src/ContextExplorerSection.jsx  Context Window Explorer — per-turn context occupancy replay
-src/ForensicsSection.jsx failure signatures · context pressure · hook blast radius
-src/UsagePanel.jsx      Harness health score/regression, cache-TTL waste, anomalies, cost projection
-scheduler.mjs           the unattended cadence loop (digest/dispatch/remediate jobs) + pure nextSchedule/dispatchPlan/remediationPlan
-run-verdict.mjs         pure: aggregate a loush run's gates into one PASSING/BLOCKED/NEEDS-HUMAN verdict
-career-health.mjs       pure: usage health score + week-over-week regression detector
-career-usage-trends.mjs pure: cache-TTL waste, daily anomaly detection, month-end cost projection
-src/TeamBaseline.jsx     team harness baseline + drift
-src/Palette.jsx          ⌘K — search my past self (incl. the `file:` filter)
-src/viewers.jsx          per-type artifact renderers
+npm run dev      # server (:5178) + Vite (:5177) with --watch
+npm test         # node --test — pure logic, no network
+npx vite build   # dist/ is gitignored; regenerate as needed
 ```
+
+**Tests** cover the arithmetic users read, not just payload shapes:
+
+| File | Covers |
+|---|---|
+| `test/fe-workingset.test.js` | Import resolution, the rework rank, coverage detection, null-vs-zero |
+| `test/eng-config.test.js` | The work-week engine across several work weeks and a negative UTC offset |
+| `test/harness-health.test.mjs` | The A–F grade's null discipline and per-turn cost arithmetic |
+| `test/setup-config.test.mjs` | Config validation, the three-case secret merge, the `.gitignore` check |
+| `test/eng-privacy.test.js` | The plane boundary, structurally |
+
+**Invariants worth knowing before extending it:**
+
+- `safe()` + `backup()` in `server.mjs` are a path jail plus a timestamped backup on every write. All
+  config writes go through them. Do not add a write path that skips them.
+- No endpoint takes a filesystem path from the client for a config write. Paths are fixed constants.
+- Secret values never appear in a response body. If you add a credential, put it in
+  `server-setup.mjs` and keep it write-only.
+
+### Layout
+
+```
+server.mjs                Express API (CRUD, backups, inbox, capabilities, forensics, sessions, roi, search, CI)
+server-fe.mjs             Working Set: agent edit history × import graph × git state
+server-setup.mjs          /api/setup/* — visual config; secrets are write-only
+server-eng.mjs            plane A: JIRA changelog + GitHub PRs → the delivery snapshot
+server-memory.mjs         memory recall + chat grounding
+eng-config.mjs            pure: user config + the work-week engine
+harness-health.mjs        pure: usage health score + week-over-week regression detector
+harness-usage-trends.mjs  pure: cache-TTL waste, daily anomaly detection, month-end cost projection
+scheduler.mjs             the unattended cadence loop (digest/dispatch/remediate) + pure planners
+run-verdict.mjs           pure: aggregate a run's gates into one verdict
+
+src/App.jsx               sidebar + section switch
+src/WorkingSet.jsx        the rework radar + file dossier
+src/SetupSection.jsx      projects, credentials, work week, story points, notifications
+src/Overview.jsx          delivery tiles + CI strip + harness KPIs
+src/InboxSection.jsx      plane chips · nudge (copies, never sends) · snooze 24h
+src/DeliverySection.jsx   mounts EngDashboard + funnel + AI ROI + 1:1 prep
+src/CapabilityLedger.jsx  the ROI ledger (+ the demoted Inventory linter)
+src/SessionsSection.jsx   session ledger, real $, keyboard layer, in-app resume
+src/ForensicsSection.jsx  failure signatures · context pressure · hook blast radius
+src/UsagePanel.jsx        harness health/regression, cache-TTL waste, anomalies, cost projection
+src/ContextExplorerSection.jsx  per-turn context occupancy replay
+src/Palette.jsx           ⌘K — search my past self (incl. the `file:` filter)
+src/anim.jsx              presentational animation primitives
+src/viewers.jsx           per-type artifact renderers
+```
+
+**Design system.** Dark-first and warm: base `#0d0b0a` with clay/violet radial glows, glassy panels
+`rgba(28,24,21,0.55)` + blur, clay-orange accent `#d97757`. Space Grotesk (headings/stats), IBM Plex
+Sans (body), IBM Plex Mono (labels/identifiers/data). Fonts load from Google Fonts and fall back to
+system fonts offline. Lists over ~10 items paginate.
