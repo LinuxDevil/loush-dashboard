@@ -46,16 +46,28 @@ export default function UsagePanel() {
         <div className="panel" style={{ marginBottom: 0 }}>
           <div className="panel-head"><h3>Harness health <span className="muted">usage efficiency, not config completeness — see Harness ▸ Config for that</span></h3></div>
           <div className="kpi-grid" style={{ margin: '0 16px 12px' }}>
+            {/* null grade is "not measured", never a letter. Below MIN_TURNS the factors are noise:
+                one turn scored 0/F and a single good day flipped it to A. */}
             <div className="kpi"><div className="kpi-label"><span>score</span></div>
-              <div className="kpi-value" style={{ color: GRADE_COLOR[usage.health.grade] }}>{usage.health.total} <span style={{ fontSize: 14 }}>{usage.health.grade}</span></div>
-              <div className="kpi-sub">weighted: cost trend, cache efficiency, context efficiency</div></div>
+              <div className="kpi-value" style={{ color: usage.health.grade ? GRADE_COLOR[usage.health.grade] : '#8a807a' }}>
+                {usage.health.grade
+                  ? <>{usage.health.total} <span style={{ fontSize: 14 }}>{usage.health.grade}</span></>
+                  : <span style={{ fontSize: 20 }}>—</span>}
+              </div>
+              <div className="kpi-sub">
+                {usage.health.reason === 'insufficient-data'
+                  ? `not enough data to grade — ${usage.health.n} of ${usage.health.minN} turns needed`
+                  : usage.health.reason === 'no-data' ? 'no usable token history yet'
+                  : 'weighted: cost trend, cache efficiency, context efficiency'}
+              </div></div>
             {usage.health.factors.map(f => (
               <div className="kpi" key={f.name}><div className="kpi-label"><span>{f.name.replace(/([A-Z])/g, ' $1').toLowerCase()}</span></div>
                 <div className="kpi-value" style={{ fontSize: 20 }}>{f.na ? '—' : f.score}</div>
                 <div className="kpi-sub">
                   {f.name === 'costTrend' && (f.na ? 'not enough history yet' : `${f.raw.changePct >= 0 ? '+' : ''}${f.raw.changePct}% vs prior 7d`)}
-                  {f.name === 'cacheEfficiency' && `${Math.round(f.raw.ratio * 100)}% of cache-eligible tokens were reads`}
-                  {f.name === 'contextEfficiency' && `${Math.round(f.raw.ratio * 100)}% of context is always-loaded overhead`}
+                  {f.name === 'cacheEfficiency' && (f.na ? 'no cache-eligible tokens yet' : `${Math.round(f.raw.ratio * 100)}% of cache-eligible tokens were reads`)}
+                  {f.name === 'contextEfficiency' && (f.na ? 'no context observed yet'
+                    : `${Math.round(f.raw.ratio * 100)}% of context is always-loaded overhead (assumes ${f.raw.hiddenPerTurn.toLocaleString()} tok/turn — an estimate, editable in settings)`)}
                 </div></div>
             ))}
           </div>

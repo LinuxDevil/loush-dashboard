@@ -8,7 +8,9 @@ const HEAD = "'Space Grotesk', sans-serif"
 const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
 const A = '#d97757'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
-const pct = x => Math.round((x || 0) * 100) + '%'
+// null/undefined must not render as 0%. `Math.round((x || 0) * 100)` made "not measured" and
+// "measured, and it is zero" indistinguishable — the idiom that laundered every honest null.
+const pct = x => (x == null ? '—' : Math.round(x * 100) + '%')
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : m + 'm' }
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 

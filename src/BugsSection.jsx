@@ -141,7 +141,11 @@ export default function BugsSection() {
           )}
         </div>
       ))}
-      {shown.length === 0 && <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ no bugs match — quiet day</div>}
+      {/* "no bugs recorded" is not "no bugs". A green tick over a store that has never been written
+          is the same failure as a dashboard reporting 0% because it could not read its source. */}
+      {shown.length === 0 && (bugs.length === 0
+        ? <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#8a807a' }}>no bugs have been recorded here yet — this is an empty log, not a clean bill of health</div>
+        : <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#3fb96a' }}>✓ none of the {bugs.length} recorded bug{bugs.length === 1 ? '' : 's'} match this filter</div>)}
       <p className="small">bugs live in ~/.claude/bugs.json · bisect runs real git bisect against your repro command · root-cause session = Chat prefilled with trace, @suspect-files and git blame · fixing links the config version active at fix time</p>
     </div>
   )

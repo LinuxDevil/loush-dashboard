@@ -2,7 +2,9 @@
 // ponytail: timing/status/counts only — token cost isn't in the stream (agents never estimate
 // it, contract §13). Wire cost here if we ever reliably join a run to its session transcript.
 export function deriveRunMetrics(events) {
-  if (!events?.length) return { status: 'unknown', startedAt: null, endedAt: null, durationMs: null, steps: [], toolCalls: 0 }
+  // `outputs` must be present here too: the normal return always includes it, so a consumer doing
+  // metrics.outputs.length crashed ONLY on the empty path — the one hardest to notice in testing.
+  if (!events?.length) return { status: 'unknown', startedAt: null, endedAt: null, durationMs: null, steps: [], toolCalls: 0, outputs: [] }
   const at = e => Date.parse(e.t)
   const term = [...events].reverse().find(e => e.type === 'run.completed' || e.type === 'run.failed')
   const t0 = at(events[0])

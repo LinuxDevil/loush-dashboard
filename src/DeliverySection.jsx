@@ -346,7 +346,11 @@ function OneOnOne() {
       `- in flight: ${card.wip}${card.atRisk ? ` (${card.atRisk} past budget)` : ''}`,
       `- rework: ${card.reopened} · 3+ QA rounds: ${card.qaHeavy} · bugs assigned: ${card.bugs}`, '',
       '## Talking points', ...card.talking.map(t => '- ' + t), '', '## Notes', '- '].join('\n')
-    api.post('/api/notes', { text: md }).catch(() => {})
+    // POST /api/notes reads req.body.content; this sent {text}, so every "1:1 note" click
+    // wrote a ZERO-BYTE file and still toasted "saved". ChatSection sends {title, content},
+    // which is why it went unnoticed.
+    api.post('/api/notes', { title: `1:1 prep ${new Date().toISOString().slice(0, 10)}`, content: md })
+      .catch(e => toast(e.message, 'error'))
     navigator.clipboard.writeText(md).catch(() => {})
     toast('1:1 note copied (and saved to notes) — nothing is kept as a running tally', 'success')
   }

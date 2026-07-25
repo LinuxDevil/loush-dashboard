@@ -186,7 +186,15 @@ app.delete('/api/res/:kind/item', kindGuard, (req, res) => {
 })
 
 // ---------- MCP servers ----------
-function readClaudeJson() { return JSON.parse(fs.readFileSync(CLAUDE_JSON, 'utf8')) }
+// A MISSING ~/.claude.json is a legitimate cold start — someone who has installed this dashboard but
+// not yet run Claude Code. It used to throw straight out of the handler, so /api/mcp, /api/projects
+// and /api/hooks all answered with a bare 500 and the UI sat on a skeleton forever.
+// A CORRUPT file is a different thing entirely and still throws: several callers merge into this
+// object and write it back, so silently treating unreadable JSON as {} would destroy the real file.
+function readClaudeJson() {
+  if (!fs.existsSync(CLAUDE_JSON)) return {}
+  return JSON.parse(fs.readFileSync(CLAUDE_JSON, 'utf8'))
+}
 app.get('/api/mcp', (req, res) => {
   const cj = readClaudeJson(), out = []
   for (const [name, config] of Object.entries(cj.mcpServers || {})) out.push({ name, scope: 'user', config })
@@ -2639,7 +2647,8 @@ async function inboxItems() {
     const userHooks = JSON.stringify(readJson(SETTINGS_FILES.user, {}).hooks || {})
     const missing = Object.entries(MARK).filter(([, m]) => !userHooks.includes(m)).map(([n]) => n)
     if (missing.length && !(readMeta().inboxDone || {})['hooks:safety'])
-      items.push({ key: 'hooks:safety', kind: 'recommendation', severity: 'info', section: 'hooks', text: `${missing.length} recommended safety hook${missing.length === 1 ? '' : 's'} not installed (${missing.join(', ')}) — install from Hooks` })
+      // ts is required: without it the row renders "Invalid Date" and NaN-poisons the severity sort.
+      items.push({ key: 'hooks:safety', kind: 'recommendation', severity: 'info', section: 'hooks', ts: Date.now(), text: `${missing.length} recommended safety hook${missing.length === 1 ? '' : 's'} not installed (${missing.join(', ')}) — install from Hooks` })
   } catch {}
   for (const i of items) i.plane ||= 'harness' // everything above is this machine's own harness telemetry
   // plane A: delivery risk (JIRA + GitHub + CI), from the snapshot server-eng.mjs already caches.

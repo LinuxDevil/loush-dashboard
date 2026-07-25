@@ -41,10 +41,18 @@ export default function SessionsSection() {
     return [...f].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
   }, [d, q, sort])
 
-  const copyResume = r => {
-    navigator.clipboard.writeText(r.resume).catch(() => {})
-    toast('copied · paste into a terminal: ' + r.resume, 'success')
+  // Resume IN-APP. This used to copy `claude --resume <id>` for you to paste into a terminal,
+  // while POST /api/chat {resume} — which does it properly — already existed and was used by Chat.
+  const resumeHere = r => {
+    window.dispatchEvent(new CustomEvent('chat-open', { detail: { sessionId: r.sessionId, cwd: r.cwd } }))
+    toast(`resuming ${String(r.sessionId).slice(0, 8)} — opening Chat`, 'success')
+    window.dispatchEvent(new Event('nav-chat'))
   }
+  // Kept for the terminal case. The old version swallowed the rejection and toasted success anyway,
+  // so a blocked clipboard reported "copied".
+  const copyResume = r => navigator.clipboard.writeText(r.resume).then(
+    () => toast('copied · paste into a terminal: ' + r.resume, 'success'),
+    () => toast('clipboard blocked by the browser', 'error'))
   const reveal = r => api.post('/api/artifacts/reveal', { path: r.transcript }).catch(e => toast(e.message, 'error'))
   const openRaw = r => window.open('/api/artifacts/download?path=' + encodeURIComponent(r.transcript), '_blank')
 
@@ -57,6 +65,7 @@ export default function SessionsSection() {
       if (!rows.length) return
       if (e.key === 'j') { e.preventDefault(); setCur(i => Math.min(i + 1, rows.length - 1)) }
       else if (e.key === 'k') { e.preventDefault(); setCur(i => Math.max(i - 1, 0)) }
+      else if (e.key === 'r') { e.preventDefault(); resumeHere(rows[cur]) }
       else if (e.key === 'y') { e.preventDefault(); copyResume(rows[cur]) }
       else if (e.key === 'Enter') { e.preventDefault(); openRaw(rows[cur]) }
     }
@@ -119,7 +128,8 @@ export default function SessionsSection() {
                   <td className="num" style={{ color: r.errors ? RED : DIM }}>{r.errors || '—'}</td>
                   <td className="mono" style={{ color: '#7a716a' }}>{ago(r.last)} ago</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <button className="mini" style={{ marginTop: 0 }} title={r.resume} onClick={e => { e.stopPropagation(); copyResume(r) }}>y · resume</button>
+                    <button className="mini" style={{ marginTop: 0 }} title="resume this session inside the dashboard" onClick={e => { e.stopPropagation(); resumeHere(r) }}>r · resume</button>
+                    <button className="mini" style={{ marginTop: 0 }} title={r.resume} onClick={e => { e.stopPropagation(); copyResume(r) }}>y · copy</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); reveal(r) }}>reveal</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); openRaw(r) }}>raw</button>
                   </td>
