@@ -15,6 +15,7 @@ import mountMemory, { retrieveContext } from './server-memory.mjs'
 import mountMindwalk from './server-mindwalk.mjs'
 import mountGame from './server-game.mjs'
 import mountFigmaCapture from './server-figma-capture.mjs'
+import mountFe from './server-fe.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
 import { verdictFrom } from './run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from './career-health.mjs'
@@ -53,6 +54,9 @@ mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + tra
 mountMindwalk(app) // /api/mindwalk/* — runs the mindwalk binary (Claude sessions, or transcoded Cursor ones)
 mountGame(app) // /api/game — XP/levels/achievements from outcome events. Self-only: no cross-person leaderboard, ever
 mountFigmaCapture(app) // /api/figma-capture/* — annotate Figma screenshots with design-system component mappings
+// /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
+// this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
+mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
@@ -1757,11 +1761,14 @@ function failStats() {
   for (const f of files) {
     const st = fs.statSync(f)
     let rec = failCache.get(f)
-    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+    if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
       // v2 (item 9 — session forensics): the walker already had the tool_use→name map, the is_error detector
       // and the compaction counter; it threw the error TEXT and the result SIZE away. Same loop, now it keeps both.
+      // v3: same story one level down — idName held the tool_use block, which carries the target file_path,
+      // and kept only the tool name. Keeping the path is what lets an error be attributed to a FILE, which is
+      // the whole basis of "which files does the agent keep failing on" (/api/fe/*).
       rec = {
-        v: 2, mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0],
+        v: 3, mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0],
         sessionId: path.basename(f, '.jsonl'), file: f,
         toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, retries: 0, last: 0,
         errs: [], bytes: {}, sizes: {}, big: [],
@@ -1783,7 +1790,8 @@ function failStats() {
               rec.turns++
               let first = true
               for (const c of j.message.content) if (c.type === 'tool_use') {
-                idName[c.id] = c.name
+                const fp = c.input && typeof c.input === 'object' ? c.input.file_path || c.input.notebook_path || null : null
+                idName[c.id] = { name: c.name, path: typeof fp === 'string' ? fp : null }
                 rec.toolUses[c.name] = (rec.toolUses[c.name] || 0) + 1
                 // retry = the very next tool call after an error hits the same tool
                 if (first && lastErrTool === c.name) rec.retries++
@@ -1793,7 +1801,8 @@ function failStats() {
             if (j.type === 'user' && Array.isArray(j.message?.content))
               for (const c of j.message.content) {
                 if (c.type !== 'tool_result') continue
-                const name = idName[c.tool_use_id] || '?'
+                const call = idName[c.tool_use_id] || null
+                const name = call?.name || '?'
                 const chars = RESULT_TEXT(c).length
                 // (b) context pressure: bytes into context, per tool + the biggest single results
                 rec.bytes[name] = (rec.bytes[name] || 0) + chars
@@ -1808,7 +1817,7 @@ function failStats() {
                 lastErrTool = name
                 if (t) { const d = new Date(t); const k = d.getDay() + ':' + d.getHours(); rec.byHour[k] = (rec.byHour[k] || 0) + 1 }
                 // (a) failure signatures: keep the first 240 chars of the error verbatim + when + how big
-                if (rec.errs.length < 400) rec.errs.push({ t, tool: name, text: RESULT_TEXT(c).replace(/\s+/g, ' ').trim().slice(0, 240), chars })
+                if (rec.errs.length < 400) rec.errs.push({ t, tool: name, file: call?.path || null, text: RESULT_TEXT(c).replace(/\s+/g, ' ').trim().slice(0, 240), chars })
               }
           } catch {}
         }

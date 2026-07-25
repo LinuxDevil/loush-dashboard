@@ -125,6 +125,9 @@ const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.
 // input bar with "/" command + "@" file autocomplete, image paste/attach, any-file upload
 function InputBar({ cwd, ended, onSend, initial }) {
   const [input, setInput] = useState(initial || '')
+  // `initial` arrives asynchronously when another section hands off a prompt. Without this the
+  // hand-off only ever worked if Chat had not been mounted yet — i.e. once per page load.
+  useEffect(() => { if (initial) setInput(initial) }, [initial])
   const [atts, setAtts] = useState([]) // {kind:'image', name, media_type, data} | {kind:'file', name, path}
   const [sug, setSug] = useState(null) // {trigger:'/'|'@', items, idx, start, end}
   const cmdsRef = useRef(null)
@@ -286,6 +289,20 @@ export default function ChatSection() {
     attach(id)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
+  // Deep link from another section: open a session here without making the user re-pick the project.
+  // Working Set uses this to close see → resume → fix inside the app, instead of handing over a
+  // `claude --resume <id>` string to paste into a terminal.
+  useEffect(() => {
+    const onOpen = e => {
+      const { sessionId, cwd: c, prefill: pre } = e.detail || {}
+      if (pre) setPrefill(pre)
+      api.post('/api/chat', { cwd: c || cwd, resume: sessionId || undefined, model: model || undefined })
+        .then(({ id }) => { attach(id, c); api.get('/api/chat').then(setActive).catch(() => {}) })
+        .catch(err => alert(err.message))
+    }
+    window.addEventListener('chat-open', onOpen)
+    return () => window.removeEventListener('chat-open', onOpen)
+  }, [cwd, model]) // eslint-disable-line react-hooks/exhaustive-deps
   const send = async (text, images) => {
     if (!chatId) return
     setBusy(true)

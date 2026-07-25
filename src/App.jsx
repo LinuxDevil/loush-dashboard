@@ -31,6 +31,7 @@ import FigmaCaptureSection from './FigmaCaptureSection.jsx'
 import MemorySection from './MemorySection.jsx'
 import MindwalkSection from './MindwalkSection.jsx'
 import DeliverySection from './DeliverySection.jsx'
+import WorkingSet from './WorkingSet.jsx'
 import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
 import SessionsSection from './SessionsSection.jsx'
 import ForensicsSection from './ForensicsSection.jsx'
@@ -51,6 +52,10 @@ import { api, forceFresh } from './api.js'
 // a sidebar-footer "switch dashboard" menu.
 const SECTIONS = [
   { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'What needs a human today', el: <Overview /> },
+  // The only section in this app scoped to your CODE rather than your harness or your JIRA board, and
+  // the only one that needs zero external config. It sits directly under Overview because Overview's
+  // top fold is a "not configured" card for anyone without JIRA + gh, and this is not.
+  { id: 'workingset', label: 'Working Set', icon: '◈', kicker: 'Dashboard', title: 'Working Set — what the agent did to your code', el: <WorkingSet /> },
   { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox — work + harness', el: <InboxSection /> },
   { id: 'delivery', label: 'Delivery', icon: '▤', kicker: 'Delivery', title: 'Delivery — JIRA, GitHub, CI', el: <DeliverySection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
