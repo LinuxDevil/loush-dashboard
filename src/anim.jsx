@@ -70,7 +70,12 @@ export function Draw({ children, duration = 600, delay = 0 }) {
   useEffect(() => {
     if (!ref.current) return
     for (const p of ref.current.querySelectorAll('path, polyline, line, circle')) {
-      const len = typeof p.getTotalLength === 'function' ? p.getTotalLength() : 0
+      // getTotalLength() THROWS on a non-rendered element (display:none, detached, zero-size) — the
+      // `typeof` guard only proved the method exists, not that calling it is safe. Sections in this
+      // shell stay mounted and hidden once visited, so switching tabs put every chart in exactly that
+      // state: the throw escaped a passive effect and React unmounted the WHOLE app to a black page.
+      let len = 0
+      try { if (typeof p.getTotalLength === 'function') len = p.getTotalLength() } catch { continue }
       if (!len) continue
       if (reduced) { p.style.strokeDasharray = ''; p.style.strokeDashoffset = ''; continue }
       p.style.strokeDasharray = String(len)

@@ -24,6 +24,7 @@ import BoardSection from './BoardSection.jsx'
 import QuickActions from './QuickActions.jsx'
 import DeliverySection from './DeliverySection.jsx'
 import WorkingSet from './WorkingSet.jsx'
+import SetupSection from './SetupSection.jsx'
 import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
 import SessionsSection from './SessionsSection.jsx'
 import ForensicsSection from './ForensicsSection.jsx'
@@ -92,6 +93,9 @@ const SECTIONS = [
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
+  // Everything org-specific is user config now, so there has to be somewhere to enter it. Credentials
+  // here are write-only: no endpoint returns a stored token, so the fields are always blank on load.
+  { id: 'setup', label: 'Setup', icon: '⚒', kicker: 'Configuration', title: 'Setup — projects, credentials, work week', el: <SetupSection /> },
 ]
 
 

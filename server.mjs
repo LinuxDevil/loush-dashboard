@@ -9,6 +9,7 @@ import { toggleOffFile } from './customize-toggle.mjs'
 import mountEng from './server-eng.mjs'
 import mountMemory, { retrieveContext } from './server-memory.mjs'
 import mountFe from './server-fe.mjs'
+import mountSetup from './server-setup.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
 import { verdictFrom } from './run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from './harness-health.mjs'
@@ -43,6 +44,9 @@ mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + tra
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
 mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })
+// /api/setup/* — visual config for everything the app needs, including credentials. Secret VALUES
+// are never returned by any endpoint there; the client only ever learns `set: true|false`.
+mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
