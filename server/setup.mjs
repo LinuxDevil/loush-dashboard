@@ -23,15 +23,14 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from './lib/eng-config.mjs'
+import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from '../lib/eng-config.mjs'
+import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, GITIGNORE_FILE } from '../lib/paths.mjs'
 
-const HERE = path.dirname(fileURLToPath(import.meta.url))
-const PROJECTS_FILE = path.join(HERE, 'projects.json')
-const SECRETS_FILE = path.join(HERE, '.eng.local.json')
-const LEGACY_SECRETS = path.join(HERE, 'config.json')
-const GITIGNORE = path.join(HERE, '.gitignore')
+// From lib/paths.mjs, not from this file's own location. GITIGNORE especially: if it resolves to a
+// missing file, gitignoreText() returns '' and the "your token is committable" banner becomes a
+// permanent false alarm — a safety check that fails open and silently.
+const GITIGNORE = GITIGNORE_FILE
 
 // ---------------------------------------------------------------------------
 // pure — exported for test/setup-config.test.mjs

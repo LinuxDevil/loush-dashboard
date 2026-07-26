@@ -8,6 +8,7 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { CATALOG_FILE } from '../lib/paths.mjs'
 
 const capturesDir = repo => path.join(repo, '.claude', 'figma-captures')
 const captureDir = (repo, slug) => path.join(capturesDir(repo), slug)
@@ -142,8 +143,7 @@ export default function mountFigmaCapture(app) {
   }
 
   app.get('/api/figma-capture/catalog', (req, res) => {
-    const DIR = path.dirname(new URL(import.meta.url).pathname)
-    res.json(readJson(path.join(DIR, 'design-system-catalog.json'), { components: [] }))
+    res.json(readJson(CATALOG_FILE, { components: [] }))
   })
 
   app.get('/api/figma-capture/project-components', (req, res) => {

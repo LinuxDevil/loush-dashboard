@@ -3,23 +3,23 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawn, exec, execFile, spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
-import { toggleOffFile } from './lib/customize-toggle.mjs'
-import mountEng from './server-eng.mjs'
-import mountMemory, { retrieveContext } from './server-memory.mjs'
-import mountFe from './server-fe.mjs'
-import mountSetup from './server-setup.mjs'
-import mountConstitution from './server-constitution.mjs'
-import mountAtoms from './server-atoms.mjs'
-import mountFigmaCapture from './server-figma-capture.mjs'
-import mountPromptCheck from './server-promptcheck.mjs'
-import { loadEngConfig as loadEngCfg, toolFlagAllows } from './lib/eng-config.mjs'
-import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPABILITY_DAYS } from './lib/harness-metrics.mjs'
-import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './lib/scheduler.mjs'
-import { verdictFrom } from './lib/run-verdict.mjs'
-import { computeUsageHealth, computeRegression } from './lib/harness-health.mjs'
-import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from './lib/harness-usage-trends.mjs'
+import { toggleOffFile } from '../lib/customize-toggle.mjs'
+import mountEng from './eng.mjs'
+import mountMemory, { retrieveContext } from './memory.mjs'
+import mountFe from './fe.mjs'
+import mountSetup from './setup.mjs'
+import mountConstitution from './constitution.mjs'
+import mountAtoms from './atoms.mjs'
+import mountFigmaCapture from './figma-capture.mjs'
+import mountPromptCheck from './promptcheck.mjs'
+import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
+import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
+import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPABILITY_DAYS } from '../lib/harness-metrics.mjs'
+import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from '../lib/scheduler.mjs'
+import { verdictFrom } from '../lib/run-verdict.mjs'
+import { computeUsageHealth, computeRegression } from '../lib/harness-health.mjs'
+import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -38,7 +38,9 @@ import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyU
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 const CLAUDE_JSON = path.join(HOME, '.claude.json')
-const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// The repo this dashboard WATCHES — the app's parent. Anchored in lib/paths.mjs so it no longer
+// depends on where this file sits: it feeds ALLOWED_ROOTS, and a silent shift moves the write jail.
+const PROJECT = WATCHED_PROJECT
 const WIN = process.platform === 'win32'
 const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
 const PORT = Number(process.env.DASH_PORT) || 5178
@@ -60,10 +62,6 @@ mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFi
 // outside the org that has that layout. They are now behind a flag in projects.json rather than
 // deleted or unconditional. Gated HERE, at mount time: when the flag is off the routes do not exist
 // at all, so a stale client cannot reach them.
-// NB: PROJECT is the dashboard's PARENT directory (the repo it is watching). projects.json and
-// .eng.local.json live in the app directory itself, next to this file — same as server-eng.mjs.
-const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
-const PROJECTS_CFG = path.join(APP_DIR, 'projects.json')
 function almosaferToolsEnabled() {
   // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
   // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
@@ -72,8 +70,8 @@ function almosaferToolsEnabled() {
   // so the catch below reports rather than hides.
   const readLocal = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return {} } }
   try {
-    const cfg = loadEngCfg(PROJECTS_CFG)
-    const email = process.env.JIRA_EMAIL || readLocal(path.join(APP_DIR, '.eng.local.json')).jiraEmail || null
+    const cfg = loadEngCfg(PROJECTS_FILE)
+    const email = process.env.JIRA_EMAIL || readLocal(SECRETS_FILE).jiraEmail || null
     return toolFlagAllows(cfg.almosaferTools, email)
   } catch (e) {
     console.error('[claude-dashboard] could not evaluate almosaferTools flag — leaving it OFF:', e.message)
@@ -2624,7 +2622,7 @@ const ENG_ERR_TTL = 15_000      // failure backoff: seconds, not minutes — a c
 const ENG_COLD_WAIT = 90_000    // first-ever fetch (~65s of live JIRA+GitHub): wait it out rather than serve a 3-item inbox.
                                 // All cold callers await the SAME in-flight promise, so this is one fetch, not one per poll.
 async function loadEngSnapshot() {
-  engMod ||= await import('./server-eng.mjs')
+  engMod ||= await import('./eng.mjs')
   if (typeof engMod.snapshotAll === 'function') return await engMod.snapshotAll() // in-process, once server-eng exports it
   const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/snapshot?project=all`)   // fallback: its own route, same cache
   return await r.json()
@@ -3778,7 +3776,7 @@ app.post('/api/ci/generate', (req, res) => {
 // Plane A. One `gh run list` per repo from projects.json, existing gh auth, 10-min cache.
 const ghAvailable = () => { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
 async function engProjectList() {
-  engMod ||= await import('./server-eng.mjs')
+  engMod ||= await import('./eng.mjs')
   if (typeof engMod.projectList === 'function') return engMod.projectList()
   const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/projects`)
   return await r.json()
@@ -3834,7 +3832,7 @@ async function ciHealth(days = 14, fresh = false, wait = true) {
     if (Date.now() - ciCache.at > CI_TTL) { ciCache.at = Date.now(); setTimeout(() => ciHealth(days, true).catch(() => {}), 0) }
     return ciCache.data || { days, ghAvailable: false, repos: [], redRepos: [], cold: true }
   }
-  engMod ||= await import('./server-eng.mjs')
+  engMod ||= await import('./eng.mjs')
   if (typeof engMod.ciHealth === 'function') return await engMod.ciHealth(days) // server-eng owns it if it ever exports one
   const gh = ghAvailable()
   const projects = gh ? await engProjectList().catch(() => []) : []

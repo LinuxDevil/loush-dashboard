@@ -5,11 +5,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { buildIndex, newestMtime, constDir } from './atoms/ingest.mjs'
+import { buildIndex, newestMtime, constDir } from '../atoms/ingest.mjs'
+import { ATOMS_DIR } from '../lib/paths.mjs'
 
-const DIR = path.dirname(fileURLToPath(import.meta.url))
-const REVIEWED_PATH = path.join(DIR, 'atoms', 'reviewed.json') // { [repo]: { [atomId]: { at } } }
+// atoms/ stays at the repo root: .gitignore anchors atoms/index.json and atoms/reviewed.json with a
+// leading path segment, so moving the directory would start tracking user state and a build artifact.
+// ATOMS_DIR is resolved centrally so this file's own location stops mattering.
+const REVIEWED_PATH = path.join(ATOMS_DIR, 'reviewed.json') // { [repo]: { [atomId]: { at } } }
 const WIN = process.platform === 'win32'
 
 const readReviewed = () => { try { return JSON.parse(fs.readFileSync(REVIEWED_PATH, 'utf8')) } catch { return {} } }

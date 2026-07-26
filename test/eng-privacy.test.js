@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { triage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats } from '../server-eng.mjs'
+import { triage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats } from '../server/eng.mjs'
 
 // ─── The two-plane rule, as a test ──────────────────────────────────────────────
 // server-eng.mjs is PLANE A: work artifacts (JIRA, GitHub, CI, bugs). It may carry per-person

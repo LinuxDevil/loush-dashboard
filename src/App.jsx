@@ -95,7 +95,7 @@ const BASE_SECTIONS = [
   ) },
   // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
   // top-level entries — they moved into ALMOSAFER_SECTION below, behind the Almosafer_Tools flag.
-  // The Memory browse UI stays deleted (server-memory.mjs is kept; Overview's recall tile uses it).
+  // The Memory browse UI stays deleted (server/memory.mjs is kept; Overview's recall tile uses it).
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio & prompt quality', el: (
     <Hub items={[
       { label: 'Prompt Studio', el: <PromptStudio /> },

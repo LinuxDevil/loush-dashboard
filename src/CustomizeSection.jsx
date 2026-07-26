@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from './api.js'
 
 // ---------- Customize — one place to manage skills / commands / subagents / rules / mcp / hooks / plugins ----------
-// Presentation only: the inventory + real enable/disable live behind /api/customize (server.mjs). A toggle
+// Presentation only: the inventory + real enable/disable live behind /api/customize (server/index.mjs). A toggle
 // here renames the file / edits the config that Claude actually reads, so "off" means Claude skips it — never
 // a cosmetic flag. The existing Capabilities → Skills/Commands/Agents editors stay for deep editing.
 const MONO = "'IBM Plex Mono', monospace"
