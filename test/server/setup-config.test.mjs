@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateProject, validateWork, validateSpTable, mergeSecrets, isIgnored } from '../server/setup.mjs'
+import { validateProject, validateWork, validateSpTable, mergeSecrets, isIgnored } from '../../server/setup.mjs'
 
 // ---------------------------------------------------------------- validateProject
 

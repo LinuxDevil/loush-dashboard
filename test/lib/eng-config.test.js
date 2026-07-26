@@ -8,7 +8,7 @@ import {
   normalizeWork, parseEngConfig, workMsWith, workDaysWith, addWorkTimeWith,
   offHoursWith, isWeekendWith, weekKeyWith, describeWork, dowOf,
   DEFAULT_WORK, DEFAULT_SP_DAYS,
-} from '../lib/eng-config.mjs'
+} from '../../lib/eng-config.mjs'
 
 const H = 3600e3
 const KSA = normalizeWork({ tzOffsetHours: 3, startHour: 10, endHour: 18, weekend: [5, 6], weekStartDay: 0 })

@@ -11,7 +11,7 @@ import {
   extractImports, resolveSpecifier, buildImportGraph, siblingsFor, classify,
   reworkScore, aggregateFiles, isOrphanCandidate, buildTimeline, contextBundle, coverageOf,
   REWORK_WEIGHTS, REWORK_MIN_SESSIONS, isTestFile, isStoryFile,
-} from '../server/fe.mjs'
+} from '../../server/fe.mjs'
 
 // ---------------------------------------------------------------- extractImports
 

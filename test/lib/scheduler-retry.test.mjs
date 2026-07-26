@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nextSchedule } from '../lib/scheduler.mjs'
+import { nextSchedule } from '../../lib/scheduler.mjs'
 
 const CAD = 10080 * 60_000 // weekly
 const RETRY_DELAY = 5 * 60_000

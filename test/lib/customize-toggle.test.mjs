@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toggleOffFile } from '../lib/customize-toggle.mjs'
+import { toggleOffFile } from '../../lib/customize-toggle.mjs'
 
 // in-memory fs: a Set of existing paths + a renameSync that mutates it
 const mkIo = (...paths) => {

@@ -426,7 +426,7 @@ panels accumulated. These were deleted:
   long, thrashing, unproductive conversation: the metric rewarded exactly the behaviour the tool
   exists to reduce. It had been deleted once with that rationale and resurrected two commits later
   the same day; `src/App.jsx` carried the tombstone comment three lines below the import that
-  contradicted it. The presentational helpers survive as `src/anim.jsx` — motion is not a metric,
+  contradicted it. The presentational helpers survive as `src/ui/anim.jsx` — motion is not a metric,
   only the scoring was the problem.
 - **Figma Capture** and **Constitution** were deleted here too — that part was **reverted**. Both are
   genuinely needed by the org whose layout they assume, so they are back behind the `Almosafer_Tools`
@@ -436,8 +436,8 @@ panels accumulated. These were deleted:
   named `app`, so it finds nothing in a standard `src/components/` layout.
 - **`dist/`** — a build artifact that was tracked, so a stale bundle shipped alongside every change.
 
-Kept deliberately, against the audit: `server-memory.mjs` (Overview's recall tile and chat grounding
-depend on it) and `harness-health.mjs` / `harness-usage-trends.mjs` (renamed from `career-*`; they
+Kept deliberately, against the audit: `server/memory.mjs` (Overview's recall tile and chat grounding
+depend on it) and `lib/harness-health.mjs` / `lib/harness-usage-trends.mjs` (renamed from `career-*`; they
 feed the Harness Usage panel, not the deleted career shell).
 
 Demoted rather than deleted: the frontmatter linter (→ Capabilities, as an authoring aid), the
@@ -509,7 +509,7 @@ plaintext copy of a token is a liability, not a safety net.
 
 ### How the artifact viewer picks a renderer
 
-By file extension, in `src/viewers.jsx`: `.md` → rendered markdown · `.html` → sandboxed iframe ·
+By file extension, in `src/ui/viewers.jsx`: `.md` → rendered markdown · `.html` → sandboxed iframe ·
 `.svg` → via `<img>` so embedded scripts can never execute · images → preview on a checkerboard ·
 `.csv` → quote-aware sortable table (first 1000 rows) · `.json` → array-of-objects becomes a sortable
 table, else pretty-printed · `.jsx/.tsx` → live-mounted in a sandboxed iframe with React + Babel
@@ -530,51 +530,90 @@ npx vite build   # dist/ is gitignored; regenerate as needed
 
 **Tests** cover the arithmetic users read, not just payload shapes:
 
+`test/` mirrors the source tree — `test/lib/`, `test/server/`, `test/src/`:
+
 | File | Covers |
 |---|---|
-| `test/fe-workingset.test.js` | Import resolution, the rework rank, coverage detection, null-vs-zero |
-| `test/eng-config.test.js` | The work-week engine across several work weeks and a negative UTC offset |
-| `test/harness-health.test.mjs` | The A–F grade's null discipline and per-turn cost arithmetic |
-| `test/setup-config.test.mjs` | Config validation, the three-case secret merge, the `.gitignore` check |
-| `test/eng-privacy.test.js` | The plane boundary, structurally |
+| `test/server/fe-workingset.test.js` | Import resolution, the rework rank, coverage detection, null-vs-zero |
+| `test/lib/eng-config.test.js` | The work-week engine across several work weeks and a negative UTC offset |
+| `test/lib/harness-health.test.mjs` | The A–F grade's null discipline and per-turn cost arithmetic |
+| `test/server/setup-config.test.mjs` | Config validation, the three-case secret merge, the `.gitignore` check |
+| `test/server/eng-privacy.test.js` | The plane boundary, structurally |
+
+`node --test` discovers recursively, and it also treats **any** `.js`/`.mjs` under `test/` as a test
+file — so put helpers elsewhere. It exits 0 when it discovers nothing at all, which means the check
+that matters is "179 tests ran", not "the command succeeded".
 
 **Invariants worth knowing before extending it:**
 
-- `safe()` + `backup()` in `server.mjs` are a path jail plus a timestamped backup on every write. All
-  config writes go through them. Do not add a write path that skips them.
+- `safe()` + `backup()` in `server/index.mjs` are a path jail plus a timestamped backup on every
+  write. All config writes go through them. Do not add a write path that skips them.
 - No endpoint takes a filesystem path from the client for a config write. Paths are fixed constants.
 - Secret values never appear in a response body. If you add a credential, put it in
-  `server-setup.mjs` and keep it write-only.
+  `server/setup.mjs` and keep it write-only.
+- **Never derive a path from `import.meta.url`.** Import it from `lib/paths.mjs`. Every path this app
+  resolves on its own disk is read behind a `try/catch` or a default, so a wrong one does not throw —
+  it returns a plausible answer. A shifted `PROJECT` silently moves the write jail; a shifted
+  `.gitignore` turns the "your token is committable" banner into a permanent false alarm; three
+  modules computing `projects.json` separately can end up reading three different files.
 
 ### Layout
 
-```
-server.mjs                Express API (CRUD, backups, inbox, capabilities, forensics, sessions, roi, search, CI)
-server-fe.mjs             Working Set: agent edit history × import graph × git state
-server-setup.mjs          /api/setup/* — visual config; secrets are write-only
-server-eng.mjs            plane A: JIRA changelog + GitHub PRs → the delivery snapshot
-server-memory.mjs         memory recall + chat grounding
-eng-config.mjs            pure: user config + the work-week engine
-harness-health.mjs        pure: usage health score + week-over-week regression detector
-harness-usage-trends.mjs  pure: cache-TTL waste, daily anomaly detection, month-end cost projection
-scheduler.mjs             the unattended cadence loop (digest/dispatch/remediate) + pure planners
-run-verdict.mjs           pure: aggregate a run's gates into one verdict
+A file's directory tells you what it is: `server/` opens listeners, `lib/` is pure and tested,
+`src/sections/` is routable, `src/ui/` is reusable presentation.
 
-src/App.jsx               sidebar + section switch
-src/WorkingSet.jsx        the rework radar + file dossier
-src/SetupSection.jsx      projects, credentials, work week, story points, notifications
-src/Overview.jsx          delivery tiles + CI strip + harness KPIs
-src/InboxSection.jsx      plane chips · nudge (copies, never sends) · snooze 24h
-src/DeliverySection.jsx   mounts EngDashboard + funnel + AI ROI + 1:1 prep
-src/CapabilityLedger.jsx  the ROI ledger (+ the demoted Inventory linter)
-src/SessionsSection.jsx   session ledger, real $, keyboard layer, in-app resume
-src/ForensicsSection.jsx  failure signatures · context pressure · hook blast radius
-src/UsagePanel.jsx        harness health/regression, cache-TTL waste, anomalies, cost projection
-src/ContextExplorerSection.jsx  per-turn context occupancy replay
-src/Palette.jsx           ⌘K — search my past self (incl. the `file:` filter)
-src/anim.jsx              presentational animation primitives
-src/viewers.jsx           per-type artifact renderers
 ```
+lib/paths.mjs             every path this app resolves on its own disk, derived once
+lib/eng-config.mjs        pure: user config + the work-week engine
+lib/eng-metrics.mjs       pure: estimate accuracy, escape rate, bus factor
+lib/harness-health.mjs    pure: usage health score + week-over-week regression detector
+lib/harness-metrics.mjs   pure: capability verdicts, tokens-per-fire, context pressure
+lib/harness-usage-trends.mjs  pure: cache-TTL waste, daily anomalies, month-end cost projection
+lib/run-verdict.mjs       pure: aggregate a run's gates into one verdict
+lib/scheduler.mjs         the unattended cadence loop (digest/dispatch/remediate) + pure planners
+lib/customize-toggle.mjs  pure: what enabling/disabling a capability does on disk
+
+server/index.mjs          Express API (CRUD, backups, inbox, capabilities, forensics, sessions, roi, search, CI)
+server/fe.mjs             Working Set: agent edit history × import graph × git state
+server/setup.mjs          /api/setup/* — visual config; secrets are write-only
+server/eng.mjs            plane A: JIRA changelog + GitHub PRs → the delivery snapshot
+server/memory.mjs         memory recall + chat grounding
+server/promptcheck.mjs    prompt-quality scoring
+server/constitution.mjs   ┐
+server/atoms.mjs          ├ Almosafer tools — mounted only when the flag is on
+server/figma-capture.mjs  ┘
+
+src/main.jsx              entry (index.html hardcodes this path)
+src/App.jsx               sidebar + section switch
+src/sections/             the routable sections
+  WorkingSet.jsx            the rework radar + file dossier
+  SetupSection.jsx          projects, credentials, work week, story points, org tools, notifications
+  Overview.jsx              delivery tiles + CI strip + harness KPIs
+  InboxSection.jsx          plane chips · nudge (copies, never sends) · snooze 24h
+  DeliverySection.jsx       mounts EngDashboard + funnel + AI ROI + 1:1 prep
+  CapabilityLedger.jsx      the ROI ledger (+ the demoted Inventory linter)
+  SessionsSection.jsx       session ledger, real $, keyboard layer, in-app resume
+  ForensicsSection.jsx      failure signatures · context pressure · hook blast radius
+  UsagePanel.jsx            harness health/regression, cache-TTL waste, anomalies, cost projection
+  ContextExplorerSection.jsx  per-turn context occupancy replay
+src/almosafer/            Constitution, Atoms, Figma Capture — the flag-gated bundle
+src/ui/                   reusable presentation, imported across sections
+  Palette.jsx               ⌘K — search my past self (incl. the `file:` filter)
+  tabs.jsx                  Tabs / DiffView / lineDiff
+  anim.jsx                  presentational animation primitives
+  viewers.jsx               per-type artifact renderers
+  charts.jsx, Hub.jsx, Drawer.jsx, Pager.jsx, Skeleton.jsx, planWidgets.jsx
+src/lib/                  api.js, hooks.js, plan.js, runMetrics.js
+src/eng/                  the Delivery dashboard's own panels
+
+test/lib/, test/server/, test/src/    mirror the above
+docs/screenshots/         the images in this README
+atoms/                    stays at the repo root — .gitignore anchors two files inside it
+```
+
+**Config lives at the repo root and is gitignored**: `projects.json` (projects, work week, story
+points, org tool flags) and `.eng.local.json` (credentials, `0600`). `projects.example.json` is the
+committed template. Nothing org-specific is tracked.
 
 **Design system.** Dark-first and warm: base `#0d0b0a` with clay/violet radial glows, glassy panels
 `rgba(28,24,21,0.55)` + blur, clay-orange accent `#d97757`. Space Grotesk (headings/stats), IBM Plex
