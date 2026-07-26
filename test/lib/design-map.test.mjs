@@ -74,3 +74,20 @@ test('markCollisions tolerates rows with no figma link', () => {
   const rows = markCollisions([{ component: 'A', figma: null, source: null }])
   assert.deepEqual(rows[0].evidence.collisionWith, [])
 })
+
+test('markCollisions names ALL other claimants on a 3+-way collision, not just one', () => {
+  // Mirrors the real ct-web-design-system case: node 601:5 is claimed by 7 components at once.
+  // A 2-member fixture can't catch a regression from `.filter(c => c !== r.component)` to
+  // `[claimants.find(...)]` — both would pass with only two claimants. This pins the full list.
+  const shared = { fileKey: 'F1', nodeId: '601:5' }
+  const rows = markCollisions([
+    { component: 'Button', figma: shared, source: 'story' },
+    { component: 'VoucherCodeField', figma: shared, source: 'story' },
+    { component: 'InputFieldDesktop', figma: shared, source: 'story' },
+  ])
+  const by = Object.fromEntries(rows.map(r => [r.component, r]))
+
+  assert.deepEqual(by.Button.evidence.collisionWith, ['VoucherCodeField', 'InputFieldDesktop'])
+  assert.deepEqual(by.VoucherCodeField.evidence.collisionWith, ['Button', 'InputFieldDesktop'])
+  assert.deepEqual(by.InputFieldDesktop.evidence.collisionWith, ['Button', 'VoucherCodeField'])
+})
