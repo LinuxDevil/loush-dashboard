@@ -1045,9 +1045,11 @@ app.post('/api/actions/run', (req, res) => {
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
   if ([...chats.values()].filter(c => c.alive && c.action).length >= 3) return res.status(429).json({ error: 'max 3 concurrent action runs' }) // ponytail: global cap
   const prompt = args ? `${cmd} ${args}` : cmd
+  // stdin explicitly ignored: an unfed, unclosed pipe makes the CLI wait (sometimes indefinitely)
+  // for stdin that will never come, hanging the run and permanently eating a concurrency slot.
   const child = isCursor
-    ? spawn('cursor-agent', ['-p', prompt, '--output-format', 'stream-json', '-f'], { cwd, env: process.env, shell: WIN })
-    : spawn('claude', ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'], { cwd, env: process.env, shell: WIN })
+    ? spawn('cursor-agent', ['-p', prompt, '--output-format', 'stream-json', '-f'], { cwd, env: process.env, shell: WIN, stdio: ['ignore', 'pipe', 'pipe'] })
+    : spawn('claude', ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'], { cwd, env: process.env, shell: WIN, stdio: ['ignore', 'pipe', 'pipe'] })
   const id = Math.random().toString(36).slice(2, 10)
   const chat = { child, cwd, sessionId: null, alive: true, events: [], listeners: new Set(), action: { cmd, args: args || '', runner: runner || 'claude', startedAt: Date.now() } }
   chats.set(id, chat)

@@ -15,7 +15,10 @@ eng-triage.json
 eng-epic-targets.json
 eng-artifacts.json
 .playwright-mcp
-.serena
 
 # build output — regenerate with `npx vite build`
-dist
+dist/
+docs/
+.serena/
+.claude/
+
