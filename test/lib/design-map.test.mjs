@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { harvestStories } from '../../lib/design-map.mjs'
+import { harvestStories, markCollisions } from '../../lib/design-map.mjs'
 
 const DS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'ds-repo')
 
@@ -47,4 +47,30 @@ test('harvestStories takes the first figma.com URL when a story has two', () => 
 
   const [row] = harvestStories(tmp)
   assert.deepEqual(row.figma, { fileKey: 'STALEKEY', nodeId: '1:1' })
+})
+
+test('markCollisions flags every component claiming a shared node', () => {
+  const rows = markCollisions(harvestStories(DS))
+  const by = Object.fromEntries(rows.map(r => [r.component, r]))
+
+  // Button and IconButton both claim FILEKEY1|601:5 — each names the other
+  assert.deepEqual(by.Button.evidence.collisionWith, ['IconButton'])
+  assert.deepEqual(by.IconButton.evidence.collisionWith, ['Button'])
+  // Card's node is claimed once, so no collision
+  assert.deepEqual(by.Card.evidence.collisionWith, [])
+})
+
+test('markCollisions keys on fileKey AND nodeId, not nodeId alone', () => {
+  const rows = markCollisions([
+    { component: 'A', figma: { fileKey: 'F1', nodeId: '1:1' }, source: 'story' },
+    { component: 'B', figma: { fileKey: 'F2', nodeId: '1:1' }, source: 'story' },
+  ])
+  // same node id in DIFFERENT files is not a collision
+  assert.deepEqual(rows[0].evidence.collisionWith, [])
+  assert.deepEqual(rows[1].evidence.collisionWith, [])
+})
+
+test('markCollisions tolerates rows with no figma link', () => {
+  const rows = markCollisions([{ component: 'A', figma: null, source: null }])
+  assert.deepEqual(rows[0].evidence.collisionWith, [])
 })
