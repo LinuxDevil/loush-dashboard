@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, STEEL, DIM, HI } from './ui.jsx'
-import { Draw } from '../anim.jsx'
+import { Draw } from '../ui/anim.jsx'
 
 // Chart types the shared src/charts.jsx does not have (it has Bars / StackedBar / Ring / Treemap, all
 // reused as-is elsewhere). These four are the ones this dashboard needs and that one lacks:

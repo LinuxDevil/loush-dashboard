@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { CountUp, Stagger } from '../anim.jsx'
+import { CountUp, Stagger } from '../ui/anim.jsx'
 
 // Design tokens + primitives lifted out of EngDashboard.jsx unchanged, so every src/eng/ panel is
 // pixel-identical to the shell that hosts it. Nothing here is new styling — it is the existing system.

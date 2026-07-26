@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { extractPlan, planLayout, blocksToPlan, diagnoseSession, turnMetrics, filesTouched } from '../src/plan.js'
+import { extractPlan, planLayout, blocksToPlan, diagnoseSession, turnMetrics, filesTouched } from '../src/lib/plan.js'
 
 const wrap = json => ({ kind: 'text', text: 'Here is the plan:\n```json\n' + JSON.stringify(json) + '\n```\nDone.' })
 

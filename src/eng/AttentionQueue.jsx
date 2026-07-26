@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, Empty, H1, miniBtn, primaryBtn, useCopy, first, fx } from './ui.jsx'
-import { Stagger } from '../anim.jsx'
+import { Stagger } from '../ui/anim.jsx'
 
 // §1 — THE landing route. ONE ranked list of the server's triage records. No charts. No kanban.
 // Row = subject · owner · what is stuck · how long · how far over budget · an ACTION.
