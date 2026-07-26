@@ -25,6 +25,8 @@ import QuickActions from './QuickActions.jsx'
 import DeliverySection from './DeliverySection.jsx'
 import WorkingSet from './WorkingSet.jsx'
 import SetupSection from './SetupSection.jsx'
+import ConstitutionSection from './ConstitutionSection.jsx'
+import FigmaCaptureSection from './FigmaCaptureSection.jsx'
 import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
 import SessionsSection from './SessionsSection.jsx'
 import ForensicsSection from './ForensicsSection.jsx'
@@ -42,7 +44,7 @@ import { api, forceFresh } from './api.js'
 // The four-shell portal is DISSOLVED. Eng folds in as `delivery`. Cursor and Career move out of the
 // topbar (one click from an IC's Overview is precisely what made this app feel like surveillance) into
 // a sidebar-footer "switch dashboard" menu.
-const SECTIONS = [
+const BASE_SECTIONS = [
   { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'What needs a human today', el: <Overview /> },
   // The only section in this app scoped to your CODE rather than your harness or your JIRA board, and
   // the only one that needs zero external config. It sits directly under Overview because Overview's
@@ -98,6 +100,22 @@ const SECTIONS = [
   { id: 'setup', label: 'Setup', icon: '⚒', kicker: 'Configuration', title: 'Setup — projects, credentials, work week', el: <SetupSection /> },
 ]
 
+// Org-specific bundle. These were deleted outright once — wrongly, because for the org that HAS a
+// `.wakeel/constitution/` knowledge base and that design-system catalog they are load-bearing. They
+// are now behind `tajawalTools` in projects.json, gated at MOUNT TIME on the server too, so with the
+// flag off the routes do not exist rather than 404-ing from a nav entry that should not be there.
+const TAJAWAL_SECTION = {
+  id: 'tajawal', label: 'Tajawal tools', icon: '◉', kicker: 'Org tools',
+  title: 'Tajawal tools — constitution & design capture',
+  el: (
+    <Hub items={[
+      { label: 'Constitution', el: <ConstitutionSection /> },
+      { label: 'Figma Capture', el: <FigmaCaptureSection /> },
+    ]} />
+  ),
+}
+const sectionsFor = features => (features?.tajawalTools ? [...BASE_SECTIONS, TAJAWAL_SECTION] : BASE_SECTIONS)
+
 
 // There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;
 // both are deleted, so the switcher has nothing to switch to. What remains is the harness-health strip.
@@ -138,6 +156,11 @@ export default function App() {
   const [tick, setTick] = useState(0)
   const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true })
   const [toasts, setToasts] = useState([])
+  // Feature flags decide which nav entries exist at all. The server gates the same flag at mount
+  // time, so this is presentation only — a stale client cannot reach a disabled route.
+  const [features, setFeatures] = useState({})
+  useEffect(() => { api.get('/api/features').then(setFeatures).catch(() => setFeatures({})) }, [])
+  const SECTIONS = React.useMemo(() => sectionsFor(features), [features])
   useEffect(() => {
     const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
     let lastAt = 0, lastUrl = ''

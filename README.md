@@ -30,6 +30,7 @@ than rendering empty charts.
 - [Harness](#harness--sessions-forensics-and-usage) — sessions, forensics, usage
 - [Inbox](#inbox--what-needs-a-decision) · [Overview](#overview--what-needs-a-human-today) · [Delivery](#delivery--jira-github-ci)
 - [Everything else](#everything-else) — Chat, Workflows, Projects, Hooks, MCP, Artifacts, ⌘K
+- [Org-specific tools](#org-specific-tools--behind-a-flag) — Constitution + Figma Capture, flag-gated
 - [The two data planes](#the-two-data-planes) — the privacy boundary
 - [Honesty rules](#honesty-rules) — why null is never rendered as 0
 - [What was removed, and why](#what-was-removed-and-why)
@@ -100,9 +101,10 @@ screen, because a graph that silently truncates is a poster, not an instrument.
 reason the app "worked out of the box" was that one company's production config — including ten real
 employee email addresses — was compiled into the source and committed to git.
 
-**What it does.** Five panels: **Credentials** (JIRA host, email, API token, with a real *Test
+**What it does.** Six panels: **Credentials** (JIRA host, email, API token, with a real *Test
 connection*), **Projects** (JIRA key + repo + dev/QA/product rosters + an explicit per-project
-**writes** opt-in), the **work week**, the **story-point → days** table, and **notifications**.
+**writes** opt-in), the **work week**, the **story-point → days** table, **Tajawal tools** (the
+org-specific bundle described [below](#org-specific-tools--behind-a-flag)), and **notifications**.
 
 ### How credentials are handled
 
@@ -303,6 +305,43 @@ manifest agree". Variant drift is now checked for real; that loop's body used to
 
 ---
 
+## Org-specific tools — behind a flag
+
+![Tajawal tools](docs/screenshots/tajawal-tools.png)
+
+**The problem, and the mistake.** Two features assume one organisation's repo layout: the
+**Constitution** reader needs a `.wakeel/constitution/` knowledge base, and **Figma Capture** ships
+against a specific design-system catalog. Shipping them to everyone is what made this app feel like
+someone else's tool — every user got a sidebar entry that rendered a 404 string. But *deleting* them
+was also wrong: for the org that has that layout they are load-bearing.
+
+**What it does.** They live in a **Tajawal tools** tab that only exists when `tajawalTools` is set in
+`projects.json`. It is **off by default**, because a feature flag that defaults on is how someone
+else's tools ended up in everyone's sidebar in the first place.
+
+```jsonc
+"tajawalTools": true                                          // enabled for whoever runs it
+"tajawalTools": { "enabled": true }                           // same, long form
+"tajawalTools": { "enabled": true, "emails": ["you@corp"] }   // also require an identity match
+```
+
+With `emails` set, the flag only opens for those identities — the configured JIRA email, or
+`JIRA_EMAIL` from the environment. There is a toggle for all of this in **Setup → Tajawal tools**.
+
+**The gate is at mount time on the server, not just in the nav.** With the flag off,
+`/api/constitution/*`, `/api/atoms/*` and `/api/figma-capture/*` are never registered, so a stale
+client cannot reach them — it gets a real 404 rather than a route that should not be there. The
+client reads `GET /api/features` to decide which nav entries exist. Changing the flag takes effect
+on server restart, and the Setup panel says so.
+
+- **Constitution** — reads a repo's `.wakeel/constitution/` knowledge base: clause coverage, the
+  citation graph, artifact drill-down, and a grounded ask-the-project search.
+- **Figma Capture** — pulls a frame's screenshot and node tree from a Figma link, lets you annotate
+  regions with design-system component mappings, and writes a `context.md` that guides Claude when
+  implementing the design.
+
+---
+
 ## The two data planes
 
 Every panel declares which plane it draws from, and the boundary is enforced in the server, not in
@@ -388,9 +427,12 @@ panels accumulated. These were deleted:
   the same day; `src/App.jsx` carried the tombstone comment three lines below the import that
   contradicted it. The presentational helpers survive as `src/anim.jsx` — motion is not a metric,
   only the scoring was the problem.
-- **Figma Capture** + `design-system-catalog.json` — the catalog was a regex scrape of one company's
-  remote Storybook shipped as every project's component list, and the repo scanner required a path
-  segment literally named `app`, so it returned nothing for a standard `src/components/` layout.
+- **Figma Capture** and **Constitution** were deleted here too — that part was **reverted**. Both are
+  genuinely needed by the org whose layout they assume, so they are back behind the `tajawalTools`
+  flag described in [Org-specific tools](#org-specific-tools--behind-a-flag) rather than shipped to
+  everyone. The original criticism still stands and is why the flag exists: the design-system catalog
+  is a regex scrape of one company's Storybook, and the repo scanner requires a path segment literally
+  named `app`, so it finds nothing in a standard `src/components/` layout.
 - **`dist/`** — a build artifact that was tracked, so a stale bundle shipped alongside every change.
 
 Kept deliberately, against the audit: `server-memory.mjs` (Overview's recall tile and chat grounding
@@ -412,6 +454,8 @@ verified `200`.
 | Endpoint | What |
 |---|---|
 | `GET /api/fe/workingset?root=&days=` · `GET /api/fe/dossier?root=&file=` · `POST /api/fe/mute` | Working Set: rework rank, import graph, coverage; per-file prompt→diff→error timeline and context bundle |
+| `GET /api/features` | Which optional bundles are mounted (`tajawalTools`). The client reads this before deciding which nav entries exist |
+| `GET /api/constitution/*` · `GET /api/atoms/*` · `/api/figma-capture/*` | Only mounted when `tajawalTools` allows — otherwise these routes do not exist |
 | `GET /api/setup` · `PUT /api/setup/{eng,project,credentials,notify}` · `DELETE /api/setup/project` · `POST /api/setup/test/jira` · `GET /api/setup/test/gh` | Visual config. **`GET /api/setup` never returns a secret value** — only `set: true\|false` |
 | `GET /api/inbox[?plane=work\|harness]` · `POST /api/inbox/done` | Every attention item; `{key,done}` clears, `{key,snoozeHours:24}` defers |
 | `GET /api/eng/snapshot?project=all` | The plane-A delivery snapshot (JIRA changelog + GitHub PRs), 2h cache |

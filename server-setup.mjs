@@ -25,7 +25,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, DEFAULT_WORK, DEFAULT_SP_DAYS } from './eng-config.mjs'
+import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from './eng-config.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PROJECTS_FILE = path.join(HERE, 'projects.json')
@@ -194,6 +194,7 @@ export default function mountSetup(app, deps = {}) {
           workDescription: describeWork(cfg.work),
           storyPointDays: cfg.storyPointDays,
           defaultDevEmails: cfg.defaultDevEmails,
+          tajawalTools: cfg.tajawalTools,
           projects: cfg.projects,
           file: { path: PROJECTS_FILE, exists: fs.existsSync(PROJECTS_FILE), gitignored: isIgnored(gi, 'projects.json') },
         },
@@ -212,7 +213,7 @@ export default function mountSetup(app, deps = {}) {
   // --- org config (projects.json) -------------------------------------------------
   app.put('/api/setup/eng', (req, res) => {
     try {
-      const { jiraHost, work, storyPointDays, defaultDevEmails } = req.body || {}
+      const { jiraHost, work, storyPointDays, defaultDevEmails, tajawalTools } = req.body || {}
       const errors = []
       if (jiraHost && !HOST_RE.test(jiraHost)) errors.push('JIRA host must be a bare hostname, e.g. your-org.atlassian.net')
       if (work) errors.push(...validateWork(work))
@@ -226,10 +227,13 @@ export default function mountSetup(app, deps = {}) {
       if (work) base.work = normalizeWorkForStorage(work)
       if (storyPointDays) base.storyPointDays = storyPointDays
       if (defaultDevEmails) base.defaultDevEmails = defaultDevEmails.filter(Boolean).map(s => s.toLowerCase())
+      // Toggling this changes which server routes get MOUNTED, which only happens at boot — so the
+      // response says so rather than letting the UI imply the tab appears immediately.
+      if (tajawalTools !== undefined) base.tajawalTools = normalizeToolFlag(tajawalTools)
       writeConfigFile(PROJECTS_FILE, base)
       invalidateEngConfig()
       const cfg = loadEngConfig(PROJECTS_FILE)
-      res.json({ ok: true, workDescription: describeWork(cfg.work) })
+      res.json({ ok: true, workDescription: describeWork(cfg.work), restartRequired: tajawalTools !== undefined })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 

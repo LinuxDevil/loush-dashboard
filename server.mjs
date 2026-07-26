@@ -10,6 +10,10 @@ import mountEng from './server-eng.mjs'
 import mountMemory, { retrieveContext } from './server-memory.mjs'
 import mountFe from './server-fe.mjs'
 import mountSetup from './server-setup.mjs'
+import mountConstitution from './server-constitution.mjs'
+import mountAtoms from './server-atoms.mjs'
+import mountFigmaCapture from './server-figma-capture.mjs'
+import { loadEngConfig as loadEngCfg, toolFlagAllows } from './eng-config.mjs'
 import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPABILITY_DAYS } from './harness-metrics.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from './scheduler.mjs'
 import { verdictFrom } from './run-verdict.mjs'
@@ -48,6 +52,42 @@ mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...
 // /api/setup/* — visual config for everything the app needs, including credentials. Secret VALUES
 // are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
+
+// ---------- org-specific tool bundle: Tajawal tools ----------
+// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture ships
+// against a specific design-system catalog, so these are useless — and were previously misleading —
+// outside the org that has that layout. They are now behind a flag in projects.json rather than
+// deleted or unconditional. Gated HERE, at mount time: when the flag is off the routes do not exist
+// at all, so a stale client cannot reach them.
+// NB: PROJECT is the dashboard's PARENT directory (the repo it is watching). projects.json and
+// .eng.local.json live in the app directory itself, next to this file — same as server-eng.mjs.
+const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
+const PROJECTS_CFG = path.join(APP_DIR, 'projects.json')
+function tajawalToolsEnabled() {
+  // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
+  // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
+  // into a confident `false`, silently disabling the feature with the config plainly set to true.
+  // A swallowed error producing a wrong answer is the exact failure this codebase keeps repeating,
+  // so the catch below reports rather than hides.
+  const readLocal = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return {} } }
+  try {
+    const cfg = loadEngCfg(PROJECTS_CFG)
+    const email = process.env.JIRA_EMAIL || readLocal(path.join(APP_DIR, '.eng.local.json')).jiraEmail || null
+    return toolFlagAllows(cfg.tajawalTools, email)
+  } catch (e) {
+    console.error('[claude-dashboard] could not evaluate tajawalTools flag — leaving it OFF:', e.message)
+    return false
+  }
+}
+const TAJAWAL_TOOLS = tajawalToolsEnabled()
+if (TAJAWAL_TOOLS) {
+  mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
+  mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
+  mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
+  console.log('[claude-dashboard] Tajawal tools enabled (projects.json -> tajawalTools)')
+}
+// Feature flags the client needs before it can decide which nav entries exist.
+app.get('/api/features', (req, res) => res.json({ tajawalTools: TAJAWAL_TOOLS }))
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.

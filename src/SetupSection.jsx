@@ -65,6 +65,7 @@ export default function SetupSection() {
       <Projects d={d} reload={load} />
       <WorkWeek d={d} reload={load} />
       <StoryPoints d={d} reload={load} />
+      <OrgTools d={d} reload={load} />
       <Notifications d={d} reload={load} />
     </div>
   )
@@ -336,6 +337,43 @@ function StoryPoints({ d, reload }) {
       <div style={{ display: 'flex', gap: 8 }}>
         <button style={primary} disabled={busy} onClick={save}>Save table</button>
         <button style={btn} onClick={() => setRows(d.defaults.storyPointDays.map(r => [...r]))}>Reset to reference table</button>
+      </div>
+    </Section>
+  )
+}
+
+// ---------- org-specific tool bundles ----------
+function OrgTools({ d, reload }) {
+  const flag = d.eng.tajawalTools || { enabled: false, emails: [] }
+  const [enabled, setEnabled] = useState(!!flag.enabled)
+  const [emails, setEmails] = useState((flag.emails || []).join('\n'))
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true)
+    try {
+      const r = await api.put('/api/setup/eng', { tajawalTools: { enabled, emails: emails.split(/[\s,;]+/).filter(Boolean) } })
+      toast(r.restartRequired ? 'saved — restart the server for the tab to appear/disappear' : 'saved', 'success')
+      reload()
+    } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
+  }
+  return (
+    <Section title="Tajawal tools" sub="org-specific bundle — Constitution + Figma Capture">
+      <p style={{ color: DIM, font: '400 12px sans-serif', margin: '0 0 14px', lineHeight: 1.6 }}>
+        The <b style={{ color: '#e8e0d8' }}>Constitution</b> reader needs a <code style={{ fontFamily: MONO }}>.wakeel/constitution/</code> knowledge
+        base in the repo, and <b style={{ color: '#e8e0d8' }}>Figma Capture</b> ships against a specific design-system catalog. Both are
+        useless outside the org that has that layout, so they are off unless this is on. The server
+        gates the same flag at mount time — with it off those routes do not exist at all.
+      </p>
+      <label style={{ display: 'flex', gap: 9, alignItems: 'center', justifyContent: 'flex-start', width: 'fit-content', marginBottom: 12, cursor: 'pointer' }}>
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ width: 'auto', flex: '0 0 auto', margin: 0 }} />
+        <span style={{ font: '400 12.5px sans-serif', color: '#c8bdb4' }}>Enable the <b style={{ color: '#e8e0d8' }}>Tajawal tools</b> tab</span>
+      </label>
+      <Field label="Restrict to these identities" hint="Optional. Leave empty to enable for whoever is running the dashboard; otherwise the configured JIRA email (or JIRA_EMAIL) must be listed.">
+        <textarea value={emails} onChange={e => setEmails(e.target.value)} rows={2} placeholder="you@example.com" style={{ ...inp, resize: 'vertical' }} />
+      </Field>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button style={primary} disabled={busy} onClick={save}>Save</button>
+        <span style={{ font: `400 11px ${MONO}`, color: GOLD }}>takes effect on server restart</span>
       </div>
     </Section>
   )

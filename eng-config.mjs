@@ -115,6 +115,39 @@ export function describeWork(work) {
   return `${hh(work.startHour)}–${hh(work.endHour)} ${span}, UTC${off}`
 }
 
+// ---------------------------------------------------------------------------
+// Org-specific tool bundles
+// ---------------------------------------------------------------------------
+//
+// Some features only make sense inside one organisation: the Constitution reader needs a
+// `.wakeel/constitution/` knowledge base, and Figma Capture ships against a specific design-system
+// catalog. Shipping those to everyone is what made this app feel like someone else's tool — but
+// deleting them was wrong too, because for the org that HAS that layout they are load-bearing.
+//
+// So they live behind a named flag. Accepted forms in projects.json:
+//   "tajawalTools": true
+//   "tajawalTools": { "enabled": true }
+//   "tajawalTools": { "enabled": true, "emails": ["you@example.com"] }   // also require an identity match
+//
+// With `emails` set, the flag only opens for those identities — the configured JIRA email, or
+// JIRA_EMAIL from the environment. Empty/absent `emails` means "enabled for whoever is running it".
+export function normalizeToolFlag(raw) {
+  if (raw === true) return { enabled: true, emails: [] }
+  if (!raw || typeof raw !== 'object') return { enabled: false, emails: [] }
+  return {
+    enabled: raw.enabled === true,
+    emails: Array.isArray(raw.emails) ? raw.emails.filter(Boolean).map(e => String(e).trim().toLowerCase()) : [],
+  }
+}
+
+/** Is a tool bundle open for this identity? Null/blank identity passes only an empty allowlist. */
+export function toolFlagAllows(flag, email) {
+  const f = normalizeToolFlag(flag)
+  if (!f.enabled) return false
+  if (!f.emails.length) return true
+  return !!email && f.emails.includes(String(email).trim().toLowerCase())
+}
+
 /**
  * Read the config file. Shapes accepted, oldest to newest:
  *   [ …projects ]                                    (legacy bare array)
@@ -132,6 +165,7 @@ export function parseEngConfig(raw) {
     defaultDevEmails: Array.isArray(j.defaultDevEmails) ? j.defaultDevEmails.map(e => String(e).toLowerCase()) : [],
     projects: Array.isArray(j.projects) ? j.projects : [],
     effortBuckets: j.effortBuckets || null,
+    tajawalTools: normalizeToolFlag(j.tajawalTools),
     _raw: j,
   }
 }
