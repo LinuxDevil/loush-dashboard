@@ -4,7 +4,7 @@
     {
       "name": "api",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["server.mjs"],
+      "runtimeArgs": ["server/index.mjs"],
       "port": 5178
     },
     {

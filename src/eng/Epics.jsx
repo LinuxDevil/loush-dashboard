@@ -38,11 +38,11 @@ export default function Epics({ snap, reload, onOpenTicket }) {
         columns={[
           { key: 'key', label: 'Epic', width: '1.9fr', sort: e => e.key, filter: e => e.key + ' ' + e.summary, render: e => <span style={{ display: 'flex', gap: 7, alignItems: 'baseline', minWidth: 0 }}>
             <TicketLink i={{ key: e.key, url: e.url }} style={{ font: `600 11px ${MONO}`, flexShrink: 0 }} />
-            <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.summary}</span></span> },
+            <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.summary}</span></span> },
           { key: 'prog', label: 'Progress', width: '130px', sort: e => e.pctComplete, render: e => <span style={{ display: 'block' }}>
-            <span style={{ display: 'block', height: 6, borderRadius: 4, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+            <span style={{ display: 'block', height: 6, borderRadius: 4, background: 'var(--bg-surface-active)', overflow: 'hidden' }}>
               <span style={{ display: 'block', height: '100%', width: `${e.pctComplete}%`, background: RISK[e.risk], borderRadius: 4 }} /></span>
-            <span style={{ font: `500 9.5px ${MONO}`, color: DIM }}>{e.done}/{e.total} · {fx(e.pctComplete, 0)}%</span></span> },
+            <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{e.done}/{e.total} · {fx(e.pctComplete, 0)}%</span></span> },
           { key: 'pts', label: 'Pts left', width: '74px', align: 1, sort: e => e.ptsRemaining, render: e => <span style={{ font: `600 12px ${MONO}`, color: BB }}>{e.ptsRemaining}</span> },
           { key: 'days', label: 'In flight', width: '80px', align: 1, sort: e => e.daysInFlight ?? -1, render: e => <span style={{ font: `500 12px ${MONO}`, color: HI }}>{e.daysInFlight == null ? '—' : fx(e.daysInFlight, 0) + 'd'}</span> },
           { key: 'bugs', label: 'Escaped', width: '76px', align: 1, sort: e => e.escapedBugs, render: e => <span style={{ font: `600 12px ${MONO}`, color: e.escapedBugs ? RED : DIM }}>{e.escapedBugs || '—'}</span> },
@@ -51,10 +51,10 @@ export default function Epics({ snap, reload, onOpenTicket }) {
             ? <span style={{ display: 'flex', gap: 4 }} onClick={ev => ev.stopPropagation()}>
               <input type="date" value={edit.date} onChange={ev => setEdit({ key: e.key, date: ev.target.value })} style={{ ...inp, padding: '3px 6px', fontSize: 11, fontFamily: MONO }} />
               <button style={miniBtn} onClick={save}>✓</button></span>
-            : <button style={{ ...miniBtn, borderStyle: e.targetManual ? 'solid' : 'dashed', color: e.targetDate ? '#d8cfc7' : DIM }} onClick={ev => { ev.stopPropagation(); setEdit({ key: e.key, date: (e.targetDate || '').slice(0, 10) }) }}>{e.targetDate ? fdate(e.targetDate) : 'set target'}</button> },
+            : <button style={{ ...miniBtn, borderStyle: e.targetManual ? 'solid' : 'dashed', color: e.targetDate ? 'var(--text-primary)' : DIM }} onClick={ev => { ev.stopPropagation(); setEdit({ key: e.key, date: (e.targetDate || '').slice(0, 10) }) }}>{e.targetDate ? fdate(e.targetDate) : 'set target'}</button> },
           { key: 'slip', label: 'Slip', width: '80px', align: 1, sort: e => e.slipDays ?? -99, render: e => <span style={{ font: `700 12px ${MONO}`, color: RISK[e.risk] }}>{e.slipDays == null ? '—' : `${e.slipDays > 0 ? '+' : ''}${fx(e.slipDays, 0)}d`}</span> },
           { key: 'act', label: '', width: '82px', align: 1, render: e => <button style={miniBtn} onClick={ev => { ev.stopPropagation(); copy(status(e), e.key) }}>{copied === e.key ? '✓' : 'Copy status'}</button> },
         ]} />}
-    <div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>Forecast = remaining points ÷ trailing-8-week velocity, in WORKING days. Slip is against the JIRA due date, or the target you set here (persisted to eng-epic-targets.json).</div>
+    <div style={{ font: `400 11px ${MONO}`, color: DIM }}>Forecast = remaining points ÷ trailing-8-week velocity, in WORKING days. Slip is against the JIRA due date, or the target you set here (persisted to eng-epic-targets.json).</div>
   </section>
 }

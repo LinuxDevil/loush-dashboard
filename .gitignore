@@ -8,5 +8,17 @@ config.json
 projects.json
 bug-ownership.json
 promptcheck.json
+
+# runtime state written to the repo root by server/eng.mjs — your triage decisions, epic targets
+# and artifact links, not shipped config. bug-ownership.json above is the same class.
+eng-triage.json
+eng-epic-targets.json
+eng-artifacts.json
 .playwright-mcp
-.serena
+
+# build output — regenerate with `npx vite build`
+dist/
+docs/
+.serena/
+.claude/
+

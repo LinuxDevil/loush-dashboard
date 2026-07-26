@@ -1,45 +1,40 @@
 import React, { useEffect, useState } from 'react'
-import ResourceSection from './ResourceSection.jsx'
-import CustomizeSection from './CustomizeSection.jsx'
-import McpSection from './McpSection.jsx'
-import HooksSection from './HooksSection.jsx'
-import ArtifactsSection from './ArtifactsSection.jsx'
-import Overview from './Overview.jsx'
-import ProjectsSection from './ProjectsSection.jsx'
-import ChatSection from './ChatSection.jsx'
-import TeamsSection from './TeamsSection.jsx'
-import TeamDesigner from './TeamDesigner.jsx'
-import HarnessSection from './HarnessSection.jsx'
-import ContextExplorerSection from './ContextExplorerSection.jsx'
-import GovernanceSection from './GovernanceSection.jsx'
-import ReliabilitySection from './ReliabilitySection.jsx'
-import LibrarySection from './LibrarySection.jsx'
-import PromptStudio from './PromptStudio.jsx'
-import PromptQuality from './PromptQuality.jsx'
-import FlowSection from './FlowSection.jsx'
-import RunsSection from './RunsSection.jsx'
-import Hub from './Hub.jsx'
-import InsightsSection from './InsightsSection.jsx'
-import InboxSection from './InboxSection.jsx'
-import BugsSection from './BugsSection.jsx'
-import QualitySection from './QualitySection.jsx'
-import BoardSection from './BoardSection.jsx'
-import QuickActions from './QuickActions.jsx'
-import CursorDashboard from './CursorDashboard.jsx'
-import CareerDashboard from './CareerDashboard.jsx'
-import ConstitutionSection from './ConstitutionSection.jsx'
-import FigmaCaptureSection from './FigmaCaptureSection.jsx'
-import MemorySection from './MemorySection.jsx'
-import MindwalkSection from './MindwalkSection.jsx'
-import DeliverySection from './DeliverySection.jsx'
-import CapabilityLedger, { Inventory } from './CapabilityLedger.jsx'
-import SessionsSection from './SessionsSection.jsx'
-import ForensicsSection from './ForensicsSection.jsx'
-import UsagePanel from './UsagePanel.jsx'
-import TeamBaseline from './TeamBaseline.jsx'
-import Palette from './Palette.jsx'
-import { UnlockToast } from './game/index.js'
-import { api, forceFresh } from './api.js'
+import ResourceSection from './sections/ResourceSection.jsx'
+import CustomizeSection from './sections/CustomizeSection.jsx'
+import McpSection from './sections/McpSection.jsx'
+import HooksSection from './sections/HooksSection.jsx'
+import ArtifactsSection from './sections/ArtifactsSection.jsx'
+import Overview from './sections/Overview.jsx'
+import ProjectsSection from './sections/ProjectsSection.jsx'
+import ChatSection from './sections/ChatSection.jsx'
+import HarnessSection from './sections/HarnessSection.jsx'
+import ContextExplorerSection from './sections/ContextExplorerSection.jsx'
+import GovernanceSection from './sections/GovernanceSection.jsx'
+import ReliabilitySection from './sections/ReliabilitySection.jsx'
+import LibrarySection from './sections/LibrarySection.jsx'
+import PromptStudio from './sections/PromptStudio.jsx'
+import PromptQuality from './sections/PromptQuality.jsx'
+import FlowSection from './sections/FlowSection.jsx'
+import RunsSection from './sections/RunsSection.jsx'
+import Hub from './ui/Hub.jsx'
+import InsightsSection from './sections/InsightsSection.jsx'
+import InboxSection from './sections/InboxSection.jsx'
+import BugsSection from './sections/BugsSection.jsx'
+import QualitySection from './sections/QualitySection.jsx'
+import BoardSection from './sections/BoardSection.jsx'
+import QuickActions from './sections/QuickActions.jsx'
+import DeliverySection from './sections/DeliverySection.jsx'
+import WorkingSet from './sections/WorkingSet.jsx'
+import SetupSection from './sections/SetupSection.jsx'
+import ConstitutionSection from './almosafer/ConstitutionSection.jsx'
+import FigmaCaptureSection from './almosafer/FigmaCaptureSection.jsx'
+import CapabilityLedger, { Inventory } from './sections/CapabilityLedger.jsx'
+import SessionsSection from './sections/SessionsSection.jsx'
+import ForensicsSection from './sections/ForensicsSection.jsx'
+import UsagePanel from './sections/UsagePanel.jsx'
+import TeamBaseline from './sections/TeamBaseline.jsx'
+import Palette from './ui/Palette.jsx'
+import { api, forceFresh } from './lib/api.js'
 
 // THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
 // level was derived from all-time assistant MESSAGE COUNT, so the fastest way to level up was a long,
@@ -50,8 +45,12 @@ import { api, forceFresh } from './api.js'
 // The four-shell portal is DISSOLVED. Eng folds in as `delivery`. Cursor and Career move out of the
 // topbar (one click from an IC's Overview is precisely what made this app feel like surveillance) into
 // a sidebar-footer "switch dashboard" menu.
-const SECTIONS = [
+const BASE_SECTIONS = [
   { id: 'overview', label: 'Overview', icon: '◧', kicker: 'Dashboard', title: 'What needs a human today', el: <Overview /> },
+  // The only section in this app scoped to your CODE rather than your harness or your JIRA board, and
+  // the only one that needs zero external config. It sits directly under Overview because Overview's
+  // top fold is a "not configured" card for anyone without JIRA + gh, and this is not.
+  { id: 'workingset', label: 'Working Set', icon: '◈', kicker: 'Dashboard', title: 'Working Set — what the agent did to your code', el: <WorkingSet /> },
   { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox — work + harness', el: <InboxSection /> },
   { id: 'delivery', label: 'Delivery', icon: '▤', kicker: 'Delivery', title: 'Delivery — JIRA, GitHub, CI', el: <DeliverySection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
@@ -94,9 +93,9 @@ const SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
-  { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
-  { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
-  { id: 'figma-capture', label: 'Figma Capture', icon: '▣', kicker: 'Design', title: 'Figma Capture — annotate design screenshots with component mappings', el: <FigmaCaptureSection /> },
+  // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
+  // top-level entries — they moved into ALMOSAFER_SECTION below, behind the Almosafer_Tools flag.
+  // The Memory browse UI stays deleted (server/memory.mjs is kept; Overview's recall tile uses it).
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio & prompt quality', el: (
     <Hub items={[
       { label: 'Prompt Studio', el: <PromptStudio /> },
@@ -105,26 +104,33 @@ const SECTIONS = [
   ) },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
-  // Mindwalk + Agent Teams + Team Designer are demos. Both cost money per run and neither should outrank
-  // delivery data in the sidebar. One collapsed entry.
-  { id: 'labs', label: 'Labs', icon: '⚗', kicker: 'Experimental', title: 'Labs — demos, not delivery data', el: (
+  // Everything org-specific is user config now, so there has to be somewhere to enter it. Credentials
+  // here are write-only: no endpoint returns a stored token, so the fields are always blank on load.
+  { id: 'setup', label: 'Setup', icon: '⚒', kicker: 'Configuration', title: 'Setup — projects, credentials, work week', el: <SetupSection /> },
+]
+
+// Org-specific bundle. These were deleted outright once — wrongly, because for the org that HAS a
+// `.wakeel/constitution/` knowledge base and that design-system catalog they are load-bearing. They
+// are now behind `almosaferTools` in projects.json, gated at MOUNT TIME on the server too, so with the
+// flag off the routes do not exist rather than 404-ing from a nav entry that should not be there.
+const ALMOSAFER_SECTION = {
+  id: 'almosafer', label: 'Almosafer tools', icon: '◉', kicker: 'Org tools',
+  title: 'Almosafer tools — constitution & design capture',
+  el: (
     <Hub items={[
-      { label: 'Mindwalk', el: <MindwalkSection /> },
-      { label: 'Agent Squads', el: <TeamsSection /> },
-      { label: 'Squad Designer', el: <TeamDesigner /> },
+      { label: 'Constitution', el: <ConstitutionSection /> },
+      { label: 'Figma Capture', el: <FigmaCaptureSection /> },
     ]} />
-  ) },
-]
+  ),
+}
+const sectionsFor = features => (features?.almosaferTools ? [...BASE_SECTIONS, ALMOSAFER_SECTION] : BASE_SECTIONS)
 
-const DASHBOARDS = [
-  ['cursor', '⇄ Cursor', 'read-only view of your Cursor usage'],
-  ['career', '⇄ Career', 'your personal growth dashboard'],
-]
 
-function SidebarFoot({ onDash }) {
+// There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;
+// both are deleted, so the switcher has nothing to switch to. What remains is the harness-health strip.
+function SidebarFoot() {
   const [h, setH] = useState(null)
   const [alerts, setAlerts] = useState([])
-  const [open, setOpen] = useState(false)
   useEffect(() => {
     const load = () => {
       api.get('/api/harness').then(d => setH(d.valid)).catch(() => {})
@@ -138,20 +144,8 @@ function SidebarFoot({ onDash }) {
   const issue = h && !h.ok ? h.conflicts[0] : alerts[0]?.text
   return (
     <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {open && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: 6, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          {DASHBOARDS.map(([id, label, hint]) => (
-            <button key={id} onClick={() => onDash(id)} title={hint}
-              style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '7px 10px', borderRadius: 9 }}>{label}</button>
-          ))}
-        </div>
-      )}
-      <button onClick={() => setOpen(o => !o)} title="the other shells — deliberately not one click from Overview"
-        style={{ font: "500 12.5px 'IBM Plex Sans'", padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <span className="nav-icon">⇄</span> switch dashboard {open ? '▾' : '▸'}
-      </button>
       <div className="sidebar-foot" style={{ marginTop: 0 }} title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
-        <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
+        <div className="live" style={ok && !alerts.length ? {} : { color: ok ? 'var(--amber)' : 'var(--red)' }}>
           {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
         </div>
         {issue ? issue.slice(0, 46) : 'settings schema · backups synced'}
@@ -160,24 +154,36 @@ function SidebarFoot({ onDash }) {
   )
 }
 
+// Theme lives on <html data-theme>, which is what the token block in styles.css keys off. The initial
+// value is set by an inline script in index.html so there is no flash of the wrong palette; this hook
+// only owns the toggle and the persistence.
+function useTheme() {
+  const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark')
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('theme', theme) } catch { /* private mode — session-only theme is fine */ }
+  }, [theme])
+  return [theme, () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))]
+}
+
 export default function App() {
+  const [theme, toggleTheme] = useTheme()
+  const [navOpen, setNavOpen] = useState(false)
   // ?dash=eng no longer opens a separate shell — Eng IS the Delivery section now. The Eng panels write
   // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
   // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
   const initial = new URLSearchParams(window.location.search).get('dash') || 'claude'
-  const [dash, setDash] = useState(initial === 'eng' ? 'claude' : initial)
-  const goDash = (name) => {
-    const q = new URLSearchParams(window.location.search)
-    name === 'claude' ? q.delete('dash') : q.set('dash', name)
-    history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
-    setDash(name)
-  }
   const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview')
   const [inboxCount, setInboxCount] = useState(0)
   const [stale, setStale] = useState(null)
   const [tick, setTick] = useState(0)
   const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true })
   const [toasts, setToasts] = useState([])
+  // Feature flags decide which nav entries exist at all. The server gates the same flag at mount
+  // time, so this is presentation only — a stale client cannot reach a disabled route.
+  const [features, setFeatures] = useState({})
+  useEffect(() => { api.get('/api/features').then(setFeatures).catch(() => setFeatures({})) }, [])
+  const SECTIONS = React.useMemo(() => sectionsFor(features), [features])
   useEffect(() => {
     const onCache = e => setStale(s => (s === null ? e.detail.at : Math.min(s, e.detail.at)))
     let lastAt = 0, lastUrl = ''
@@ -226,30 +232,41 @@ export default function App() {
     return () => { clearInterval(t); window.removeEventListener('nav-chat', navChat) }
   }, [])
   const cur = SECTIONS.find(s => s.id === section)
-  if (dash === 'cursor') return <CursorDashboard onSwitch={() => goDash('claude')} />
-  if (dash === 'career') return <CareerDashboard onExit={() => goDash('claude')} />
   return (
     <div className="app">
-      <nav className="sidebar">
-        <div className="brand"><div className="brand-mark">C</div><div className="brand-name">Claude Code</div></div>
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
+      <nav className={navOpen ? 'sidebar open' : 'sidebar'}>
+        <div className="brand">
+          <div className="brand-mark">C</div>
+          <div className="brand-name">Claude Code</div>
+          <span className="brand-beta">BETA</span>
+        </div>
         {SECTIONS.map(s => (
-          <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => nav(s.id)}>
+          <button key={s.id} className={section === s.id ? 'active' : ''} title={s.label}
+            onClick={() => { nav(s.id); setNavOpen(false) }}>
             <span className="nav-icon">{s.icon}</span> {s.label}
             {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
         ))}
-        <SidebarFoot onDash={goDash} />
+        <SidebarFoot />
       </nav>
       <main className="content">
+        {/* 48px bar: breadcrumb left, status + controls right. The section title is the breadcrumb
+            leaf — a second heading row under it was 60px of chrome saying the same thing twice. */}
         <header className="topbar">
-          <div>
-            <div className="kicker">{cur.kicker}</div>
-            <h1>{cur.title}</h1>
+          <button className="icon-btn nav-toggle" aria-label="menu" onClick={() => setNavOpen(o => !o)}>☰</button>
+          <div className="crumb">
+            <span className="kicker">{cur.kicker}</span>
+            <i>›</i>
+            <b>{cur.title}</b>
           </div>
           <div className="topbar-right">
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
-              style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
+              style={{ color: staleMin >= 5 ? 'var(--amber)' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}
+            </button>
+            <button className="icon-btn" onClick={toggleTheme} title={`switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} aria-label="toggle theme">
+              {theme === 'dark' ? '☀' : '☾'}
             </button>
             <div className="avatar">AM</div>
           </div>
@@ -261,16 +278,15 @@ export default function App() {
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
-      <UnlockToast />
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
           {toasts.map(t => {
-            const c = t.kind === 'error' ? '#e5484d' : t.kind === 'success' ? '#3fb96a' : '#7cc4f7'
+            const c = t.kind === 'error' ? 'var(--red)' : t.kind === 'success' ? 'var(--green)' : 'var(--blue)'
             return (
               <div key={t.id} onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}
-                style={{ cursor: 'pointer', background: 'rgba(24,20,18,0.96)', border: `1px solid ${c}66`, borderRadius: 10, padding: '10px 14px', font: "400 11px 'IBM Plex Mono', monospace", color: '#e5dbd2', boxShadow: '0 6px 24px rgba(0,0,0,0.4)' }}>
+                style={{ cursor: 'pointer', background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderLeft: `2px solid ${c}`, borderRadius: 6, padding: '10px 12px', font: '400 11px var(--mono)', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}>
                 <div style={{ color: c, fontWeight: 600 }}>{t.kind === 'error' ? (t.url ? 'request failed' : 'error') : t.kind === 'success' ? 'done' : 'note'} · click to dismiss</div>
-                <div style={{ color: '#b0a69e', marginTop: 3 }}>{t.message}{t.url ? <span style={{ color: '#7a716a' }}> ({String(t.url).split('?')[0]})</span> : ''}</div>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 3 }}>{t.message}{t.url ? <span style={{ color: 'var(--text-tertiary)' }}> ({String(t.url).split('?')[0]})</span> : ''}</div>
               </div>
             )
           })}

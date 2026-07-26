@@ -17,7 +17,9 @@ export function stat(values) {
     n: a.length,
     p50: pctl(a, 0.5), p85: pctl(a, 0.85), p90: pctl(a, 0.9),
     min: a.length ? Math.min(...a) : null, max: a.length ? Math.max(...a) : null,
-    sum: a.reduce((x, y) => x + y, 0),
+    // null on empty, like every other field here. Returning 0 made "nothing measured" look like
+    // "measured zero" in the one module that owns this contract.
+    sum: a.length ? a.reduce((x, y) => x + y, 0) : null,
   }
 }
 export const of = (rows, f) => stat((rows || []).map(f))

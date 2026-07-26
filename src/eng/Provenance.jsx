@@ -19,22 +19,22 @@ export default function Provenance({ snap, onRefresh, busy }) {
   const errors = snap.errors || []
   const stale = snap.generatedAt && Date.now() - Date.parse(snap.generatedAt) > (p.ttlMs || 7200000)
   const bad = errors.length > 0
-  const c = bad ? RED : stale ? GOLD : 'rgba(255,255,255,0.16)'
-  const bg = bad ? 'rgba(242,119,122,0.08)' : stale ? 'rgba(245,196,81,0.07)' : 'rgba(28,24,21,0.6)'
-  return <div style={{ borderRadius: 10, border: `1px solid ${bad || stale ? c : 'rgba(255,255,255,0.1)'}`, background: bg }}>
+  const c = bad ? RED : stale ? GOLD : 'var(--bg-surface-active)'
+  const bg = bad ? 'var(--red-bg)' : stale ? 'var(--amber-bg)' : 'var(--bg-surface)'
+  return <div style={{ borderRadius: 6, border: `1px solid ${bad || stale ? c : 'var(--bg-surface-active)'}`, background: bg }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', flexWrap: 'wrap' }}>
-      <span style={{ font: `500 11px ${MONO}`, color: bad ? RED : stale ? GOLD : '#a89f97' }}>
+      <span style={{ font: `500 11px ${MONO}`, color: bad ? RED : stale ? GOLD : 'var(--text-secondary)' }}>
         {bad ? '✕' : stale ? '⚠' : '●'} JIRA {snap.issues?.length || 0} issues · GitHub {snap.prs?.length || 0} PRs
         {!snap.ghAvailable && ' (gh unavailable — PR panels are EMPTY, not zero)'}
         {' · built '}{snap.generatedAt ? ago(snap.generatedAt) : '—'}{stale ? ' · cache stale' : ''}
       </span>
       {bad && <span style={{ font: `500 11px ${BODY}`, color: RED }}>{errors.length} source error{errors.length > 1 ? 's' : ''}</span>}
       <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-        <button onClick={() => setOpen(o => !o)} style={{ ...miniBtn, borderColor: bad ? 'rgba(242,119,122,0.4)' : undefined, color: bad ? RED : '#d8cfc7' }}>{open ? 'hide' : bad ? 'show error' : 'provenance'}</button>
+        <button onClick={() => setOpen(o => !o)} style={{ ...miniBtn, borderColor: bad ? 'var(--red-bg)' : undefined, color: bad ? RED : 'var(--text-primary)' }}>{open ? 'hide' : bad ? 'show error' : 'provenance'}</button>
         <button onClick={onRefresh} disabled={busy} style={{ ...miniBtn, display: 'flex', alignItems: 'center', gap: 6 }}>{busy ? <Spinner size={11} /> : '↻'} refresh</button>
       </span>
     </div>
-    {open && <div style={{ borderTop: `1px solid rgba(255,255,255,0.08)`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    {open && <div style={{ borderTop: `1px solid var(--border-default)`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {errors.map((e, i) => <div key={i} style={{ font: `400 11px ${MONO}`, color: RED, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
         <b>[{e.source}{e.project ? ' · ' + e.project : ''}]</b> {e.message}
       </div>)}

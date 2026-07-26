@@ -1,10 +1,22 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, Card, CardHead, Empty, H1, DataTable, Kpi, miniBtn, useCopy, fdt, fx } from './ui.jsx'
+import { api, toast } from '../lib/api.js'
 
 // §11 — a red main blocks all six of the Lead's engineers at once and was 100% invisible. Flaky = the SAME
 // head SHA produced both a failure and a success. Red main also feeds a severity-0 row into the Attention Queue.
 export default function CI({ snap }) {
   const [copy, copied] = useCopy()
+  const [busy, setBusy] = useState(null)
+  // POST /api/ci/rerun shells `gh run rerun`. It was built, documented in the README, and had ZERO
+  // callers anywhere in the UI — the panel that shows you the red run could not re-run it.
+  const rerun = async (repo, runId, failedOnly) => {
+    if (!runId) return toast('no run id on this row', 'error')
+    setBusy(repo)
+    try {
+      await api.post('/api/ci/rerun', { repo, id: runId, failedOnly })
+      toast(`re-running ${failedOnly ? 'failed jobs of ' : ''}${repo} #${runId}`, 'success')
+    } catch (e) { toast(e.message, 'error') } finally { setBusy(null) }
+  }
   const repos = snap.ci || []
   const red = repos.filter(r => r.red)
   const flaky = repos.flatMap(r => (r.flaky || []).map(f => ({ ...f, repo: r.repo, project: r.project })))
@@ -13,13 +25,15 @@ export default function CI({ snap }) {
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="default branch · last 50 runs" title="CI Health" right={<span style={{ font: `400 11px ${MONO}`, color: DIM }}>30m cache · gh api</span>} />
 
-    {!snap.ghAvailable && <Card style={{ borderColor: 'rgba(242,119,122,0.3)' }}><span style={{ font: `500 12px ${BODY}`, color: RED }}>gh is not authenticated — this page is EMPTY, not green. Run `gh auth login`.</span></Card>}
-    {!!red.length && <Card style={{ borderColor: 'rgba(242,119,122,0.45)', background: 'rgba(242,119,122,0.07)' }}>
+    {!snap.ghAvailable && <Card style={{ borderColor: 'var(--red)' }}><span style={{ font: `500 12px ${BODY}`, color: RED }}>gh is not authenticated — this page is EMPTY, not green. Run `gh auth login`.</span></Card>}
+    {!!red.length && <Card style={{ borderColor: 'var(--red)', background: 'var(--red-bg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ font: `700 16px ${HEAD}`, color: RED }}>⚑ main is RED</span>
-        {red.map(r => <span key={r.repo} style={{ font: `500 12px ${BODY}`, color: '#e7c0c1' }}>
+        {red.map(r => <span key={r.repo} style={{ font: `500 12px ${BODY}`, color: 'var(--red)' }}>
           {r.repo}@{r.branch} — broken by <b>{r.brokeIt || 'unknown'}</b> ({r.lastRun?.name}) ·{' '}
-          <a href={r.lastRun?.url} target="_blank" rel="noopener noreferrer" style={{ color: RED }}>open run ↗</a>
+          <a href={r.lastRun?.url} target="_blank" rel="noopener noreferrer" style={{ color: RED }}>open run ↗</a>{' '}
+          <button style={miniBtn} disabled={busy === r.repo} onClick={() => rerun(r.repo, r.lastRun?.id, true)}
+            title="gh run rerun --failed — re-runs only the failed jobs of this run">↻ re-run failed</button>
         </span>)}
       </div>
     </Card>}
@@ -36,9 +50,9 @@ export default function CI({ snap }) {
         </div>
         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           {(r.runs || []).slice(0, 20).reverse().map(run => <a key={run.id} href={run.url} target="_blank" rel="noopener noreferrer" title={`${run.name} · ${run.conclusion} · ${run.actor} · ${fdt(run.at)}`}
-            style={{ width: 12, height: 20, borderRadius: 3, background: run.conclusion === 'success' ? GREEN : run.conclusion === 'failure' ? RED : '#5c554f', opacity: 0.85, display: 'block' }} />)}
+            style={{ width: 12, height: 20, borderRadius: 3, background: run.conclusion === 'success' ? GREEN : run.conclusion === 'failure' ? RED : 'var(--text-tertiary)', opacity: 0.85, display: 'block' }} />)}
         </div>
-        <div style={{ font: `400 9.5px ${MONO}`, color: DIM, marginTop: 6 }}>oldest → newest · {r.flakyShaCount || 0} SHA(s) both failed and passed</div>
+        <div style={{ font: `400 10px ${MONO}`, color: DIM, marginTop: 6 }}>oldest → newest · {r.flakyShaCount || 0} SHA(s) both failed and passed</div>
       </Card>)}
     </div>
 
@@ -46,7 +60,7 @@ export default function CI({ snap }) {
       rows={flaky} getKey={f => f.repo + f.job} initialSort={{ key: 'flakes', dir: -1 }} raw={flaky}
       columns={[
         { key: 'job', label: 'Job', width: '1.8fr', sort: f => f.job, filter: f => f.job + ' ' + f.workflow, render: f => <span style={{ font: `600 12px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{f.job}</span> },
-        { key: 'wf', label: 'Workflow', width: '1.2fr', sort: f => f.workflow, render: f => <span style={{ font: `400 11px ${MONO}`, color: '#a89f97' }}>{f.workflow}</span> },
+        { key: 'wf', label: 'Workflow', width: '1.2fr', sort: f => f.workflow, render: f => <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{f.workflow}</span> },
         { key: 'repo', label: 'Repo', width: '1fr', sort: f => f.repo, render: f => <span style={{ font: `400 11px ${MONO}`, color: DIM }}>{f.repo.split('/')[1]}</span> },
         { key: 'flakes', label: 'Flakes', width: '70px', align: 1, sort: f => f.flakes, render: f => <span style={{ font: `700 13px ${MONO}`, color: GOLD }}>{f.flakes}</span> },
         { key: 'shas', label: 'SHAs', width: '1.2fr', sort: f => (f.shas || []).length, render: f => <span style={{ font: `400 10px ${MONO}`, color: DIM }}>{(f.shas || []).join(' ')}</span> },

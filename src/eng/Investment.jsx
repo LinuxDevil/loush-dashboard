@@ -28,8 +28,8 @@ export default function Investment({ snap, issues, onOpenTicket }) {
 
   return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <H1 kicker="where the engineering days actually went" title="Investment Mix" right={<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 9, background: 'rgba(13,11,10,0.6)' }}>
-        {[['pts', 'Story points'], ['days', 'Active days']].map(([v, l]) => <button key={v} onClick={() => setUnit(v)} style={{ padding: '6px 12px', border: 'none', borderRadius: 7, cursor: 'pointer', font: `600 12px ${BODY}`, background: unit === v ? 'rgba(255,255,255,0.2)' : 'transparent', color: unit === v ? '#f0e7e0' : '#8a807a' }}>{l}</button>)}
+      <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 6, background: 'var(--bg-base)' }}>
+        {[['pts', 'Story points'], ['days', 'Active days']].map(([v, l]) => <button key={v} onClick={() => setUnit(v)} style={{ padding: '6px 12px', border: 'none', borderRadius: 7, cursor: 'pointer', font: `600 12px ${BODY}`, background: unit === v ? 'var(--bg-surface-active)' : 'transparent', color: unit === v ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{l}</button>)}
       </div>
       <button style={miniBtn} onClick={() => copy(md(), 'md')}>{copied === 'md' ? '✓ copied' : 'Copy as markdown'}</button>
     </div>} />
@@ -47,7 +47,7 @@ export default function Investment({ snap, issues, onOpenTicket }) {
       {!months.length ? <Empty text="Nothing delivered yet in the last 6 months." /> : <>
         <StackedCols rows={months} keys={keys} colors={keys.map(k => COLOR[k])} labels={months.map(m => m.month.slice(2))} valueOf={val} onPick={(m, k) => setPick({ month: m.month, bucket: k })} />
         <div style={{ display: 'flex', gap: 14, marginTop: 10, flexWrap: 'wrap' }}>
-          {keys.map(k => <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px ${BODY}`, color: '#a89f97' }}>
+          {keys.map(k => <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, font: `400 11px ${BODY}`, color: 'var(--text-secondary)' }}>
             <span style={{ width: 9, height: 9, borderRadius: 3, background: COLOR[k] }} />{LABEL[k]}
             <b style={{ color: HI, fontWeight: 600 }}>{cur ? fx(val(cur, k), 0) : '—'}</b></span>)}
         </div>
@@ -59,12 +59,12 @@ export default function Investment({ snap, issues, onOpenTicket }) {
       right={<button style={miniBtn} onClick={() => setPick(null)}>close</button>}
       columns={[
         { key: 'key', label: 'Ticket', width: '92px', sort: r => r.key, filter: r => r.key + ' ' + r.summary, render: r => <TicketLink i={r} style={{ font: `500 12px ${MONO}` }} /> },
-        { key: 'type', label: 'Type', width: '92px', sort: r => r.type, render: r => <span style={{ font: `500 11px ${BODY}`, color: r.isBug ? RED : '#a89f97' }}>{r.type}</span> },
-        { key: 'summary', label: 'Summary', width: '2fr', sort: r => r.summary, render: r => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{r.summary}</span> },
+        { key: 'type', label: 'Type', width: '92px', sort: r => r.type, render: r => <span style={{ font: `500 11px ${BODY}`, color: r.isBug ? RED : 'var(--text-secondary)' }}>{r.type}</span> },
+        { key: 'summary', label: 'Summary', width: '2fr', sort: r => r.summary, render: r => <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{r.summary}</span> },
         { key: 'pts', label: 'Pts', width: '56px', align: 1, sort: r => r.pts, render: r => <span style={{ font: `600 12px ${MONO}`, color: BB }}>{r.pts}</span> },
         { key: 'days', label: 'Active', width: '68px', align: 1, sort: r => r.activeDays, render: r => <span style={{ font: `500 12px ${MONO}`, color: HI }}>{fx(r.activeDays)}d</span> },
       ]} />}
 
-    <div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>Bucket rules (projects.json → effortBuckets): {Object.entries(I.rules || {}).map(([b, r]) => `${b}: ${[...(r.types || []), ...(r.labels || [])].join('/')}`).join(' · ')}</div>
+    <div style={{ font: `400 11px ${MONO}`, color: DIM }}>Bucket rules (projects.json → effortBuckets): {Object.entries(I.rules || {}).map(([b, r]) => `${b}: ${[...(r.types || []), ...(r.labels || [])].join('/')}`).join(' · ')}</div>
   </section>
 }

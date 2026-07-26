@@ -3,10 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>Claude Code Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <!-- The design system is system-font only: no webfont round trip, no FOUT, no layout shift. -->
+    <script>
+      // Runs before first paint so the shell never flashes the wrong theme.
+      (function () {
+        try {
+          // Dark is the product default, not the OS default — this is a terminal-adjacent tool and
+          // the palette was designed dark-first. The OS preference only decides for a first-time
+          // visitor who has explicitly asked their OS for light.
+          var t = localStorage.getItem('theme')
+          if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+          document.documentElement.setAttribute('data-theme', t)
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

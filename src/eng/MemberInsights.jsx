@@ -20,17 +20,17 @@ function Radar({ axes, size = 210, lowN }) {
     <svg width={size} height={size} style={{ display: 'block' }}>
       {[0.25, 0.5, 0.75, 1].map(r => (
         <polygon key={r} points={poly(axes.map(() => r))} fill="none"
-          stroke={r === 0.5 ? 'rgba(245,196,81,0.35)' : 'rgba(255,255,255,0.12)'} strokeWidth={r === 0.5 ? 1 : 0.75} strokeDasharray={r === 0.5 ? '3 3' : ''} />
+          strokeWidth={r === 0.5 ? 1 : 0.75} strokeDasharray={r === 0.5 ? '3 3' : ''}  style={{ stroke: (r === 0.5 ? 'var(--amber-bg)' : 'var(--bg-surface-active)') }} />
       ))}
-      {axes.map((a, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={c} y1={c} x2={x} y2={y} stroke="rgba(255,255,255,0.1)" /> })}
-      <polygon points={poly(shape)} fill={lowN ? 'rgba(122,113,106,0.18)' : 'rgba(139,124,246,0.22)'} stroke={lowN ? DIM : PURPLE} strokeWidth={1.5} />
+      {axes.map((a, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={c} y1={c} x2={x} y2={y}  style={{ stroke: 'var(--text-secondary)' }} /> })}
+      <polygon points={poly(shape)} strokeWidth={1.5}  style={{ fill: (lowN ? 'var(--bg-surface-active)' : 'var(--violet-bg)'), stroke: (lowN ? DIM : PURPLE) }} />
       {axes.map((a, i) => {
         const [x, y] = pt(i, a.pct == null ? 0.5 : a.pct)
         const [lx, ly] = pt(i, 1.16)
         return <g key={a.key}>
-          <circle cx={x} cy={y} r={a.pct == null ? 2 : 3} fill={a.pct == null ? DIM : PURPLE} />
-          <text x={lx} y={ly} fill={a.raw == null ? DIM : '#a89f97'} fontSize={8.5} fontFamily={MONO}
-            textAnchor={lx < c - 8 ? 'end' : lx > c + 8 ? 'start' : 'middle'} dominantBaseline="middle">
+          <circle cx={x} cy={y} r={a.pct == null ? 2 : 3}  style={{ fill: (a.pct == null ? DIM : PURPLE) }} />
+          <text x={lx} y={ly} fontSize={8.5} fontFamily={MONO}
+            textAnchor={lx < c - 8 ? 'end' : lx > c + 8 ? 'start' : 'middle'} dominantBaseline="middle" style={{ fill: (a.raw == null ? DIM : 'var(--text-secondary)') }}>
             {a.label}{a.raw != null ? '' : ' ·'}
           </text>
         </g>
@@ -75,8 +75,8 @@ function recFor(i) {
 
 const Tile = ({ label, v, c = HI, sub }) => (
   <div style={{ minWidth: 0 }}>
-    <div style={{ font: `700 19px ${HEAD}`, color: c }}>{v}</div>
-    <div style={{ font: `600 8px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#8a807a' }}>{label}</div>
+    <div style={{ font: `700 16px ${HEAD}`, color: c }}>{v}</div>
+    <div style={{ font: `600 8px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</div>
     {sub && <div style={{ font: `400 9px ${MONO}`, color: DIM }}>{sub}</div>}
   </div>
 )
@@ -85,14 +85,14 @@ const Tile = ({ label, v, c = HI, sub }) => (
 export function MemberCard({ name, m, radar, active, onClick }) {
   const top = m.focus[0] || m.inFlight[0]
   return (
-    <button onClick={onClick} style={{ textAlign: 'left', cursor: 'pointer', padding: 14, border: `1px solid ${active ? 'rgba(139,124,246,0.5)' : 'rgba(255,255,255,0.09)'}`, borderRadius: 14, background: active ? 'rgba(139,124,246,0.08)' : 'linear-gradient(160deg,rgba(28,24,21,0.9),rgba(13,11,10,0.7))' }}>
+    <button onClick={onClick} style={{ textAlign: 'left', cursor: 'pointer', padding: 14, border: `1px solid ${active ? 'var(--violet-bg)' : 'var(--bg-surface-active)'}`, borderRadius: 8, background: active ? 'var(--violet-bg)' : 'var(--bg-surface)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 11 }}>
-        <div style={{ width: 30, height: 30, borderRadius: 9, background: 'linear-gradient(135deg,#e8a06a,#9a8f86)', color: '#2a1712', display: 'grid', placeItems: 'center', font: `700 11px ${HEAD}`, flexShrink: 0 }}>{initials(name)}</div>
+        <div style={{ width: 30, height: 30, borderRadius: 6, background: 'linear-gradient(135deg,var(--accent-light),var(--text-secondary))', color: 'var(--bg-surface-active)', display: 'grid', placeItems: 'center', font: `700 11px ${HEAD}`, flexShrink: 0 }}>{initials(name)}</div>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: `600 13px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-          <div style={{ font: `400 9.5px ${MONO}`, color: DIM }}>{m.shipped.length} shipped · {m.pts} pts</div>
+          <div style={{ font: `400 10px ${MONO}`, color: DIM }}>{m.shipped.length} shipped · {m.pts} pts</div>
         </div>
-        {m.atRisk.length > 0 && <span style={{ marginLeft: 'auto', font: `700 8px ${MONO}`, padding: '2px 6px', borderRadius: 5, background: 'rgba(242,119,122,0.16)', color: RED }}>{m.atRisk.length} at risk</span>}
+        {m.atRisk.length > 0 && <span style={{ marginLeft: 'auto', font: `700 8px ${MONO}`, padding: '2px 6px', borderRadius: 5, background: 'var(--red-bg)', color: RED }}>{m.atRisk.length} at risk</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6, marginBottom: 10 }}>
         <Tile label="Open" v={m.open.length} c={BB} />

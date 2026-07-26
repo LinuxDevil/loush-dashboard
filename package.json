@@ -3,9 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"node --watch server.mjs\" \"vite --open\"",
-    "atoms:index": "node atoms/ingest.mjs",
-    "catalog:refresh": "node scripts/refresh-design-catalog.mjs",
+    "dev": "concurrently -k \"node --watch server/index.mjs\" \"vite --open\"",
     "start": "npm run dev",
     "test": "node --test"
   },
