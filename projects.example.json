@@ -19,8 +19,8 @@
   "//defaultDevEmails": "Fallback dev roster for any project that does not set its own `devEmails`. Leave empty rather than guessing — a wrong roster attributes your team's work to other people.",
   "defaultDevEmails": [],
 
-  "//tajawalTools": "Org-specific tool bundle: the Constitution reader (needs a .wakeel/constitution/ knowledge base in the repo) and Figma Capture (ships against a specific design-system catalog). Off by default because both are useless outside the org that has that layout. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
-  "tajawalTools": false,
+  "//Almosafer_Tools": "Org-specific tool bundle: the Constitution reader (needs a .wakeel/constitution/ knowledge base in the repo) and Figma Capture (ships against a specific design-system catalog). Off by default because both are useless outside the org that has that layout. Hidden from everyone unless this is set. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
+  "Almosafer_Tools": false,
 
   "//projects": "One entry per JIRA board + GitHub repo. `key` is the JIRA project key. `writes` must be explicitly true before the dashboard will transition a ticket or comment on a PR; the default is copy-to-clipboard.",
   "projects": [

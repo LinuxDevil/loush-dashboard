@@ -1,4 +1,4 @@
-// Tests for the org-specific tool-bundle flag (projects.json -> tajawalTools).
+// Tests for the org-specific tool-bundle flag (projects.json -> Almosafer_Tools).
 //
 // The Constitution reader and Figma Capture were deleted wholesale because they are useless outside
 // the org whose repo layout they assume. That was half right: for that org they are load-bearing.
@@ -12,8 +12,8 @@ import { normalizeToolFlag, toolFlagAllows, parseEngConfig } from '../eng-config
 test('an absent flag is OFF — org-specific tools must never be the default', () => {
   assert.deepEqual(normalizeToolFlag(undefined), { enabled: false, emails: [] })
   assert.deepEqual(normalizeToolFlag(null), { enabled: false, emails: [] })
-  assert.equal(parseEngConfig({}).tajawalTools.enabled, false)
-  assert.equal(parseEngConfig(null).tajawalTools.enabled, false)
+  assert.equal(parseEngConfig({}).almosaferTools.enabled, false)
+  assert.equal(parseEngConfig(null).almosaferTools.enabled, false)
 })
 
 test('the shorthand `true` enables it for anyone running the dashboard', () => {
@@ -59,8 +59,17 @@ test('garbage in the config does not throw and does not enable anything', () => 
 })
 
 test('parseEngConfig carries the flag through both accepted shapes', () => {
-  assert.equal(parseEngConfig({ tajawalTools: true }).tajawalTools.enabled, true)
-  const withList = parseEngConfig({ tajawalTools: { enabled: true, emails: ['A@b.com'] } }).tajawalTools
+  assert.equal(parseEngConfig({ Almosafer_Tools: true }).almosaferTools.enabled, true)
+  const withList = parseEngConfig({ Almosafer_Tools: { enabled: true, emails: ['A@b.com'] } }).almosaferTools
   assert.equal(withList.enabled, true)
   assert.deepEqual(withList.emails, ['a@b.com'])
+})
+
+test('Almosafer_Tools is the canonical key, with camelCase spellings tolerated', () => {
+  // A hand-edited config file that silently ignores a key is indistinguishable from a broken feature.
+  assert.equal(parseEngConfig({ Almosafer_Tools: true }).almosaferTools.enabled, true)
+  assert.equal(parseEngConfig({ almosaferTools: true }).almosaferTools.enabled, true)
+  assert.equal(parseEngConfig({ almosafer_tools: true }).almosaferTools.enabled, true)
+  // and the canonical key wins if somehow both are present
+  assert.equal(parseEngConfig({ Almosafer_Tools: false, almosaferTools: true }).almosaferTools.enabled, false)
 })

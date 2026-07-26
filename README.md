@@ -103,7 +103,7 @@ employee email addresses — was compiled into the source and committed to git.
 
 **What it does.** Six panels: **Credentials** (JIRA host, email, API token, with a real *Test
 connection*), **Projects** (JIRA key + repo + dev/QA/product rosters + an explicit per-project
-**writes** opt-in), the **work week**, the **story-point → days** table, **Tajawal tools** (the
+**writes** opt-in), the **work week**, the **story-point → days** table, **Almosafer tools** (the
 org-specific bundle described [below](#org-specific-tools--behind-a-flag)), and **notifications**.
 
 ### How credentials are handled
@@ -307,7 +307,7 @@ manifest agree". Variant drift is now checked for real; that loop's body used to
 
 ## Org-specific tools — behind a flag
 
-![Tajawal tools](docs/screenshots/tajawal-tools.png)
+![Almosafer tools](docs/screenshots/almosafer-tools.png)
 
 **The problem, and the mistake.** Two features assume one organisation's repo layout: the
 **Constitution** reader needs a `.wakeel/constitution/` knowledge base, and **Figma Capture** ships
@@ -315,18 +315,19 @@ against a specific design-system catalog. Shipping them to everyone is what made
 someone else's tool — every user got a sidebar entry that rendered a 404 string. But *deleting* them
 was also wrong: for the org that has that layout they are load-bearing.
 
-**What it does.** They live in a **Tajawal tools** tab that only exists when `tajawalTools` is set in
-`projects.json`. It is **off by default**, because a feature flag that defaults on is how someone
-else's tools ended up in everyone's sidebar in the first place.
+**What it does.** They live in an **Almosafer tools** tab that exists only when `Almosafer_Tools` is
+set in `projects.json`. It is **hidden from everyone by default** — there is no nav entry, no route,
+and no hint that the feature exists. Only the config turns it on, because a flag that defaults on is
+how someone else's tools ended up in everyone's sidebar in the first place.
 
 ```jsonc
-"tajawalTools": true                                          // enabled for whoever runs it
-"tajawalTools": { "enabled": true }                           // same, long form
-"tajawalTools": { "enabled": true, "emails": ["you@corp"] }   // also require an identity match
+"Almosafer_Tools": true                                          // enabled for whoever runs it
+"Almosafer_Tools": { "enabled": true }                           // same, long form
+"Almosafer_Tools": { "enabled": true, "emails": ["you@corp"] }   // also require an identity match
 ```
 
 With `emails` set, the flag only opens for those identities — the configured JIRA email, or
-`JIRA_EMAIL` from the environment. There is a toggle for all of this in **Setup → Tajawal tools**.
+`JIRA_EMAIL` from the environment. There is a toggle for all of this in **Setup → Almosafer tools**.
 
 **The gate is at mount time on the server, not just in the nav.** With the flag off,
 `/api/constitution/*`, `/api/atoms/*` and `/api/figma-capture/*` are never registered, so a stale
@@ -428,7 +429,7 @@ panels accumulated. These were deleted:
   contradicted it. The presentational helpers survive as `src/anim.jsx` — motion is not a metric,
   only the scoring was the problem.
 - **Figma Capture** and **Constitution** were deleted here too — that part was **reverted**. Both are
-  genuinely needed by the org whose layout they assume, so they are back behind the `tajawalTools`
+  genuinely needed by the org whose layout they assume, so they are back behind the `Almosafer_Tools`
   flag described in [Org-specific tools](#org-specific-tools--behind-a-flag) rather than shipped to
   everyone. The original criticism still stands and is why the flag exists: the design-system catalog
   is a regex scrape of one company's Storybook, and the repo scanner requires a path segment literally
@@ -454,8 +455,8 @@ verified `200`.
 | Endpoint | What |
 |---|---|
 | `GET /api/fe/workingset?root=&days=` · `GET /api/fe/dossier?root=&file=` · `POST /api/fe/mute` | Working Set: rework rank, import graph, coverage; per-file prompt→diff→error timeline and context bundle |
-| `GET /api/features` | Which optional bundles are mounted (`tajawalTools`). The client reads this before deciding which nav entries exist |
-| `GET /api/constitution/*` · `GET /api/atoms/*` · `/api/figma-capture/*` | Only mounted when `tajawalTools` allows — otherwise these routes do not exist |
+| `GET /api/features` | Which optional bundles are mounted (`almosaferTools`). The client reads this before deciding which nav entries exist |
+| `GET /api/constitution/*` · `GET /api/atoms/*` · `/api/figma-capture/*` | Only mounted when `Almosafer_Tools` allows — otherwise these routes do not exist |
 | `GET /api/setup` · `PUT /api/setup/{eng,project,credentials,notify}` · `DELETE /api/setup/project` · `POST /api/setup/test/jira` · `GET /api/setup/test/gh` | Visual config. **`GET /api/setup` never returns a secret value** — only `set: true\|false` |
 | `GET /api/inbox[?plane=work\|harness]` · `POST /api/inbox/done` | Every attention item; `{key,done}` clears, `{key,snoozeHours:24}` defers |
 | `GET /api/eng/snapshot?project=all` | The plane-A delivery snapshot (JIRA changelog + GitHub PRs), 2h cache |

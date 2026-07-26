@@ -194,7 +194,7 @@ export default function mountSetup(app, deps = {}) {
           workDescription: describeWork(cfg.work),
           storyPointDays: cfg.storyPointDays,
           defaultDevEmails: cfg.defaultDevEmails,
-          tajawalTools: cfg.tajawalTools,
+          almosaferTools: cfg.almosaferTools,
           projects: cfg.projects,
           file: { path: PROJECTS_FILE, exists: fs.existsSync(PROJECTS_FILE), gitignored: isIgnored(gi, 'projects.json') },
         },
@@ -213,7 +213,7 @@ export default function mountSetup(app, deps = {}) {
   // --- org config (projects.json) -------------------------------------------------
   app.put('/api/setup/eng', (req, res) => {
     try {
-      const { jiraHost, work, storyPointDays, defaultDevEmails, tajawalTools } = req.body || {}
+      const { jiraHost, work, storyPointDays, defaultDevEmails, almosaferTools } = req.body || {}
       const errors = []
       if (jiraHost && !HOST_RE.test(jiraHost)) errors.push('JIRA host must be a bare hostname, e.g. your-org.atlassian.net')
       if (work) errors.push(...validateWork(work))
@@ -229,11 +229,14 @@ export default function mountSetup(app, deps = {}) {
       if (defaultDevEmails) base.defaultDevEmails = defaultDevEmails.filter(Boolean).map(s => s.toLowerCase())
       // Toggling this changes which server routes get MOUNTED, which only happens at boot — so the
       // response says so rather than letting the UI imply the tab appears immediately.
-      if (tajawalTools !== undefined) base.tajawalTools = normalizeToolFlag(tajawalTools)
+      if (almosaferTools !== undefined) {
+        base.Almosafer_Tools = normalizeToolFlag(almosaferTools)
+        delete base.almosaferTools; delete base.almosafer_tools   // never leave two spellings on disk
+      }
       writeConfigFile(PROJECTS_FILE, base)
       invalidateEngConfig()
       const cfg = loadEngConfig(PROJECTS_FILE)
-      res.json({ ok: true, workDescription: describeWork(cfg.work), restartRequired: tajawalTools !== undefined })
+      res.json({ ok: true, workDescription: describeWork(cfg.work), restartRequired: almosaferTools !== undefined })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 

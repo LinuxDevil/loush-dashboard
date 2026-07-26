@@ -53,7 +53,7 @@ mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...
 // are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
 
-// ---------- org-specific tool bundle: Tajawal tools ----------
+// ---------- org-specific tool bundle: Almosafer tools ----------
 // The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture ships
 // against a specific design-system catalog, so these are useless — and were previously misleading —
 // outside the org that has that layout. They are now behind a flag in projects.json rather than
@@ -63,7 +63,7 @@ mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFi
 // .eng.local.json live in the app directory itself, next to this file — same as server-eng.mjs.
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PROJECTS_CFG = path.join(APP_DIR, 'projects.json')
-function tajawalToolsEnabled() {
+function almosaferToolsEnabled() {
   // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
   // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
   // into a confident `false`, silently disabling the feature with the config plainly set to true.
@@ -73,21 +73,21 @@ function tajawalToolsEnabled() {
   try {
     const cfg = loadEngCfg(PROJECTS_CFG)
     const email = process.env.JIRA_EMAIL || readLocal(path.join(APP_DIR, '.eng.local.json')).jiraEmail || null
-    return toolFlagAllows(cfg.tajawalTools, email)
+    return toolFlagAllows(cfg.almosaferTools, email)
   } catch (e) {
-    console.error('[claude-dashboard] could not evaluate tajawalTools flag — leaving it OFF:', e.message)
+    console.error('[claude-dashboard] could not evaluate almosaferTools flag — leaving it OFF:', e.message)
     return false
   }
 }
-const TAJAWAL_TOOLS = tajawalToolsEnabled()
-if (TAJAWAL_TOOLS) {
+const ALMOSAFER_TOOLS = almosaferToolsEnabled()
+if (ALMOSAFER_TOOLS) {
   mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
   mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
   mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
-  console.log('[claude-dashboard] Tajawal tools enabled (projects.json -> tajawalTools)')
+  console.log('[claude-dashboard] Almosafer tools enabled (projects.json -> Almosafer_Tools)')
 }
 // Feature flags the client needs before it can decide which nav entries exist.
-app.get('/api/features', (req, res) => res.json({ tajawalTools: TAJAWAL_TOOLS }))
+app.get('/api/features', (req, res) => res.json({ almosaferTools: ALMOSAFER_TOOLS }))
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.

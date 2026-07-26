@@ -102,11 +102,11 @@ const BASE_SECTIONS = [
 
 // Org-specific bundle. These were deleted outright once — wrongly, because for the org that HAS a
 // `.wakeel/constitution/` knowledge base and that design-system catalog they are load-bearing. They
-// are now behind `tajawalTools` in projects.json, gated at MOUNT TIME on the server too, so with the
+// are now behind `almosaferTools` in projects.json, gated at MOUNT TIME on the server too, so with the
 // flag off the routes do not exist rather than 404-ing from a nav entry that should not be there.
-const TAJAWAL_SECTION = {
-  id: 'tajawal', label: 'Tajawal tools', icon: '◉', kicker: 'Org tools',
-  title: 'Tajawal tools — constitution & design capture',
+const ALMOSAFER_SECTION = {
+  id: 'almosafer', label: 'Almosafer tools', icon: '◉', kicker: 'Org tools',
+  title: 'Almosafer tools — constitution & design capture',
   el: (
     <Hub items={[
       { label: 'Constitution', el: <ConstitutionSection /> },
@@ -114,7 +114,7 @@ const TAJAWAL_SECTION = {
     ]} />
   ),
 }
-const sectionsFor = features => (features?.tajawalTools ? [...BASE_SECTIONS, TAJAWAL_SECTION] : BASE_SECTIONS)
+const sectionsFor = features => (features?.almosaferTools ? [...BASE_SECTIONS, ALMOSAFER_SECTION] : BASE_SECTIONS)
 
 
 // There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;

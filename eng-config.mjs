@@ -124,10 +124,10 @@ export function describeWork(work) {
 // catalog. Shipping those to everyone is what made this app feel like someone else's tool — but
 // deleting them was wrong too, because for the org that HAS that layout they are load-bearing.
 //
-// So they live behind a named flag. Accepted forms in projects.json:
-//   "tajawalTools": true
-//   "tajawalTools": { "enabled": true }
-//   "tajawalTools": { "enabled": true, "emails": ["you@example.com"] }   // also require an identity match
+// So they live behind a named flag. The config key is `Almosafer_Tools`; accepted forms:
+//   "Almosafer_Tools": true
+//   "Almosafer_Tools": { "enabled": true }
+//   "Almosafer_Tools": { "enabled": true, "emails": ["you@example.com"] }   // also require an identity match
 //
 // With `emails` set, the flag only opens for those identities — the configured JIRA email, or
 // JIRA_EMAIL from the environment. Empty/absent `emails` means "enabled for whoever is running it".
@@ -165,7 +165,9 @@ export function parseEngConfig(raw) {
     defaultDevEmails: Array.isArray(j.defaultDevEmails) ? j.defaultDevEmails.map(e => String(e).toLowerCase()) : [],
     projects: Array.isArray(j.projects) ? j.projects : [],
     effortBuckets: j.effortBuckets || null,
-    tajawalTools: normalizeToolFlag(j.tajawalTools),
+    // `Almosafer_Tools` is the canonical key. The camelCase spellings are accepted too, because a
+    // config file is hand-edited and a silently-ignored key is indistinguishable from a broken feature.
+    almosaferTools: normalizeToolFlag(j.Almosafer_Tools ?? j.almosaferTools ?? j.almosafer_tools),
     _raw: j,
   }
 }
