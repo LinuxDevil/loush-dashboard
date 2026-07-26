@@ -145,7 +145,7 @@ function SidebarFoot() {
   return (
     <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div className="sidebar-foot" style={{ marginTop: 0 }} title={[...(h?.conflicts || []), ...alerts.map(a => a.text)].join('\n')}>
-        <div className="live" style={ok && !alerts.length ? {} : { color: ok ? '#e5a03a' : '#e5484d' }}>
+        <div className="live" style={ok && !alerts.length ? {} : { color: ok ? 'var(--amber)' : 'var(--red)' }}>
           {h && !h.ok ? `${h.conflicts.length} conflict${h.conflicts.length === 1 ? '' : 's'}` : alerts.length ? 'budget alert' : 'harness valid'}
         </div>
         {issue ? issue.slice(0, 46) : 'settings schema · backups synced'}
@@ -154,7 +154,21 @@ function SidebarFoot() {
   )
 }
 
+// Theme lives on <html data-theme>, which is what the token block in styles.css keys off. The initial
+// value is set by an inline script in index.html so there is no flash of the wrong palette; this hook
+// only owns the toggle and the persistence.
+function useTheme() {
+  const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark')
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('theme', theme) } catch { /* private mode — session-only theme is fine */ }
+  }, [theme])
+  return [theme, () => setTheme(t => (t === 'dark' ? 'light' : 'dark'))]
+}
+
 export default function App() {
+  const [theme, toggleTheme] = useTheme()
+  const [navOpen, setNavOpen] = useState(false)
   // ?dash=eng no longer opens a separate shell — Eng IS the Delivery section now. The Eng panels write
   // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
   // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
@@ -220,10 +234,16 @@ export default function App() {
   const cur = SECTIONS.find(s => s.id === section)
   return (
     <div className="app">
-      <nav className="sidebar">
-        <div className="brand"><div className="brand-mark">C</div><div className="brand-name">Claude Code</div></div>
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
+      <nav className={navOpen ? 'sidebar open' : 'sidebar'}>
+        <div className="brand">
+          <div className="brand-mark">C</div>
+          <div className="brand-name">Claude Code</div>
+          <span className="brand-beta">BETA</span>
+        </div>
         {SECTIONS.map(s => (
-          <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => nav(s.id)}>
+          <button key={s.id} className={section === s.id ? 'active' : ''} title={s.label}
+            onClick={() => { nav(s.id); setNavOpen(false) }}>
             <span className="nav-icon">{s.icon}</span> {s.label}
             {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
           </button>
@@ -231,15 +251,22 @@ export default function App() {
         <SidebarFoot />
       </nav>
       <main className="content">
+        {/* 48px bar: breadcrumb left, status + controls right. The section title is the breadcrumb
+            leaf — a second heading row under it was 60px of chrome saying the same thing twice. */}
         <header className="topbar">
-          <div>
-            <div className="kicker">{cur.kicker}</div>
-            <h1>{cur.title}</h1>
+          <button className="icon-btn nav-toggle" aria-label="menu" onClick={() => setNavOpen(o => !o)}>☰</button>
+          <div className="crumb">
+            <span className="kicker">{cur.kicker}</span>
+            <i>›</i>
+            <b>{cur.title}</b>
           </div>
           <div className="topbar-right">
             <button className="top-chip" onClick={refresh} title="aggregates are cached server-side (no tokens spent) — click to recompute this section now"
-              style={{ cursor: 'pointer', color: staleMin >= 5 ? '#e5a03a' : undefined }}>
+              style={{ color: staleMin >= 5 ? 'var(--amber)' : undefined }}>
               ↻ {stale === null ? 'refresh' : staleMin < 1 ? 'cached · fresh' : `cached · ${staleMin}m old`}
+            </button>
+            <button className="icon-btn" onClick={toggleTheme} title={`switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} aria-label="toggle theme">
+              {theme === 'dark' ? '☀' : '☾'}
             </button>
             <div className="avatar">AM</div>
           </div>
@@ -254,12 +281,12 @@ export default function App() {
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 9999, maxWidth: 360 }}>
           {toasts.map(t => {
-            const c = t.kind === 'error' ? '#e5484d' : t.kind === 'success' ? '#3fb96a' : '#7cc4f7'
+            const c = t.kind === 'error' ? 'var(--red)' : t.kind === 'success' ? 'var(--green)' : 'var(--blue)'
             return (
               <div key={t.id} onClick={() => setToasts(x => x.filter(y => y.id !== t.id))}
-                style={{ cursor: 'pointer', background: 'rgba(24,20,18,0.96)', border: `1px solid ${c}66`, borderRadius: 10, padding: '10px 14px', font: "400 11px 'IBM Plex Mono', monospace", color: '#e5dbd2', boxShadow: '0 6px 24px rgba(0,0,0,0.4)' }}>
+                style={{ cursor: 'pointer', background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderLeft: `2px solid ${c}`, borderRadius: 6, padding: '10px 12px', font: '400 11px var(--mono)', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)' }}>
                 <div style={{ color: c, fontWeight: 600 }}>{t.kind === 'error' ? (t.url ? 'request failed' : 'error') : t.kind === 'success' ? 'done' : 'note'} · click to dismiss</div>
-                <div style={{ color: '#b0a69e', marginTop: 3 }}>{t.message}{t.url ? <span style={{ color: '#7a716a' }}> ({String(t.url).split('?')[0]})</span> : ''}</div>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 3 }}>{t.message}{t.url ? <span style={{ color: 'var(--text-tertiary)' }}> ({String(t.url).split('?')[0]})</span> : ''}</div>
               </div>
             )
           })}

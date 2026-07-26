@@ -615,7 +615,24 @@ atoms/                    stays at the repo root — .gitignore anchors two file
 points, org tool flags) and `.eng.local.json` (credentials, `0600`). `projects.example.json` is the
 committed template. Nothing org-specific is tracked.
 
-**Design system.** Dark-first and warm: base `#0d0b0a` with clay/violet radial glows, glassy panels
-`rgba(28,24,21,0.55)` + blur, clay-orange accent `#d97757`. Space Grotesk (headings/stats), IBM Plex
-Sans (body), IBM Plex Mono (labels/identifiers/data). Fonts load from Google Fonts and fall back to
-system fonts offline. Lists over ~10 items paginate.
+**Design system.** Compact, information-dense, developer-native — the whole thing is tuned for someone
+who stares at it for hours, so density beats decoration. Flat surfaces with 1px borders: no gradients,
+no glass, no glow. Dark is the default (`#0d1117` base, `#161b22` surfaces, `#30363d` borders); a light
+theme ships with it and the toggle sits in the header bar, persisted in `localStorage` and applied
+before first paint by an inline script in `index.html` so there is no flash of the wrong palette.
+
+Every colour in the app resolves through the token block at the top of `src/styles.css` —
+`--bg-*`, `--border-*`, `--text-*` and the status accents (`--green`/`--red`/`--amber`/`--blue`/
+`--violet`, each with a `-bg` pill tint). The light theme is a variable swap on `:root[data-theme=
+'light']` and nothing else, which is only true because the inline styles in the JSX reference the same
+tokens by name. **A raw hex anywhere in `src/` is a bug: it breaks the light theme.**
+
+Type is the system sans + system mono stack (`--head`/`--body`/`--mono`) — no webfont round trip, no
+FOUT. Scale: 20 display · 18 page title · 16 panel title · 14 section header · 13 body · 12 · 11 · 10.
+Spacing runs 2/4/8/12/16; radii are 4/6/8/12/full. Status is never colour alone — an icon or a word
+always carries it too. Sidebar is 200px, collapses to a 56px icon rail under 1024px and goes
+off-canvas behind a hamburger under 768px. Lists over ~10 items paginate.
+
+Note that SVG `fill`/`stroke` are set through inline `style`, not presentation attributes: `var()` in a
+presentation attribute is not something to bet a chart's legibility on. Same reason the d3 charts use
+`.style('fill', …)` rather than `.attr('fill', …)`.

@@ -56,7 +56,7 @@ export function buildBlocks(events) {
 function ReviewButtons({ text, chatId, cwd }) {
   const [done, setDone] = useState(null)
   const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
-  if (done) return <div className="dim" style={{ font: "400 10px 'IBM Plex Mono', monospace", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
+  if (done) return <div className="dim" style={{ font: "400 10px var(--mono)", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
   return (
     <div style={{ display: 'flex', gap: 6, padding: '1px 8px 4px' }}>
       <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & accepted" onClick={() => record('accept')}>✓ accept</button>
@@ -380,7 +380,7 @@ export default function ChatSection() {
                 <b>{s.title || s.sessionId}</b>
                 <span className="dim">
                   {fmtDate(s.mtime)}
-                  <button className="mini" title={pinned ? 'unpin' : 'pin (bookmarks the session + current config version)'} style={{ marginLeft: 8, marginTop: 0, color: pinned ? '#e5a03a' : undefined }}
+                  <button className="mini" title={pinned ? 'unpin' : 'pin (bookmarks the session + current config version)'} style={{ marginLeft: 8, marginTop: 0, color: pinned ? 'var(--amber)' : undefined }}
                     onClick={e => { e.stopPropagation(); togglePin({ ...s, cwd }, !pinned) }}>{pinned ? '★' : '☆'}</button>
                 </span>
               </div>
@@ -396,20 +396,20 @@ export default function ChatSection() {
         <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
-          {liveModel && <span className="dim" style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
+          {liveModel && <span className="dim" style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
-          <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? '#d97757' : undefined }} disabled={!plan}
+          <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? 'var(--accent)' : undefined }} disabled={!plan}
             title={plan ? undefined : 'no plan or tool activity yet'}
             onClick={() => setView(v => v === 'plan' ? 'chat' : 'plan')}>
             {view === 'plan' ? 'chat' : `${realPlan ? 'plan' : 'activity'} graph${plan ? ` (${plan.length})` : ''}`}
           </button>
-          <button className="mini" style={{ marginTop: 0, color: view === 'context' ? '#d97757' : undefined }} disabled={!realSessionId}
+          <button className="mini" style={{ marginTop: 0, color: view === 'context' ? 'var(--accent)' : undefined }} disabled={!realSessionId}
             title={realSessionId ? undefined : 'session not started yet'}
             onClick={() => setView(v => v === 'context' ? 'chat' : 'context')}>
             {view === 'context' ? 'chat' : 'context window'}
           </button>
-          <button className="mini" style={{ marginTop: 0, color: view === 'activity' ? '#d97757' : undefined }} disabled={!blocks.length}
+          <button className="mini" style={{ marginTop: 0, color: view === 'activity' ? 'var(--accent)' : undefined }} disabled={!blocks.length}
             title={blocks.length ? undefined : 'nothing has happened yet'}
             onClick={() => setView(v => v === 'activity' ? 'chat' : 'activity')}>
             {view === 'activity' ? 'chat' : 'activity tree'}

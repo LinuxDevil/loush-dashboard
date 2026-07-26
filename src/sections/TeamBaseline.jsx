@@ -6,9 +6,9 @@ import Skeleton from '../ui/Skeleton.jsx'
 // Promotes the existing baseline/drift machinery from "my projects on my disk" to "my team's repos".
 // The baseline is a team-harness.json COMMITTED IN A SHARED REPO and read from the git working copy —
 // so it is reviewable, diffable and revertible like any other code. Plane A: repos, not people.
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', DIM = '#8a807a'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)'
 const STATUS = {
   'on-baseline': [GREEN, 'on baseline'],
   'drifted': [GOLD, 'drifted'],
@@ -62,7 +62,7 @@ export default function TeamBaseline() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         <input value={file} onChange={e => setFile(e.target.value)} placeholder="/path/to/shared-repo/team-harness.json" style={{ flex: 1, minWidth: 260 }} />
         <button className="mini" style={{ marginTop: 0 }} disabled={busy || !file} onClick={pin}>pin baseline</button>
-        <span style={{ font: `400 10.5px ${MONO}`, color: d.hasBaseline ? GREEN : GOLD }}>
+        <span style={{ font: `400 11px ${MONO}`, color: d.hasBaseline ? GREEN : GOLD }}>
           {d.hasBaseline ? `✓ baseline read from ${d.file}` : 'no baseline pinned — every repo shows "no baseline"'}
         </span>
       </div>
@@ -75,13 +75,13 @@ export default function TeamBaseline() {
             return (
               <React.Fragment key={r.key}>
                 <tr>
-                  <td className="mono" style={{ color: '#eee3da' }}>{r.name}</td>
-                  <td className="mono" style={{ color: '#8b7cf6' }}>{r.repo}</td>
-                  <td><span style={{ font: `700 9.5px ${MONO}`, padding: '2px 7px', borderRadius: 5, color: c, background: c + '1c' }}>{label}</span></td>
+                  <td className="mono" style={{ color: 'var(--text-primary)' }}>{r.name}</td>
+                  <td className="mono" style={{ color: 'var(--violet)' }}>{r.repo}</td>
+                  <td><span style={{ font: `700 10px ${MONO}`, padding: '2px 7px', borderRadius: 5, color: c, background: c + '1c' }}>{label}</span></td>
                   <td className="num" style={{ color: r.drifts.length ? GOLD : DIM }}>
                     {r.drifts.length ? <button className="mini" style={{ marginTop: 0 }} onClick={() => setOpen(open === r.key ? null : r.key)}>{r.drifts.length} field{r.drifts.length === 1 ? '' : 's'}</button> : '—'}
                   </td>
-                  <td className="mono" style={{ color: r.localPath ? '#7a716a' : RED, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.localPath || 'clone it to compare'}</td>
+                  <td className="mono" style={{ color: r.localPath ? 'var(--text-tertiary)' : RED, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.localPath || 'clone it to compare'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {r.status === 'drifted' && <button className="mini" style={{ marginTop: 0 }} disabled={busy} onClick={() => sync(r)}>sync to baseline</button>}
                     {r.localPath && <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} disabled={busy || !file} title="export THIS repo's harness as the team baseline" onClick={() => exportBaseline(r)}>export as baseline</button>}
@@ -89,7 +89,7 @@ export default function TeamBaseline() {
                 </tr>
                 {open === r.key && (
                   <tr><td colSpan={6}>
-                    <div style={{ padding: '8px 10px', borderRadius: 10, background: 'rgba(0,0,0,0.28)', font: `400 10.5px ${MONO}`, color: '#b0a69e', maxHeight: 200, overflowY: 'auto' }}>
+                    <div style={{ padding: '8px 10px', borderRadius: 6, background: 'var(--bg-inset)', font: `400 11px ${MONO}`, color: 'var(--text-secondary)', maxHeight: 200, overflowY: 'auto' }}>
                       {r.drifts.map(x => (
                         <div key={x.field} style={{ marginBottom: 6 }}>
                           <b style={{ color: GOLD }}>{x.field}</b>

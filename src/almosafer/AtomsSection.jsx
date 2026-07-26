@@ -4,12 +4,12 @@ import { Ring, StackedBar, Bars, Stepper, CoverageTreemap, DataTable, Facts } fr
 
 // Ask-the-project atoms explorer — feature catalog, grounded search, attestation triage.
 // Rendered as tabs inside ConstitutionSection, so both the Claude and Cursor shells get it.
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const SANS = '"IBM Plex Sans", sans-serif'
-const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)', minWidth: 0 }
-const KIND_COLOR = { constitution: '#c792ea', rule: '#e5764d', skill: '#3fb96a', workflow: '#5eb3f6' }
-const TONE_COLOR = { must: '#3fb96a', 'must-not': '#e5484d', should: '#e5a03a', 'should-not': '#e5764d' }
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const SANS = 'var(--body)'
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const KIND_COLOR = { constitution: 'var(--violet)', rule: 'var(--accent)', skill: 'var(--green)', workflow: 'var(--blue)' }
+const TONE_COLOR = { must: 'var(--green)', 'must-not': 'var(--red)', should: 'var(--amber)', 'should-not': 'var(--accent)' }
 
 const toneSegments = atoms => Object.entries(TONE_COLOR)
   .map(([tone, color]) => ({ label: tone, value: atoms.filter(a => a.tone === tone).length, color }))
@@ -17,35 +17,35 @@ const toneSegments = atoms => Object.entries(TONE_COLOR)
 // shared table columns for atom lists — tone | claim(+context) | flags | citation
 const atomClaimCell = (a, accent) => (
   <div style={{ minWidth: 240 }}>
-    <div style={{ font: `400 11.5px ${SANS}`, color: '#d8cfc7' }}>{a.claim}</div>
+    <div style={{ font: `400 12px ${SANS}`, color: 'var(--text-primary)' }}>{a.claim}</div>
     {a.guidance && <Dim style={{ marginTop: 2 }}><span style={{ color: accent }}>guidance:</span> {a.guidance}</Dim>}
-    {a.rationale && <Dim style={{ marginTop: 2 }}><span style={{ color: '#9a8f86' }}>why:</span> {a.rationale}</Dim>}
-    {a.consequence && <Dim style={{ marginTop: 2 }}><span style={{ color: '#e5764d' }}>or else:</span> {a.consequence}</Dim>}
+    {a.rationale && <Dim style={{ marginTop: 2 }}><span style={{ color: 'var(--text-secondary)' }}>why:</span> {a.rationale}</Dim>}
+    {a.consequence && <Dim style={{ marginTop: 2 }}><span style={{ color: 'var(--accent)' }}>or else:</span> {a.consequence}</Dim>}
   </div>
 )
 const atomColumns = (accent, extra = []) => [
-  { key: 'tone', label: 'tone', width: 68, render: a => a.tone ? <Chip text={a.tone} color={TONE_COLOR[a.tone] || '#7a716a'} /> : null },
+  { key: 'tone', label: 'tone', width: 68, render: a => a.tone ? <Chip text={a.tone} color={TONE_COLOR[a.tone] || 'var(--text-tertiary)'} /> : null },
   { key: 'claim', label: 'claim · guidance · why', render: a => atomClaimCell(a, accent), sortValue: a => a.claim || '' },
   {
     key: 'flags', label: 'flags', width: 66, align: 'center',
     render: a => <span style={{ display: 'inline-flex', gap: 4 }}>
-      {a.origin === 'critic' && <Chip text="critic" color="#c792ea" title="added by the critic pass" />}
-      {a.attestStatus === 'insufficient' && <Chip text="⚠" color="#e5a03a" title="insufficient evidence — needs human review" />}
+      {a.origin === 'critic' && <Chip text="critic" color="var(--violet)" title="added by the critic pass" />}
+      {a.attestStatus === 'insufficient' && <Chip text="⚠" color="var(--amber)" title="insufficient evidence — needs human review" />}
     </span>,
     sortValue: a => (a.origin === 'critic' ? 1 : 0) + (a.attestStatus === 'insufficient' ? 2 : 0),
   },
   {
     key: 'cite', label: 'citation', width: 200,
-    render: a => a.cite?.path ? <span title={a.cite.snippet || ''} style={{ color: '#9a8f86', overflowWrap: 'anywhere', font: `400 10px ${MONO}` }}>{a.cite.path}{a.cite.lineRange ? ':' + a.cite.lineRange : ''}</span> : null,
+    render: a => a.cite?.path ? <span title={a.cite.snippet || ''} style={{ color: 'var(--text-secondary)', overflowWrap: 'anywhere', font: `400 10px ${MONO}` }}>{a.cite.path}{a.cite.lineRange ? ':' + a.cite.lineRange : ''}</span> : null,
     sortValue: a => a.cite?.path || '',
   },
   ...extra,
 ]
 
-const Chip = ({ text, color = '#7a716a', title }) => (
+const Chip = ({ text, color = 'var(--text-tertiary)', title }) => (
   <span title={title} style={{ font: `500 10px ${MONO}`, color, border: `1px solid ${color}55`, borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap' }}>{text}</span>
 )
-const Dim = ({ children, style }) => <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', ...style }}>{children}</div>
+const Dim = ({ children, style }) => <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', ...style }}>{children}</div>
 const pct = r => (r == null ? '—' : Math.round(r * 100) + '%')
 
 // module-level index cache per repo — survives tab switches, server rebuilds on constitution mtime change
@@ -79,19 +79,19 @@ function Catalog({ idx, accent }) {
       <div style={{ display: 'grid', gap: 12, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <button onClick={() => setOpen(null)}>← catalog</button>
-          <span style={{ font: `600 15px ${HEAD}`, color: KIND_COLOR.workflow }}>{s.name}</span>
+          <span style={{ font: `600 14px ${HEAD}`, color: KIND_COLOR.workflow }}>{s.name}</span>
           <Chip text={`${s.atoms.length} atoms`} color={accent} />
-          <Chip text={`${pct(s.attest?.confirmedRate)} confirmed`} color={s.attest?.confirmedRate >= 0.95 ? '#3fb96a' : '#e5a03a'} />
+          <Chip text={`${pct(s.attest?.confirmedRate)} confirmed`} color={s.attest?.confirmedRate >= 0.95 ? 'var(--green)' : 'var(--amber)'} />
         </div>
         <div style={{ ...PANEL, display: 'flex', gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <Ring value={s.attest?.confirmedRate} sub="confirmed" color={s.attest?.confirmedRate >= 0.95 ? '#3fb96a' : '#e5a03a'} />
+          <Ring value={s.attest?.confirmedRate} sub="confirmed" color={s.attest?.confirmedRate >= 0.95 ? 'var(--green)' : 'var(--amber)'} />
           <div style={{ flex: 1, minWidth: 280, display: 'grid', gap: 10 }}>
-            <div style={{ font: `400 12.5px ${SANS}`, color: '#d8cfc7' }}>{s.description}</div>
+            <div style={{ font: `400 13px ${SANS}`, color: 'var(--text-primary)' }}>{s.description}</div>
             <Facts items={[
               { label: 'atoms', value: s.atoms.length },
-              { label: 'never-do', value: s.atoms.filter(a => a.tone === 'must-not').length, color: '#e5484d' },
-              { label: 'critic-found', value: s.atoms.filter(a => a.origin === 'critic').length, color: '#c792ea' },
-              { label: 'flagged', value: s.atoms.filter(a => a.attestStatus === 'insufficient').length, color: '#e5a03a' },
+              { label: 'never-do', value: s.atoms.filter(a => a.tone === 'must-not').length, color: 'var(--red)' },
+              { label: 'critic-found', value: s.atoms.filter(a => a.origin === 'critic').length, color: 'var(--violet)' },
+              { label: 'flagged', value: s.atoms.filter(a => a.attestStatus === 'insufficient').length, color: 'var(--amber)' },
               { label: 'sections', value: sections.length },
               { label: 'paths', value: s.paths.length },
             ]} />
@@ -99,17 +99,17 @@ function Catalog({ idx, accent }) {
             {s.when_to_use && <Dim><span style={{ color: accent }}>when to use:</span> {s.when_to_use}</Dim>}
             {s.paths.length > 0 && (
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {s.paths.map(p => <Chip key={p} text={p} color="#8a817a" />)}
+                {s.paths.map(p => <Chip key={p} text={p} color="var(--text-secondary)" />)}
               </div>
             )}
           </div>
         </div>
         {s.keyInvariants?.length > 0 && (
           <div style={PANEL}>
-            <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Key invariants — must stay true no matter what</div>
+            <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Key invariants — must stay true no matter what</div>
             <DataTable columns={[
               { key: 'n', label: '#', width: 34, align: 'center', render: r => <span style={{ color: accent, font: `700 11px ${MONO}` }}>{r.n}</span> },
-              { key: 'text', label: 'invariant', render: r => <span style={{ font: `400 11.5px ${SANS}`, color: '#d8cfc7' }}>{r.text}</span> },
+              { key: 'text', label: 'invariant', render: r => <span style={{ font: `400 12px ${SANS}`, color: 'var(--text-primary)' }}>{r.text}</span> },
             ]} rows={s.keyInvariants.map((text, i) => ({ n: i + 1, text, __key: i }))} />
           </div>
         )}
@@ -117,15 +117,15 @@ function Catalog({ idx, accent }) {
           const isSteps = /step/i.test(sec.name)
           return (
             <div key={sec.name} style={PANEL}>
-              <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>
-                {sec.name} <span style={{ font: `400 10px ${MONO}`, color: '#7a716a' }}>({sec.atoms.length})</span>
+              <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>
+                {sec.name} <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>({sec.atoms.length})</span>
               </div>
               {isSteps ? (
                 <>
                   <Stepper accent={accent}
                     steps={sec.atoms.map(a => ({ title: a.guidance || a.claim, sub: a.cite?.path ? `📎 ${a.cite.path}${a.cite.lineRange ? ':' + a.cite.lineRange : ''}` : null }))} />
                   <details style={{ marginTop: 10 }}>
-                    <summary style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', cursor: 'pointer' }}>full atom detail (claims, rationale, consequences)</summary>
+                    <summary style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', cursor: 'pointer' }}>full atom detail (claims, rationale, consequences)</summary>
                     <div style={{ marginTop: 8 }}>
                       <DataTable columns={atomColumns(accent)} rows={sec.atoms.map(a => ({ ...a, __key: a.id }))} />
                     </div>
@@ -137,10 +137,10 @@ function Catalog({ idx, accent }) {
         })}
         {s.outputChecklist?.length > 0 && (
           <div style={PANEL}>
-            <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Output checklist — verify before calling it done</div>
+            <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Output checklist — verify before calling it done</div>
             <DataTable columns={[
-              { key: 'n', label: '', width: 34, align: 'center', render: () => <span style={{ color: '#7a716a' }}>☐</span> },
-              { key: 'text', label: 'check', render: r => <span style={{ font: `400 11.5px ${SANS}`, color: '#d8cfc7' }}>{r.text}</span> },
+              { key: 'n', label: '', width: 34, align: 'center', render: () => <span style={{ color: 'var(--text-tertiary)' }}>☐</span> },
+              { key: 'text', label: 'check', render: r => <span style={{ font: `400 12px ${SANS}`, color: 'var(--text-primary)' }}>{r.text}</span> },
             ]} rows={s.outputChecklist.map((text, i) => ({ text, __key: i }))} />
           </div>
         )}
@@ -158,14 +158,14 @@ function Catalog({ idx, accent }) {
               <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ font: `600 13px ${HEAD}`, color: KIND_COLOR.workflow }}>{s.name}</div>
-                  <div style={{ font: `400 11px ${SANS}`, color: '#9a8f86', marginTop: 4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{s.description}</div>
+                  <div style={{ font: `400 11px ${SANS}`, color: 'var(--text-secondary)', marginTop: 4, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{s.description}</div>
                 </div>
-                <Ring value={s.attest?.confirmedRate} size={46} stroke={5} color={s.attest?.confirmedRate >= 0.95 ? '#3fb96a' : '#e5a03a'} />
+                <Ring value={s.attest?.confirmedRate} size={46} color={s.attest?.confirmedRate >= 0.95 ? 'var(--green)' : 'var(--amber)'}  style={{ stroke: (5) }} />
               </div>
               <StackedBar segments={toneSegments(s.atoms)} height={7} legend={false} />
               <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                 <Chip text={`${s.atoms.length} atoms`} color={accent} />
-                {mustNot > 0 && <Chip text={`${mustNot} never-do`} color="#e5484d" title="tone: must-not — things you must never do" />}
+                {mustNot > 0 && <Chip text={`${mustNot} never-do`} color="var(--red)" title="tone: must-not — things you must never do" />}
                 <Chip text={`${s.paths.length} paths`} />
               </div>
             </div>
@@ -174,11 +174,11 @@ function Catalog({ idx, accent }) {
       </div>
       {idx.demandSignals.length > 0 && (
         <div style={PANEL}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Proposed skills — demand signals not yet generated ({idx.demandSignals.length})</div>
+          <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Proposed skills — demand signals not yet generated ({idx.demandSignals.length})</div>
           <DataTable maxHeight="40vh" columns={[
-            { key: 'name', label: 'proposed skill', width: 240, render: d => <span style={{ color: '#3fb96a', font: `500 11px ${MONO}` }}>{d.name}</span> },
+            { key: 'name', label: 'proposed skill', width: 240, render: d => <span style={{ color: 'var(--green)', font: `500 11px ${MONO}` }}>{d.name}</span> },
             { key: 'kind', label: 'signal', width: 110, render: d => <Chip text={d.kind || '—'} /> },
-            { key: 'description', label: 'why it keeps coming up', render: d => <span style={{ font: `400 11px ${SANS}`, color: '#9a8f86' }}>{d.description}</span> },
+            { key: 'description', label: 'why it keeps coming up', render: d => <span style={{ font: `400 11px ${SANS}`, color: 'var(--text-secondary)' }}>{d.description}</span> },
           ]} rows={idx.demandSignals.map((d, i) => ({ ...d, __key: i }))} />
         </div>
       )}
@@ -244,14 +244,14 @@ function Ask({ idx, repo, accent }) {
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         {Object.entries(FILTERS).map(([k, opts]) => (
-          <label key={k} style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>
+          <label key={k} style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
             {k}{' '}
             <select value={f[k]} onChange={e => setF({ ...f, [k]: e.target.value })} style={{ font: `400 11px ${MONO}` }}>
               {opts.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </label>
         ))}
-        <label style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>
+        <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
           source{' '}
           <select value={f.source} onChange={e => setF({ ...f, source: e.target.value })} style={{ font: `400 11px ${MONO}`, maxWidth: 220 }}>
             <option value="all">all</option>
@@ -269,14 +269,14 @@ function Ask({ idx, repo, accent }) {
             <button style={{ marginLeft: 'auto' }} onClick={() => setExplain(null)}>×</button>
           </div>
           {explain.busy && <Dim>asking the model…</Dim>}
-          {explain.err && <div style={{ font: `400 12px ${MONO}`, color: '#e5484d' }}>{explain.err}</div>}
-          {explain.answer && <div style={{ font: `400 12.5px ${SANS}`, color: '#d8cfc7', whiteSpace: 'pre-wrap' }}>{explain.answer}</div>}
+          {explain.err && <div style={{ font: `400 12px ${MONO}`, color: 'var(--red)' }}>{explain.err}</div>}
+          {explain.answer && <div style={{ font: `400 13px ${SANS}`, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>{explain.answer}</div>}
         </div>
       )}
 
       <div style={PANEL}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2' }}>
+          <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)' }}>
             {submitted ? `Top matches for “${submitted}”` : 'Browse atoms (filtered)'}
           </div>
           {submitted && results?.length > 0 && <button style={{ marginLeft: 'auto' }} onClick={() => doExplain(results.map(r => r.a))}>✨ explain all results</button>}
@@ -291,7 +291,7 @@ function Ask({ idx, repo, accent }) {
             ...(submitted ? [{
               key: 'score', label: 'match', width: 70, sortValue: r => r.score ?? 0,
               render: r => (
-                <span title={`relevance ${r.score}`} style={{ display: 'inline-block', width: 54, height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+                <span title={`relevance ${r.score}`} style={{ display: 'inline-block', width: 54, height: 6, background: 'var(--bg-surface-hover)', borderRadius: 3, overflow: 'hidden' }}>
                   <span className="chart-bar-fill" style={{ display: 'block', width: ((r.score ?? 0) / maxScore * 100) + '%', height: '100%', background: accent, borderRadius: 3 }} />
                 </span>
               ),
@@ -322,21 +322,21 @@ function Triage({ idx, repo, accent }) {
   }
   const done = idx.insufficient.filter(i => reviewed[i.atomId]).length
   const byArtifact = [...d3GroupCount(idx.insufficient, i => i.artifact)]
-    .map(([label, value]) => ({ label, value, color: '#e5a03a' })).sort((a, b) => b.value - a.value)
+    .map(([label, value]) => ({ label, value, color: 'var(--amber)' })).sort((a, b) => b.value - a.value)
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ ...PANEL, display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
         <Ring value={idx.insufficient.length ? done / idx.insufficient.length : 1} label={`${done}/${idx.insufficient.length}`}
-          sub="reviewed" size={76} color={done === idx.insufficient.length ? '#3fb96a' : accent} />
+          sub="reviewed" size={76} color={done === idx.insufficient.length ? 'var(--green)' : accent} />
         <div style={{ flex: 1, minWidth: 260 }}>
           <Dim style={{ marginBottom: 6 }}>flagged atoms per artifact — where the extractor over-reached</Dim>
-          <Bars items={byArtifact} color="#e5a03a" height={12} />
+          <Bars items={byArtifact} color="var(--amber)" height={12} />
         </div>
       </div>
     <div style={PANEL}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 8 }}>
-        <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2' }}>Insufficient-evidence atoms — flagged for human review</div>
-        <Chip text={`${done}/${idx.insufficient.length} reviewed`} color={done === idx.insufficient.length ? '#3fb96a' : accent} />
+        <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)' }}>Insufficient-evidence atoms — flagged for human review</div>
+        <Chip text={`${done}/${idx.insufficient.length} reviewed`} color={done === idx.insufficient.length ? 'var(--green)' : accent} />
       </div>
       <DataTable
         columns={[
@@ -344,17 +344,17 @@ function Triage({ idx, repo, accent }) {
             key: 'done', label: '✓', width: 36, align: 'center', sortValue: i => reviewed[i.atomId] ? 1 : 0,
             render: i => <input type="checkbox" checked={!!reviewed[i.atomId]} onChange={e => toggle(i.atomId, e.target.checked)} />,
           },
-          { key: 'artifact', label: 'artifact', width: 150, render: i => <Chip text={i.artifact} color="#e5764d" /> },
+          { key: 'artifact', label: 'artifact', width: 150, render: i => <Chip text={i.artifact} color="var(--accent)" /> },
           {
             key: 'claim', label: 'claim · judge verdict', sortValue: i => i.claim,
             render: i => (
               <div style={{ opacity: reviewed[i.atomId] ? 0.45 : 1, minWidth: 240 }}>
-                <div style={{ font: `400 11.5px ${SANS}`, color: '#d8cfc7' }}>{i.claim}</div>
-                <Dim style={{ marginTop: 3 }}><span style={{ color: '#e5a03a' }}>judge:</span> {i.reason}</Dim>
+                <div style={{ font: `400 12px ${SANS}`, color: 'var(--text-primary)' }}>{i.claim}</div>
+                <Dim style={{ marginTop: 3 }}><span style={{ color: 'var(--amber)' }}>judge:</span> {i.reason}</Dim>
               </div>
             ),
           },
-          { key: 'cite', label: 'citation', width: 200, sortValue: i => i.cite, render: i => <span style={{ color: '#9a8f86', font: `400 10px ${MONO}`, overflowWrap: 'anywhere' }}>{i.cite}</span> },
+          { key: 'cite', label: 'citation', width: 200, sortValue: i => i.cite, render: i => <span style={{ color: 'var(--text-secondary)', font: `400 10px ${MONO}`, overflowWrap: 'anywhere' }}>{i.cite}</span> },
         ]}
         rows={idx.insufficient.map(i => ({ ...i, __key: i.atomId }))} />
       {idx.insufficient.length === 0 && <Dim>nothing flagged — all atoms confirmed.</Dim>}
@@ -378,18 +378,18 @@ function Gaps({ idx, accent }) {
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ ...PANEL, display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <Ring value={idx.coverage.dirs.length ? covered / idx.coverage.dirs.length : 0} sub={`${covered}/${idx.coverage.dirs.length} dirs covered`} size={76}
-          color={gaps.length === 0 ? '#3fb96a' : accent} />
+          color={gaps.length === 0 ? 'var(--green)' : accent} />
         <div style={{ flex: 1, minWidth: 320 }}>
-          <div style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Coverage map — every source folder, colored by how many artifacts govern it</div>
+          <div style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Coverage map — every source folder, colored by how many artifacts govern it</div>
           <CoverageTreemap dirs={idx.coverage.dirs} />
         </div>
       </div>
       <details style={PANEL} open={gaps.length > 0 && gaps.length <= 24}>
-        <summary style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', cursor: 'pointer' }}>
-          Zero-coverage folders <span style={{ font: `400 10px ${MONO}`, color: '#7a716a' }}>({gaps.length} of {idx.coverage.dirs.length} scanned dirs have no path-scoped guidance)</span>
+        <summary style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', cursor: 'pointer' }}>
+          Zero-coverage folders <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>({gaps.length} of {idx.coverage.dirs.length} scanned dirs have no path-scoped guidance)</span>
         </summary>
         <div style={{ columns: '280px 3', gap: 24, marginTop: 8 }}>
-          {gaps.map(g => <div key={g.dir} style={{ font: `400 11px ${MONO}`, color: '#9a8f86', padding: '1px 0', overflowWrap: 'anywhere' }}>{g.dir}</div>)}
+          {gaps.map(g => <div key={g.dir} style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', padding: '1px 0', overflowWrap: 'anywhere' }}>{g.dir}</div>)}
         </div>
         {gaps.length === 0 && <Dim>every scanned folder is covered by at least one artifact.</Dim>}
       </details>
@@ -397,9 +397,9 @@ function Gaps({ idx, accent }) {
   )
 }
 
-export default function AtomsSection({ view, repo, accent = '#e5a03a' }) {
+export default function AtomsSection({ view, repo, accent = 'var(--amber)' }) {
   const { idx, err } = useIndex(repo)
-  if (err) return <div style={{ font: `400 12px ${MONO}`, color: '#e5484d' }}>{err}</div>
+  if (err) return <div style={{ font: `400 12px ${MONO}`, color: 'var(--red)' }}>{err}</div>
   if (!idx) return <Dim>indexing atoms…</Dim>
   return view === 'catalog' ? <Catalog idx={idx} accent={accent} />
     : view === 'ask' ? <Ask idx={idx} repo={repo} accent={accent} />

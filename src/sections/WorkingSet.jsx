@@ -21,9 +21,9 @@ import { usePager } from '../ui/Pager.jsx'
 //   3. No panel claims coverage it does not have — the walk cap and unresolved-import count are
 //      printed on screen, because a graph that silently truncates is a poster, not an instrument.
 
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', DIM = '#8a807a', ACCENT = '#d97757'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)', ACCENT = 'var(--accent)'
 
 const ago = t => {
   if (!t) return '—'
@@ -88,7 +88,7 @@ export default function WorkingSet({ onNav }) {
   // The honest empty state. Not a green all-clear — a statement about what is missing and why.
   if (d.available === false) return (
     <div style={card}>
-      <div style={{ fontFamily: HEAD, fontSize: 18, marginBottom: 10 }}>No agent history yet</div>
+      <div style={{ fontFamily: HEAD, fontSize: 16, marginBottom: 10 }}>No agent history yet</div>
       <p style={{ color: DIM, lineHeight: 1.6, maxWidth: 620, margin: 0 }}>{d.detail}</p>
       <p style={{ color: DIM, marginTop: 14, fontSize: 13 }}>
         Nothing is fabricated here: no score, no zero, no chart. This screen stays empty until there is
@@ -151,7 +151,7 @@ export default function WorkingSet({ onNav }) {
       {!rows.length ? (
         <div style={card}>
           <span style={{ color: DIM }}>
-            No file matches <b style={{ color: '#e8e0d8' }}>{FILTERS.find(f => f[0] === filter)?.[1]}</b> in the last {d.windowDays} days.
+            No file matches <b style={{ color: 'var(--text-primary)' }}>{FILTERS.find(f => f[0] === filter)?.[1]}</b> in the last {d.windowDays} days.
             {filter === 'rework' && ` Every file the agent touched here was edited inside a single session — that is work, not rework, so nothing is ranked.`}
           </span>
         </div>
@@ -175,7 +175,7 @@ export default function WorkingSet({ onNav }) {
             </thead>
             <tbody>
               {pg.slice.map(r => (
-                <tr key={r.rel} style={{ borderTop: '1px solid rgba(255,255,255,.06)' }}>
+                <tr key={r.rel} style={{ borderTop: '1px solid var(--border-default)' }}>
                   <td style={{ ...td, fontFamily: MONO, fontWeight: 700, color: r.score >= 10 ? RED : r.score >= 5 ? GOLD : DIM }}
                       title={r.scoreParts ? `${r.scoreParts.revisitSessions} revisits ×${d.weights.revisitSession} + ${r.scoreParts.revisitDays} days ×${d.weights.revisitDay} + ${r.scoreParts.failures} failures ×${d.weights.failure} + ${r.scoreParts.extraEdits} extra edits ×${d.weights.extraEdit}` : 'below the minimum session count — not ranked'}>
                     {N(r.score)}
@@ -215,7 +215,7 @@ export default function WorkingSet({ onNav }) {
       <p style={{ color: DIM, fontSize: 12, marginTop: 12, lineHeight: 1.6, maxWidth: 760 }}>
         Built from Edit/Write <code style={{ fontFamily: MONO }}>structuredPatch</code> blocks in your own
         transcripts, joined to an import graph parsed from the repo on disk. No JIRA, no GitHub, no network.
-        <b style={{ color: '#e8e0d8' }}> Rank is a heuristic, not a measurement</b> — its inputs are in the
+        <b style={{ color: 'var(--text-primary)' }}> Rank is a heuristic, not a measurement</b> — its inputs are in the
         row and its arithmetic is on the tooltip.
       </p>
 
@@ -252,7 +252,7 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
   return (
     <Modal onClose={onClose}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ fontFamily: MONO, fontSize: 15, color: '#e8e0d8' }}>{d.rel}</div>
+        <div style={{ fontFamily: MONO, fontSize: 14, color: 'var(--text-primary)' }}>{d.rel}</div>
         {d.dirty && <span style={pill(ACCENT)}>dirty</span>}
         {d.exists === false && <span style={pill(DIM)}>not in repo</span>}
         <div style={{ flex: 1 }} />
@@ -260,8 +260,8 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
       </div>
 
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', margin: '12px 0 4px', fontSize: 12, color: DIM }}>
-        <span><b style={{ color: '#e8e0d8' }}>{d.importers.length}</b> importers</span>
-        <span>imports <b style={{ color: '#e8e0d8' }}>{d.importsOf.length}</b> local files</span>
+        <span><b style={{ color: 'var(--text-primary)' }}>{d.importers.length}</b> importers</span>
+        <span>imports <b style={{ color: 'var(--text-primary)' }}>{d.importsOf.length}</b> local files</span>
         {d.coverage && <>
           <span style={{ color: d.coverage.hasTest ? GREEN : GOLD }}
                 title={d.coverage.testedBy?.length ? 'tested by ' + d.coverage.testedBy.join(', ') : 'no test imports this file and no colocated test file exists'}>
@@ -304,14 +304,14 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
       </div>
       <div style={{ maxHeight: '46vh', overflowY: 'auto', display: 'grid', gap: 8 }}>
         {d.timeline.map((e, i) => (
-          <div key={i} style={{ borderLeft: `2px solid ${e.kind === 'error' ? RED : e.kind === 'prompt' ? ACCENT : 'rgba(255,255,255,.15)'}`, paddingLeft: 10 }}>
+          <div key={i} style={{ borderLeft: `2px solid ${e.kind === 'error' ? RED : e.kind === 'prompt' ? ACCENT : 'var(--bg-surface-active)'}`, paddingLeft: 10 }}>
             <div style={{ fontSize: 10, color: DIM, fontFamily: MONO, textTransform: 'uppercase', letterSpacing: .6 }}>
               {e.kind} · {new Date(e.t).toLocaleString()} {e.kind === 'edit' && <span><span style={{ color: GREEN }}>+{e.add}</span> <span style={{ color: RED }}>−{e.del}</span></span>}
             </div>
-            {e.kind === 'prompt' && <div style={{ fontSize: 13, color: '#e8e0d8', marginTop: 3 }}>{e.text}</div>}
+            {e.kind === 'prompt' && <div style={{ fontSize: 13, color: 'var(--text-primary)', marginTop: 3 }}>{e.text}</div>}
             {e.kind === 'error' && <div style={{ fontSize: 12, color: RED, marginTop: 3, fontFamily: MONO }}>{e.tool}: {e.text}</div>}
             {e.kind === 'edit' && e.hunk && (
-              <pre style={{ margin: '4px 0 0', fontFamily: MONO, fontSize: 11, lineHeight: 1.5, background: 'rgba(0,0,0,.25)', padding: 8, borderRadius: 6, overflowX: 'auto' }}>
+              <pre style={{ margin: '4px 0 0', fontFamily: MONO, fontSize: 11, lineHeight: 1.5, background: 'var(--bg-inset)', padding: 8, borderRadius: 6, overflowX: 'auto' }}>
                 {e.hunk.split('\n').map((l, k) => (
                   <div key={k} style={{ color: l[0] === '+' ? GREEN : l[0] === '-' ? RED : DIM }}>{l}</div>
                 ))}
@@ -325,27 +325,27 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
 }
 
 // ---------- bits ----------
-const card = { background: 'rgba(28,24,21,.55)', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: 16 }
+const card = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 16 }
 const td = { padding: '8px 10px', verticalAlign: 'top' }
-const sel = { background: 'rgba(0,0,0,.3)', color: '#e8e0d8', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8, padding: '6px 10px', fontSize: 13 }
+const sel = { background: 'var(--bg-inset)', color: 'var(--text-primary)', border: '1px solid var(--border-default)', borderRadius: 8, padding: '6px 10px', fontSize: 13 }
 const chip = { ...sel, cursor: 'pointer', fontSize: 12, padding: '4px 10px', color: DIM }
-const chipOn = { color: '#12100e', background: ACCENT, borderColor: ACCENT, fontWeight: 600 }
-const btn = { ...sel, cursor: 'pointer', fontSize: 12.5 }
-const primaryBtn = { ...btn, background: ACCENT, color: '#12100e', borderColor: ACCENT, fontWeight: 600 }
+const chipOn = { color: 'var(--bg-base)', background: ACCENT, borderColor: ACCENT, fontWeight: 600 }
+const btn = { ...sel, cursor: 'pointer', fontSize: 13 }
+const primaryBtn = { ...btn, background: ACCENT, color: 'var(--bg-base)', borderColor: ACCENT, fontWeight: 600 }
 const ghostBtn = { background: 'none', border: 'none', color: DIM, cursor: 'pointer', fontSize: 14, padding: '2px 6px' }
-const linkBtn = { background: 'none', border: 'none', color: '#e8e0d8', cursor: 'pointer', font: 'inherit', padding: 0, textAlign: 'left', textDecoration: 'underline', textDecorationColor: 'rgba(255,255,255,.2)' }
-const pill = c => ({ marginLeft: 6, fontSize: 9.5, fontFamily: MONO, textTransform: 'uppercase', color: c, border: `1px solid ${c}55`, borderRadius: 4, padding: '1px 4px', letterSpacing: .5 })
+const linkBtn = { background: 'none', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', font: 'inherit', padding: 0, textAlign: 'left', textDecoration: 'underline', textDecorationColor: 'var(--bg-surface-active)' }
+const pill = c => ({ marginLeft: 6, fontSize: 10, fontFamily: MONO, textTransform: 'uppercase', color: c, border: `1px solid ${c}55`, borderRadius: 4, padding: '1px 4px', letterSpacing: .5 })
 
 const Th = ({ children, title }) => <th title={title} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 500, cursor: title ? 'help' : 'default' }}>{children}</th>
 
 function Tile({ label, value, hint, tone, onClick }) {
   return (
     <button onClick={onClick} style={{ ...card, padding: 12, textAlign: 'left', cursor: 'pointer', display: 'block' }}>
-      <div style={{ fontFamily: HEAD, fontSize: 24, color: value == null ? DIM : (tone || '#e8e0d8') }}>
+      <div style={{ fontFamily: HEAD, fontSize: 20, color: value == null ? DIM : (tone || 'var(--text-primary)') }}>
         {value == null ? '—' : value}
       </div>
-      <div style={{ fontSize: 12, color: '#e8e0d8', marginTop: 2 }}>{label}</div>
-      <div style={{ fontSize: 10.5, color: DIM, marginTop: 2 }}>{hint}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-primary)', marginTop: 2 }}>{label}</div>
+      <div style={{ fontSize: 11, color: DIM, marginTop: 2 }}>{hint}</div>
     </button>
   )
 }
@@ -357,7 +357,7 @@ function Modal({ children, onClose }) {
     return () => window.removeEventListener('keydown', k)
   }, [onClose])
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 60, display: 'grid', placeItems: 'start center', paddingTop: '6vh', overflowY: 'auto' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--bg-inset)', zIndex: 60, display: 'grid', placeItems: 'start center', paddingTop: '6vh', overflowY: 'auto' }}>
       <div onClick={e => e.stopPropagation()} style={{ ...card, width: 'min(900px,92vw)', marginBottom: '6vh' }}>{children}</div>
     </div>
   )

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 
-const MONO = "'IBM Plex Mono', monospace"
+const MONO = "var(--mono)"
 
 // ---------- 16: search my past self ----------
 // ⌘K used to index user PROMPTS only. It now searches assistant text, tool_use inputs (bash commands,
@@ -9,11 +9,11 @@ const MONO = "'IBM Plex Mono', monospace"
 // "what has Claude ever done to this file", the query the IC most wants and literally could not express.
 // Plane B: this machine's own transcripts. No user/machine parameter exists on /api/search.
 const KINDS = [
-  ['prompt', 'my prompts', '⌨', '#d97757'],
-  ['assistant', 'what Claude said', '✦', '#8b7cf6'],
-  ['bash', 'commands run', '$', '#3fb96a'],
-  ['edit', 'edit hunks', '±', '#5eb3f6'],
-  ['session', 'sessions', '◧', '#e8a06a'],
+  ['prompt', 'my prompts', '⌨', 'var(--accent)'],
+  ['assistant', 'what Claude said', '✦', 'var(--violet)'],
+  ['bash', 'commands run', '$', 'var(--green)'],
+  ['edit', 'edit hunks', '±', 'var(--blue)'],
+  ['session', 'sessions', '◧', 'var(--accent-light)'],
 ]
 const KIND_META = Object.fromEntries(KINDS.map(k => [k[0], k]))
 
@@ -87,8 +87,8 @@ export default function Palette({ sections, onNav }) {
   }
 
   return (
-    <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(8,6,5,0.6)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', paddingTop: '10vh' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 700, maxWidth: '94vw', height: 'fit-content', maxHeight: '76vh', display: 'flex', flexDirection: 'column', background: '#17130f', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 16, boxShadow: '0 30px 80px rgba(0,0,0,0.7)', overflow: 'hidden' }}>
+    <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'var(--bg-base)', display: 'flex', justifyContent: 'center', paddingTop: '10vh' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: 700, maxWidth: '94vw', height: 'fit-content', maxHeight: '76vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, boxShadow: 'var(--shadow-md)', overflow: 'hidden' }}>
         <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(i + 1, results.length - 1)) }
@@ -96,18 +96,18 @@ export default function Palette({ sections, onNav }) {
             if (e.key === 'Enter') exec(results[idx])
           }}
           placeholder="Search everything Claude ever said, ran or edited — or jump to a section"
-          style={{ border: 'none', borderBottom: '1px solid rgba(255,255,255,0.07)', borderRadius: 0, background: 'transparent', padding: '15px 18px', font: "400 15px 'IBM Plex Sans'" }} />
+          style={{ border: 'none', borderBottom: '1px solid var(--border-default)', borderRadius: 0, background: 'transparent', padding: '15px 18px', font: "400 14px var(--body)" }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderBottom: '1px solid var(--border-default)', flexWrap: 'wrap' }}>
           {KINDS.map(([id, label, icon, color]) => (
             <button key={id} onClick={() => setKinds(k => ({ ...k, [id]: !k[id] }))} title={label}
-              style={{ marginTop: 0, cursor: 'pointer', font: `600 10.5px ${MONO}`, padding: '4px 9px', borderRadius: 8, border: `1px solid ${kinds[id] ? color + '77' : 'rgba(255,255,255,0.07)'}`, background: kinds[id] ? color + '1f' : 'transparent', color: kinds[id] ? color : '#6a615a' }}>
+              style={{ marginTop: 0, cursor: 'pointer', font: `600 11px ${MONO}`, padding: '4px 9px', borderRadius: 8, border: `1px solid ${kinds[id] ? color + '77' : 'var(--bg-surface-hover)'}`, background: kinds[id] ? color + '1f' : 'transparent', color: kinds[id] ? color : 'var(--text-tertiary)' }}>
               {icon} {label}
             </button>
           ))}
           <input value={file} onChange={e => setFile(e.target.value)} placeholder="only sessions that touched <path>…"
             title="the killer query: what has Claude ever done to src/auth.ts"
-            style={{ marginLeft: 'auto', width: 250, padding: '5px 9px', font: `400 11px ${MONO}`, border: `1px solid ${file ? '#5eb3f6' : 'rgba(255,255,255,0.08)'}` }} />
+            style={{ marginLeft: 'auto', width: 250, padding: '5px 9px', font: `400 11px ${MONO}`, border: `1px solid ${file ? 'var(--blue)' : 'var(--bg-surface-active)'}` }} />
         </div>
 
         <div style={{ overflowY: 'auto' }}>
@@ -115,27 +115,27 @@ export default function Palette({ sections, onNav }) {
             const sel = i === idx
             if (r.run) return (
               <div key={'a' + i} onMouseEnter={() => setIdx(i)} onClick={() => exec(r)}
-                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 16px', cursor: 'pointer', background: sel ? 'rgba(217,119,87,0.12)' : 'transparent' }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 16px', cursor: 'pointer', background: sel ? 'var(--accent-bg)' : 'transparent' }}>
                 <span style={{ width: 20, textAlign: 'center', fontSize: 14, opacity: 0.85 }}>{r.icon}</span>
-                <span style={{ flex: 1, font: "400 13px 'IBM Plex Sans'", color: '#e5dbd2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
-                <span style={{ font: `400 10px ${MONO}`, color: '#7a716a', flexShrink: 0 }}>{r.meta}</span>
+                <span style={{ flex: 1, font: "400 13px var(--body)", color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', flexShrink: 0 }}>{r.meta}</span>
               </div>
             )
             const h = r.hit
-            const [, , icon, color] = KIND_META[h.kind] || ['', '', '·', '#8a807a']
+            const [, , icon, color] = KIND_META[h.kind] || ['', '', '·', 'var(--text-secondary)']
             return (
               <div key={'h' + i} onMouseEnter={() => setIdx(i)} onClick={() => exec(r)}
-                style={{ display: 'flex', gap: 11, padding: '10px 16px', cursor: 'pointer', background: sel ? 'rgba(217,119,87,0.12)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                style={{ display: 'flex', gap: 11, padding: '10px 16px', cursor: 'pointer', background: sel ? 'var(--accent-bg)' : 'transparent', borderBottom: '1px solid var(--border-subtle)' }}>
                 <span style={{ width: 18, flexShrink: 0, textAlign: 'center', font: `600 12px ${MONO}`, color }}>{icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ font: `400 12px ${h.kind === 'bash' || h.kind === 'edit' ? MONO : "'IBM Plex Sans'"}`, color: '#e5dbd2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.snippet}</div>
-                  <div style={{ font: `400 10px ${MONO}`, color: '#6a615a', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ font: `400 12px ${h.kind === 'bash' || h.kind === 'edit' ? MONO : "var(--body)"}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.snippet}</div>
+                  <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ color }}>{h.kind}</span>
                     <span>{h.proj?.split('-').slice(-2).join('-')}</span>
-                    {h.branch && <span style={{ color: '#8b7cf6' }}>{h.branch}</span>}
+                    {h.branch && <span style={{ color: 'var(--violet)' }}>{h.branch}</span>}
                     <span>{new Date(h.t).toLocaleDateString()}</span>
-                    {h.file && <span style={{ color: '#5eb3f6' }}>{h.file}{h.add != null ? ` +${h.add}/−${h.del}` : ''}</span>}
-                    {!h.file && h.files?.length > 0 && <span style={{ color: '#5eb3f6', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300, whiteSpace: 'nowrap' }}>{h.files.join(' · ')}</span>}
+                    {h.file && <span style={{ color: 'var(--blue)' }}>{h.file}{h.add != null ? ` +${h.add}/−${h.del}` : ''}</span>}
+                    {!h.file && h.files?.length > 0 && <span style={{ color: 'var(--blue)', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 300, whiteSpace: 'nowrap' }}>{h.files.join(' · ')}</span>}
                   </div>
                 </div>
                 <button className="mini" style={{ marginTop: 0, flexShrink: 0 }} onClick={e => { e.stopPropagation(); copyResume(h) }} title={h.resume}>↵ resume</button>
@@ -143,12 +143,12 @@ export default function Palette({ sections, onNav }) {
             )
           })}
           {results.length === 0 && (
-            <div style={{ padding: '18px 16px', font: `400 12px ${MONO}`, color: '#5a514a' }}>
+            <div style={{ padding: '18px 16px', font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>
               {busy ? 'searching transcripts…' : q.length < 3 && !file ? 'type 3+ chars — or put a path in the file box to see every session that touched it' : 'no matches'}
             </div>
           )}
         </div>
-        <div style={{ padding: '8px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', font: `400 10px ${MONO}`, color: '#6a615a' }}>
+        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border-default)', font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
           ↑↓ navigate · ↵ open / copy the resume line · esc close · ⌘K toggle · everything here is your own machine's transcripts
         </div>
       </div>

@@ -7,13 +7,13 @@ import { toolName, shortArg } from '../lib/plan.js'
 const RULE_FILES = /(CLAUDE|AGENTS)\.md$|\.cursorrules$/
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const STYLE = {
-  thought: { icon: '💭', color: '#8a807a', label: 'thought' },
-  skill: { icon: '◍', color: '#a894f0', label: 'skill' },
-  mcp: { icon: '⚡', color: '#5fd39a', label: 'mcp' },
-  rule: { icon: '⚖', color: '#f5c451', label: 'rule' },
-  file: { icon: '✎', color: '#d97757', label: 'file' },
-  agent: { icon: '◆', color: '#5eb3f6', label: 'subagent' },
-  tool: { icon: '▸', color: '#7f8578', label: 'tool' },
+  thought: { icon: '💭', color: 'var(--text-secondary)', label: 'thought' },
+  skill: { icon: '◍', color: 'var(--violet)', label: 'skill' },
+  mcp: { icon: '⚡', color: 'var(--green)', label: 'mcp' },
+  rule: { icon: '⚖', color: 'var(--amber)', label: 'rule' },
+  file: { icon: '✎', color: 'var(--accent)', label: 'file' },
+  agent: { icon: '◆', color: 'var(--blue)', label: 'subagent' },
+  tool: { icon: '▸', color: 'var(--text-tertiary)', label: 'tool' },
 }
 
 // One block -> one (or more, for a subagent's children) timeline node(s).
@@ -41,13 +41,13 @@ function Node({ n, i, active, onHover }) {
       <div onMouseEnter={() => onHover(i)} onMouseLeave={() => onHover(null)}
         style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 8px', borderRadius: 7, background: active ? s.color + '1c' : 'transparent' }}>
         <span style={{ color: s.color, fontSize: 13, flexShrink: 0, width: 16, textAlign: 'center' }}>{s.icon}</span>
-        <span style={{ font: `500 9px 'IBM Plex Mono', monospace`, color: s.color, flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: 2, width: 46 }}>{s.label}</span>
-        <span style={{ font: `400 12.5px ${n.type === 'thought' ? "'IBM Plex Sans'" : "'IBM Plex Mono', monospace"}`, color: n.isError ? '#f2777a' : '#d8cfc7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
+        <span style={{ font: `500 9px var(--mono)`, color: s.color, flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: 2, width: 46 }}>{s.label}</span>
+        <span style={{ font: `400 13px ${n.type === 'thought' ? "var(--body)" : "var(--mono)"}`, color: n.isError ? 'var(--red)' : 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
           {n.text.length > 240 ? n.text.slice(0, 240) + '…' : n.text}
         </span>
       </div>
       {n.children && n.children.length > 0 && (
-        <div style={{ marginLeft: 30, paddingLeft: 10, borderLeft: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ marginLeft: 30, paddingLeft: 10, borderLeft: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', gap: 2 }}>
           {n.children.map((c, j) => <Node key={j} n={c} i={`${i}.${j}`} active={active === `${i}.${j}`} onHover={onHover} />)}
         </div>
       )}
@@ -84,10 +84,10 @@ export default function ActivityTimeline({ blocks }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <button className="mini" style={{ marginTop: 0 }} onClick={() => { if (cursor < 0) setCursor(0); setPlaying(p => !p) }}>{playing ? '⏸ pause' : cursor >= 0 && cursor < n - 1 ? '▶ resume' : '▶ play'}</button>
         {cursor >= 0 && <button className="mini" style={{ marginTop: 0 }} onClick={() => { setPlaying(false); setCursor(-1) }}>show all</button>}
-        <span className="dim" style={{ font: `400 11px 'IBM Plex Mono', monospace` }}>
+        <span className="dim" style={{ font: `400 11px var(--mono)` }}>
           {Object.entries(counts).map(([t, c]) => `${STYLE[t].icon} ${c}`).join('  ')}
         </span>
-        {cursor >= 0 && <span className="dim" style={{ font: `400 11px 'IBM Plex Mono', monospace`, marginLeft: 'auto' }}>{cursor + 1} / {n}</span>}
+        {cursor >= 0 && <span className="dim" style={{ font: `400 11px var(--mono)`, marginLeft: 'auto' }}>{cursor + 1} / {n}</span>}
       </div>
       {cursor >= 0 && (
         <input type="range" min={0} max={n - 1} value={cursor} onChange={e => { setPlaying(false); setCursor(Number(e.target.value)) }} style={{ width: '100%' }} />

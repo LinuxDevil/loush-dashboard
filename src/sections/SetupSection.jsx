@@ -14,15 +14,15 @@ import Skeleton from '../ui/Skeleton.jsx'
 // alone; clearing one requires the explicit Remove button. If the field round-tripped the value it
 // would be visible in devtools, in a screenshot, and in any cached response.
 
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', DIM = '#8a807a', ACCENT = '#d97757'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)', ACCENT = 'var(--accent)'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-const card = { background: 'rgba(28,24,21,.55)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 12, padding: 16 }
-const inp = { width: '100%', padding: '8px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,.14)', background: 'rgba(0,0,0,.3)', color: '#eee3da', font: `400 13px ${MONO}`, outline: 'none', boxSizing: 'border-box' }
-const btn = { padding: '7px 13px', borderRadius: 8, border: '1px solid rgba(255,255,255,.16)', background: 'rgba(28,24,21,.9)', color: '#d8cfc7', cursor: 'pointer', font: '500 12.5px sans-serif' }
-const primary = { ...btn, background: ACCENT, color: '#12100e', border: 'none', fontWeight: 600 }
+const card = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 16 }
+const inp = { width: '100%', padding: '8px 11px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-inset)', color: 'var(--text-primary)', font: `400 13px ${MONO}`, outline: 'none', boxSizing: 'border-box' }
+const btn = { padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer', font: '500 13px sans-serif' }
+const primary = { ...btn, background: ACCENT, color: 'var(--bg-base)', border: 'none', fontWeight: 600 }
 const danger = { ...btn, color: RED, borderColor: RED + '55' }
 
 const Field = ({ label, hint, children }) => (
@@ -35,7 +35,7 @@ const Field = ({ label, hint, children }) => (
 const Section = ({ title, sub, children, right }) => (
   <div style={{ ...card, marginBottom: 16 }}>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-      <h3 style={{ margin: 0, font: `600 15px ${HEAD}`, color: '#f6efe9' }}>{title}</h3>
+      <h3 style={{ margin: 0, font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>{title}</h3>
       <span style={{ font: `400 11px ${MONO}`, color: DIM, flex: 1 }}>{sub}</span>
       {right}
     </div>
@@ -56,8 +56,8 @@ export default function SetupSection() {
 
   return (
     <div style={{ maxWidth: 940 }}>
-      <p style={{ color: DIM, font: '400 12.5px sans-serif', lineHeight: 1.6, margin: '0 0 16px' }}>
-        Everything below is written to files on this machine. <b style={{ color: '#e8e0d8' }}>Credentials are
+      <p style={{ color: DIM, font: '400 13px sans-serif', lineHeight: 1.6, margin: '0 0 16px' }}>
+        Everything below is written to files on this machine. <b style={{ color: 'var(--text-primary)' }}>Credentials are
         write-only</b> — no endpoint in this app will return a stored token, so these fields are always blank
         on load and submitting a blank one leaves the saved value untouched.
       </p>
@@ -114,14 +114,14 @@ function Credentials({ d, reload }) {
       {!c.file.gitignored && c.file.exists && (
         <div style={{ ...card, borderColor: RED, background: RED + '14', marginBottom: 14 }}>
           <b style={{ color: RED }}>⚠ {c.file.path.replace(/^.*\//, '')} is not in .gitignore</b>
-          <div style={{ color: '#e7c0c1', font: '400 12px sans-serif', marginTop: 4 }}>
+          <div style={{ color: 'var(--red)', font: '400 12px sans-serif', marginTop: 4 }}>
             Your API token is committable right now. This is exactly how ten employee email addresses
             reached this repo's history. Add it to .gitignore before your next commit.
           </div>
         </div>
       )}
       {c.envOverride && (
-        <div style={{ ...card, borderColor: GOLD + '66', background: GOLD + '10', marginBottom: 14, font: '400 12px sans-serif', color: '#e8d7b8' }}>
+        <div style={{ ...card, borderColor: GOLD + '66', background: GOLD + '10', marginBottom: 14, font: '400 12px sans-serif', color: 'var(--amber)' }}>
           <b>Environment variables are set</b> (JIRA_EMAIL / JIRA_API_TOKEN) and take precedence over this file.
           Anything saved here will be ignored until they are unset.
         </div>
@@ -156,18 +156,18 @@ function Credentials({ d, reload }) {
         </span>}
       </div>
 
-      <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,.07)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 12.5px sans-serif', color: '#c8bdb4' }}>
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border-default)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, font: '400 13px sans-serif', color: 'var(--text-secondary)' }}>
           <Dot ok={d.gh.authed} warn={d.gh.installed && !d.gh.authed} />
           <b>GitHub CLI</b>
-          <span style={{ color: DIM, font: `400 11.5px ${MONO}` }}>
+          <span style={{ color: DIM, font: `400 12px ${MONO}` }}>
             {d.gh.authed ? `authenticated${d.gh.user ? ' as ' + d.gh.user : ''}`
               : d.gh.installed ? 'installed but not authenticated' : 'not installed'}
           </span>
         </div>
-        <div style={{ color: DIM, font: '400 11.5px sans-serif', marginTop: 5, lineHeight: 1.5 }}>
+        <div style={{ color: DIM, font: '400 12px sans-serif', marginTop: 5, lineHeight: 1.5 }}>
           GitHub access is the <code style={{ fontFamily: MONO }}>gh</code> CLI's own login — this app never stores a
-          GitHub token, so there is nothing to enter here. {d.gh.authed ? '' : <>Run <code style={{ fontFamily: MONO, color: '#e8e0d8' }}>gh auth login</code> in a terminal, then reload.</>}
+          GitHub token, so there is nothing to enter here. {d.gh.authed ? '' : <>Run <code style={{ fontFamily: MONO, color: 'var(--text-primary)' }}>gh auth login</code> in a terminal, then reload.</>}
         </div>
       </div>
     </Section>
@@ -197,16 +197,16 @@ function Projects({ d, reload }) {
     <Section title="Projects" sub="one JIRA board + GitHub repo each"
       right={<button style={btn} onClick={() => setEdit({ ...blankProject })}>+ Add project</button>}>
       {!list.length && !edit && (
-        <div style={{ color: DIM, font: '400 12.5px sans-serif', lineHeight: 1.6 }}>
+        <div style={{ color: DIM, font: '400 13px sans-serif', lineHeight: 1.6 }}>
           No projects configured. The Delivery section will report “not configured” rather than showing
-          anything — which is the honest answer. Everything in <b style={{ color: '#e8e0d8' }}>Working Set</b>,
+          anything — which is the honest answer. Everything in <b style={{ color: 'var(--text-primary)' }}>Working Set</b>,
           Harness and Capabilities works without this.
         </div>
       )}
       {list.map(p => (
-        <div key={p.key} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,.06)', flexWrap: 'wrap' }}>
+        <div key={p.key} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border-default)', flexWrap: 'wrap' }}>
           <span style={{ font: `600 12px ${MONO}`, color: ACCENT, minWidth: 46 }}>{p.key}</span>
-          <span style={{ font: '500 13px sans-serif', color: '#e8e0d8', flex: 1, minWidth: 120 }}>{p.name || p.key}</span>
+          <span style={{ font: '500 13px sans-serif', color: 'var(--text-primary)', flex: 1, minWidth: 120 }}>{p.name || p.key}</span>
           <span style={{ font: `400 11px ${MONO}`, color: DIM }}>{p.githubRepo || 'no repo'}</span>
           <span title="dev / qa / product" style={{ font: `400 11px ${MONO}`, color: DIM }}>
             {(p.devEmails || []).length}/{(p.qaEmails || []).length}/{(p.productEmails || []).length}
@@ -221,7 +221,7 @@ function Projects({ d, reload }) {
       ))}
 
       {edit && (
-        <div style={{ ...card, marginTop: 14, background: 'rgba(0,0,0,.22)' }}>
+        <div style={{ ...card, marginTop: 14, background: 'var(--bg-inset)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
             <Field label="JIRA project key" hint="Uppercase, e.g. ABC — used to match ticket ids in branch names">
               <input value={edit.key} onChange={e => setEdit({ ...edit, key: e.target.value.toUpperCase() })} placeholder="ABC" style={inp} />
@@ -243,8 +243,8 @@ function Projects({ d, reload }) {
           </div>
           <label style={{ display: 'flex', gap: 9, alignItems: 'flex-start', justifyContent: 'flex-start', margin: '4px 0 14px', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!edit.writes} onChange={e => setEdit({ ...edit, writes: e.target.checked })} style={{ width: 'auto', flex: '0 0 auto', marginTop: 3 }} />
-            <span style={{ font: '400 12.5px sans-serif', color: '#c8bdb4', lineHeight: 1.5 }}>
-              <b style={{ color: '#e8e0d8' }}>Allow writes to JIRA and GitHub</b> — lets the dashboard transition tickets
+            <span style={{ font: '400 13px sans-serif', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <b style={{ color: 'var(--text-primary)' }}>Allow writes to JIRA and GitHub</b> — lets the dashboard transition tickets
               and comment on PRs for this project. Off by default: it copies a line for you to send instead.
             </span>
           </label>
@@ -293,9 +293,9 @@ function WorkWeek({ d, reload }) {
           {DAYS.map((n, i) => (
             <button key={i} onClick={() => toggleDay(i)} style={{
               ...btn, padding: '6px 12px',
-              background: w.weekend.includes(i) ? GOLD + '22' : 'rgba(28,24,21,.9)',
-              borderColor: w.weekend.includes(i) ? GOLD + '77' : 'rgba(255,255,255,.16)',
-              color: w.weekend.includes(i) ? GOLD : '#d8cfc7',
+              background: w.weekend.includes(i) ? GOLD + '22' : 'var(--bg-surface)',
+              borderColor: w.weekend.includes(i) ? GOLD + '77' : 'var(--bg-surface-active)',
+              color: w.weekend.includes(i) ? GOLD : 'var(--text-primary)',
             }}>{n}</button>
           ))}
         </div>
@@ -324,7 +324,7 @@ function StoryPoints({ d, reload }) {
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         {rows.map((r, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(0,0,0,.25)', padding: '6px 8px', borderRadius: 8 }}>
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--bg-inset)', padding: '6px 8px', borderRadius: 8 }}>
             <input value={r[0]} onChange={e => set(i, 0, e.target.value)} style={{ ...inp, width: 52, padding: '4px 6px', textAlign: 'center' }} />
             <span style={{ color: DIM, font: `400 11px ${MONO}` }}>→</span>
             <input value={r[1]} onChange={e => set(i, 1, e.target.value)} style={{ ...inp, width: 58, padding: '4px 6px', textAlign: 'center' }} />
@@ -359,14 +359,14 @@ function OrgTools({ d, reload }) {
   return (
     <Section title="Almosafer tools" sub="org-specific bundle — Constitution + Figma Capture">
       <p style={{ color: DIM, font: '400 12px sans-serif', margin: '0 0 14px', lineHeight: 1.6 }}>
-        The <b style={{ color: '#e8e0d8' }}>Constitution</b> reader needs a <code style={{ fontFamily: MONO }}>.wakeel/constitution/</code> knowledge
-        base in the repo, and <b style={{ color: '#e8e0d8' }}>Figma Capture</b> ships against a specific design-system catalog. Both are
+        The <b style={{ color: 'var(--text-primary)' }}>Constitution</b> reader needs a <code style={{ fontFamily: MONO }}>.wakeel/constitution/</code> knowledge
+        base in the repo, and <b style={{ color: 'var(--text-primary)' }}>Figma Capture</b> ships against a specific design-system catalog. Both are
         useless outside the org that has that layout, so they are off unless this is on. The server
         gates the same flag at mount time — with it off those routes do not exist at all.
       </p>
       <label style={{ display: 'flex', gap: 9, alignItems: 'center', justifyContent: 'flex-start', width: 'fit-content', marginBottom: 12, cursor: 'pointer' }}>
         <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ width: 'auto', flex: '0 0 auto', margin: 0 }} />
-        <span style={{ font: '400 12.5px sans-serif', color: '#c8bdb4' }}>Enable the <b style={{ color: '#e8e0d8' }}>Almosafer tools</b> tab</span>
+        <span style={{ font: '400 13px sans-serif', color: 'var(--text-secondary)' }}>Enable the <b style={{ color: 'var(--text-primary)' }}>Almosafer tools</b> tab</span>
       </label>
       <Field label="Restrict to these identities" hint="Optional. Leave empty to enable for whoever is running the dashboard; otherwise the configured JIRA email (or JIRA_EMAIL) must be listed.">
         <textarea value={emails} onChange={e => setEmails(e.target.value)} rows={2} placeholder="you@example.com" style={{ ...inp, resize: 'vertical' }} />
@@ -395,7 +395,7 @@ function Notifications({ d, reload }) {
     <Section title="Notifications" sub="Inbox alerts — optional">
       <label style={{ display: 'flex', gap: 9, alignItems: 'center', justifyContent: 'flex-start', width: 'fit-content', marginBottom: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={desktop} onChange={e => setDesktop(e.target.checked)} style={{ width: 'auto', flex: '0 0 auto', margin: 0 }} />
-        <span style={{ font: '400 12.5px sans-serif', color: '#c8bdb4' }}>Desktop notifications for new error / warning Inbox items</span>
+        <span style={{ font: '400 13px sans-serif', color: 'var(--text-secondary)' }}>Desktop notifications for new error / warning Inbox items</span>
       </label>
       <Field label="Slack webhook"
         hint={<span><Dot ok={d.notify.slackWebhookSet} /> {d.notify.slackWebhookSet ? 'stored (write-only, never displayed)' : 'not set'} — posts to a channel; it never @-mentions anyone on your behalf</span>}>

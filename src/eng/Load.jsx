@@ -42,8 +42,8 @@ export default function Load({ snap }) {
       </div>
     </Card>
 
-    <Card style={{ borderColor: 'rgba(95,211,154,0.2)' }}>
-      <div style={{ font: `400 12px/1.7 ${BODY}`, color: '#a89f97' }}>
+    <Card style={{ borderColor: 'var(--green)' }}>
+      <div style={{ font: `400 12px/1.7 ${BODY}`, color: 'var(--text-secondary)' }}>
         <b style={{ color: HI }}>Why there is no per-person column here.</b> {L.note} Sourced from PR open times run through the working-hours engine — never from transcripts, tokens or active hours.
         Below {L.minN} contributors in a week the cell is <b>null before it leaves the server</b>, so a per-engineer breakdown is not reconstructable from this payload, by construction.
         This card has no button on purpose: the earliest burnout signal available deserves a conversation, not a nudge.

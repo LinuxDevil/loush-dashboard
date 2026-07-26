@@ -5,9 +5,9 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
 
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'SessionStart', 'SessionEnd', 'PreCompact', 'Notification']
 
 export default function HooksSection() {
@@ -37,11 +37,11 @@ function MatcherTest() {
       <div style={{ font: `600 13px ${HEAD}`, marginBottom: 10 }}>Matcher tester</div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input value={matcher} onChange={e => setMatcher(e.target.value)} placeholder="matcher pattern (regex, empty = all)" style={{ flex: 1 }} />
-        <span style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>vs tool</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>vs tool</span>
         <input value={tool} onChange={e => setTool(e.target.value)} placeholder="Bash" style={{ width: 200 }} />
-        {r && <span style={{ font: `600 12px ${MONO}`, color: r.fires ? '#3fb96a' : '#e5484d', width: 90 }}>{r.fires ? '✓ fires' : '✗ no match'}</span>}
+        {r && <span style={{ font: `600 12px ${MONO}`, color: r.fires ? 'var(--green)' : 'var(--red)', width: 90 }}>{r.fires ? '✓ fires' : '✗ no match'}</span>}
       </div>
-      {r?.note && <div style={{ font: `400 10.5px ${MONO}`, color: '#e5a03a', marginTop: 6 }}>{r.note}</div>}
+      {r?.note && <div style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', marginTop: 6 }}>{r.note}</div>}
     </div>
   )
 }
@@ -109,7 +109,7 @@ function Editor() {
                 <div className="row-desc mono">{h.command}</div>
                 <div className="row-meta">
                   {h.timeout ? `timeout: ${h.timeout}s · ` : ''}
-                  <span style={{ cursor: 'pointer', color: '#e5484d' }} onClick={() => removeHook(h.key)}>remove</span>
+                  <span style={{ cursor: 'pointer', color: 'var(--red)' }} onClick={() => removeHook(h.key)}>remove</span>
                 </div>
               </div>
             ))}
@@ -149,7 +149,7 @@ function DryRun() {
   return (
     <div className="hx-2a">
       <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ font: `600 15px ${HEAD}` }}>Dry-run a hook</div>
+        <div style={{ font: `600 14px ${HEAD}` }}>Dry-run a hook</div>
         <select value={pick} onChange={e => { setPick(e.target.value); const h = all[Number(e.target.value)]; if (h) { setCommand(h.command); setEvent(h.event) } }} style={{ width: '100%' }}>
           <option value="">— pick an existing hook, or type a command —</option>
           {all.map((h, i) => <option key={i} value={i}>{h.label} — {h.command.slice(0, 60)}</option>)}
@@ -161,16 +161,16 @@ function DryRun() {
         </div>
         <textarea rows={3} value={toolInput} onChange={e => setToolInput(e.target.value)} placeholder='sample tool input (JSON)' />
         <button className="primary" style={{ alignSelf: 'flex-start' }} onClick={run} disabled={busy || !command}>{busy ? 'running…' : '▸ Dry-run'}</button>
-        <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>runs the real command with your sample payload on stdin — nothing is written to config · exit 2 = block, JSON {'{"decision":…}'} honoured</div>
+        <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>runs the real command with your sample payload on stdin — nothing is written to config · exit 2 = block, JSON {'{"decision":…}'} honoured</div>
       </div>
       <div style={{ ...PANEL }}>
-        <div style={{ font: `600 15px ${HEAD}`, marginBottom: 12 }}>Result</div>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 12 }}>Result</div>
         {r ? <>
-          <div style={{ font: `600 16px ${HEAD}`, color: /BLOCK/.test(r.decision) ? '#e5484d' : r.decision === 'allow' ? '#3fb96a' : '#e5a03a' }}>{r.decision}</div>
-          <div style={{ font: `400 11px ${MONO}`, color: '#8a807a', margin: '6px 0 10px' }}>exit {r.exit ?? '—'} · {r.ms != null ? r.ms + 'ms latency added per matching tool call' : ''}</div>
-          {r.stdout && <pre style={{ font: `400 10.5px/1.5 ${MONO}`, color: '#b0a69e', background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap' }}>{r.stdout}</pre>}
-          {r.stderr && <pre style={{ font: `400 10.5px/1.5 ${MONO}`, color: '#f0a0a3', background: 'rgba(229,72,77,0.06)', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap' }}>{r.stderr}</pre>}
-        </> : <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>run a hook against a sample tool call to see whether it would fire, allow, or block — and what latency it adds</div>}
+          <div style={{ font: `600 16px ${HEAD}`, color: /BLOCK/.test(r.decision) ? 'var(--red)' : r.decision === 'allow' ? 'var(--green)' : 'var(--amber)' }}>{r.decision}</div>
+          <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', margin: '6px 0 10px' }}>exit {r.exit ?? '—'} · {r.ms != null ? r.ms + 'ms latency added per matching tool call' : ''}</div>
+          {r.stdout && <pre style={{ font: `400 11px/1.5 ${MONO}`, color: 'var(--text-secondary)', background: 'var(--bg-inset)', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap' }}>{r.stdout}</pre>}
+          {r.stderr && <pre style={{ font: `400 11px/1.5 ${MONO}`, color: 'var(--red)', background: 'var(--red-bg)', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap' }}>{r.stderr}</pre>}
+        </> : <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>run a hook against a sample tool call to see whether it would fire, allow, or block — and what latency it adds</div>}
       </div>
     </div>
   )
@@ -185,28 +185,28 @@ function Health() {
   return (
     <div className="hx-2a">
       <div style={{ ...PANEL }}>
-        <div style={{ font: `600 15px ${HEAD}`, marginBottom: 12 }}>Firings by event <span style={{ font: `400 11px ${MONO}`, color: '#8a807a' }}>all transcripts</span></div>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 12 }}>Firings by event <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>all transcripts</span></div>
         {rows.map(([ev, n]) => (
           <div key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0' }}>
-            <span style={{ width: 150, font: `400 11px ${MONO}`, color: '#c8bdb4' }}>{ev}</span>
-            <div style={{ flex: 1, height: 9, borderRadius: 5, background: 'rgba(255,255,255,0.05)', overflow: 'hidden' }}>
-              <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: 'linear-gradient(90deg,#e8a06a,#d97757)', borderRadius: 5 }} />
+            <span style={{ width: 150, font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{ev}</span>
+            <div style={{ flex: 1, height: 9, borderRadius: 5, background: 'var(--bg-surface-hover)', overflow: 'hidden' }}>
+              <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent-light),var(--accent))', borderRadius: 5 }} />
             </div>
-            <span style={{ width: 70, textAlign: 'right', font: `500 11px ${MONO}`, color: '#8a807a' }}>{n.toLocaleString()}</span>
+            <span style={{ width: 70, textAlign: 'right', font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{n.toLocaleString()}</span>
           </div>
         ))}
-        {rows.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: '#5a514a' }}>no hook firings found in transcripts</div>}
+        {rows.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no hook firings found in transcripts</div>}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div className="hx-2" style={{ gap: 14 }}>
-          {[['Total firings', h.total, '#d97757'], ['Blocks observed', h.blocks, '#e5484d'], ['Sessions scanned', h.sessions, '#5eb3f6']].map(([l, v, c]) => (
+          {[['Total firings', h.total, 'var(--accent)'], ['Blocks observed', h.blocks, 'var(--red)'], ['Sessions scanned', h.sessions, 'var(--blue)']].map(([l, v, c]) => (
             <div key={l} style={{ ...PANEL, padding: '15px 17px' }}>
-              <div style={{ font: `600 10.5px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#8a807a' }}>{l}</div>
-              <div style={{ font: `600 24px ${HEAD}`, color: c, marginTop: 6 }}>{Number(v).toLocaleString()}</div>
+              <div style={{ font: `600 11px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{l}</div>
+              <div style={{ font: `600 20px ${HEAD}`, color: c, marginTop: 6 }}>{Number(v).toLocaleString()}</div>
             </div>
           ))}
         </div>
-        <div style={{ ...PANEL, font: `400 11px ${MONO}`, color: '#7a716a', lineHeight: 1.7 }}>{h.note} — agent-type hooks spawn subagents and add real time per call; dry-run one to measure it.</div>
+        <div style={{ ...PANEL, font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.7 }}>{h.note} — agent-type hooks spawn subagents and add real time per call; dry-run one to measure it.</div>
       </div>
     </div>
   )
@@ -229,7 +229,7 @@ function Library() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>install into</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>install into</span>
         <select value={scope} onChange={e => setScope(e.target.value)}>{scopes.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14 }}>
@@ -240,8 +240,8 @@ function Library() {
               <span className="badge project">{p.event}</span>
               {p.matcher && <span className="badge user">{p.matcher}</span>}
             </div>
-            <div style={{ font: "400 12px 'IBM Plex Sans'", color: '#b0a69e', flex: 1 }}>{p.description}</div>
-            <pre style={{ margin: 0, font: `400 9.5px/1.5 ${MONO}`, color: '#7a716a', background: 'rgba(0,0,0,0.25)', borderRadius: 8, padding: 8, maxHeight: 90, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{p.command}</pre>
+            <div style={{ font: "400 12px var(--body)", color: 'var(--text-secondary)', flex: 1 }}>{p.description}</div>
+            <pre style={{ margin: 0, font: `400 10px/1.5 ${MONO}`, color: 'var(--text-tertiary)', background: 'var(--bg-inset)', borderRadius: 8, padding: 8, maxHeight: 90, overflow: 'auto', whiteSpace: 'pre-wrap' }}>{p.command}</pre>
             <button className="primary" style={{ alignSelf: 'flex-start', fontSize: 12 }} onClick={() => install(p.name)}>Install</button>
           </div>
         ))}

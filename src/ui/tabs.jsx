@@ -3,7 +3,7 @@
 // was involved. They are pure presentation with no Governance coupling; only their address changes.
 import React from 'react'
 
-const MONO = "'IBM Plex Mono', monospace"
+const MONO = "var(--mono)"
 
 // minimal LCS line diff — good enough for config files
 export function lineDiff(a, b) {
@@ -25,19 +25,22 @@ export function lineDiff(a, b) {
 }
 
 export const DiffView = ({ before, after }) => (
-  <pre style={{ margin: 0, padding: '14px 16px', font: `400 11px/1.6 ${MONO}`, overflowX: 'auto', maxHeight: 420, overflowY: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: 10 }}>
+  <pre style={{ margin: 0, padding: '14px 16px', font: `400 11px/1.6 ${MONO}`, overflowX: 'auto', maxHeight: 420, overflowY: 'auto', background: 'var(--bg-inset)', borderRadius: 6 }}>
     {lineDiff(before, after).map((d, i) => (
-      <div key={i} style={{ color: d.t === '+' ? '#7fd6a0' : d.t === '-' ? '#f0a0a3' : '#8a807a', background: d.t === '+' ? 'rgba(63,185,106,0.07)' : d.t === '-' ? 'rgba(229,72,77,0.07)' : 'transparent', whiteSpace: 'pre-wrap' }}>
+      <div key={i} style={{ color: d.t === '+' ? 'var(--green)' : d.t === '-' ? 'var(--red)' : 'var(--text-secondary)', background: d.t === '+' ? 'var(--green-bg)' : d.t === '-' ? 'var(--red-bg)' : 'transparent', whiteSpace: 'pre-wrap' }}>
         {d.t} {d.l}
       </div>
     ))}
   </pre>
 )
 
+// Underline tabs, not a pill group: the active tab is marked by a 2px rule that reads as "this panel
+// belongs to that label", and the row doubles as the section's top border. Styling lives in the .tabs
+// block of styles.css so the whole app changes in one place.
 export const Tabs = ({ tabs, tab, setTab }) => (
-  <div style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 10, background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.06)', width: 'fit-content' }}>
+  <div className="tabs" role="tablist">
     {tabs.map(t => (
-      <button key={t} onClick={() => setTab(t)} style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', font: `600 11px ${MONO}`, background: tab === t ? 'rgba(217,119,87,0.18)' : 'transparent', color: tab === t ? '#f0e7e0' : '#8a807a' }}>{t}</button>
+      <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t}</button>
     ))}
   </div>
 )

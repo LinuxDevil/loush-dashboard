@@ -3,12 +3,12 @@ import { CountUp, Stagger } from '../ui/anim.jsx'
 
 // Design tokens + primitives lifted out of EngDashboard.jsx unchanged, so every src/eng/ panel is
 // pixel-identical to the shell that hosts it. Nothing here is new styling — it is the existing system.
-export const HEAD = "'Space Grotesk', sans-serif"
-export const BODY = "'IBM Plex Sans', sans-serif"
-export const MONO = "'IBM Plex Mono', monospace"
-export const BB = '#5eb3f6', GREEN = '#3fb96a', GOLD = '#e5a03a', RED = '#e5484d', PURPLE = '#8b7cf6', PINK = '#f2a2c4', STEEL = '#9a8f86'
-export const DIM = '#7a716a', TXT = '#c8bdb4', HI = '#f6efe9'
-export const PANEL = { background: 'linear-gradient(160deg,rgba(28,24,21,0.92),rgba(13,11,10,0.72))', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 14 }
+export const HEAD = "var(--head)"
+export const BODY = "var(--body)"
+export const MONO = "var(--mono)"
+export const BB = 'var(--blue)', GREEN = 'var(--green)', GOLD = 'var(--amber)', RED = 'var(--red)', PURPLE = 'var(--violet)', PINK = 'var(--pink)', STEEL = 'var(--text-secondary)'
+export const DIM = 'var(--text-tertiary)', TXT = 'var(--text-secondary)', HI = 'var(--text-primary)'
+export const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8 }
 export const AVATARS = [BB, PURPLE, GREEN, GOLD, PINK, STEEL]
 export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -18,28 +18,28 @@ export const fdate = s => (s ? new Date(s).toLocaleDateString([], { month: 'shor
 export const fdt = s => (s ? new Date(s).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—')
 export const initials = n => (n || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 export const first = n => (n ? String(n).split(' ')[0] : '—')
-export const colorFor = name => ({ 'in progress': BB, 'in code review': PURPLE, 'design qa': PINK, 'ready for qa': GOLD, 'in qa (dev)': GREEN, 'in qa': GREEN, 'qa blocked': RED, 'ready for release': STEEL, live: GREEN }[lc(name)] || '#8a807a')
+export const colorFor = name => ({ 'in progress': BB, 'in code review': PURPLE, 'design qa': PINK, 'ready for qa': GOLD, 'in qa (dev)': GREEN, 'in qa': GREEN, 'qa blocked': RED, 'ready for release': STEEL, live: GREEN }[lc(name)] || 'var(--text-secondary)')
 
-export const sel = { padding: '6px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(28,24,21,0.9)', color: '#d8cfc7', font: `500 12px ${BODY}`, outline: 'none', cursor: 'pointer' }
-export const miniBtn = { padding: '4px 10px', borderRadius: 7, border: '1px solid rgba(255,255,255,0.18)', background: 'rgba(28,24,21,0.9)', color: '#d8cfc7', cursor: 'pointer', font: `500 11px ${BODY}`, whiteSpace: 'nowrap' }
-export const primaryBtn = { ...miniBtn, border: 'none', background: 'linear-gradient(135deg,#e8a06a,#b8532f)', color: '#2a1712', fontWeight: 600 }
-export const inp = { width: '100%', padding: '9px 11px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(13,11,10,0.7)', color: '#eee3da', font: `400 13px ${BODY}`, outline: 'none', boxSizing: 'border-box' }
+export const sel = { padding: '6px 11px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', font: `500 12px ${BODY}`, outline: 'none', cursor: 'pointer' }
+export const miniBtn = { padding: '4px 10px', borderRadius: 7, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer', font: `500 11px ${BODY}`, whiteSpace: 'nowrap' }
+export const primaryBtn = { ...miniBtn, border: 'none', background: 'linear-gradient(135deg,var(--accent-light),var(--accent-dark))', color: 'var(--bg-surface-active)', fontWeight: 600 }
+export const inp = { width: '100%', padding: '9px 11px', borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-base)', color: 'var(--text-primary)', font: `400 13px ${BODY}`, outline: 'none', boxSizing: 'border-box' }
 
 export const Card = ({ children, style }) => <div style={{ ...PANEL, padding: '16px 18px', ...style }}>{children}</div>
 export const CardHead = ({ title, meta, right }) => <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
   <div style={{ font: `600 14px ${HEAD}`, color: HI }}>{title}</div>
-  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ font: `400 10.5px ${MONO}`, color: DIM }}>{meta}</span>{right}</div>
+  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ font: `400 11px ${MONO}`, color: DIM }}>{meta}</span>{right}</div>
 </div>
 export const H1 = ({ kicker, title, right }) => <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-  <div><div style={{ font: `600 10.5px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8a807a' }}>{kicker}</div>
-    <h1 style={{ margin: '4px 0 0', font: `700 22px ${HEAD}`, letterSpacing: '-0.01em', color: '#f6efe9' }}>{title}</h1></div>
+  <div><div style={{ font: `600 11px ${MONO}`, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{kicker}</div>
+    <h1 style={{ margin: '4px 0 0', font: `700 18px ${HEAD}`, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>{title}</h1></div>
   {right}</div>
 export const Empty = ({ text }) => <div style={{ padding: 18, textAlign: 'center', font: `400 12px ${BODY}`, color: DIM }}>{text}</div>
-export const ProjTag = ({ k }) => (k ? <span style={{ font: `600 8px ${MONO}`, letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 4, background: 'rgba(124,155,214,0.14)', color: '#c8bdb4' }}>{k}</span> : null)
+export const ProjTag = ({ k }) => (k ? <span style={{ font: `600 8px ${MONO}`, letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 4, background: 'var(--blue-bg)', color: 'var(--text-secondary)' }}>{k}</span> : null)
 export const Legend = ({ c, label, v }) => <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
   <span style={{ width: 9, height: 9, borderRadius: 3, background: c, flexShrink: 0 }} />
-  <span style={{ font: `400 11.5px ${BODY}`, color: '#a89f97' }}>{label}{v != null && <b style={{ color: HI, fontWeight: 600 }}> {v}</b>}</span></div>
-export const Spinner = ({ size = 14 }) => <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid rgba(255,255,255,0.25)', borderTopColor: BB, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+  <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>{label}{v != null && <b style={{ color: HI, fontWeight: 600 }}> {v}</b>}</span></div>
+export const Spinner = ({ size = 14 }) => <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid var(--border-default)', borderTopColor: BB, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
 
 // AnimatedValue — the ONE null-vs-zero guard for every stat in the dashboard. It takes the ALREADY
 // FORMATTED string a tile would have rendered ("3.2d", "85%", "1,204", "—", "FLAG", "green") and only
@@ -64,24 +64,24 @@ export function AnimatedValue({ value, duration }) {
 
 // KPI tile with percentiles instead of a mean. n is always shown; n<5 goes grey (§2 hard rule).
 export function Kpi({ label, value, color = HI, sub, n, thin, delta, onCopy }) {
-  const c = thin ? '#8a807a' : color
+  const c = thin ? 'var(--text-secondary)' : color
   return <div title={thin ? `n=${n} — below the n≥5 floor, treat as anecdote` : undefined}
-    style={{ background: 'linear-gradient(150deg,rgba(28,24,21,0.85),rgba(13,11,10,0.6))', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 13, padding: '13px 14px', display: 'flex', flexDirection: 'column', gap: 5, position: 'relative' }}>
-    <span style={{ display: 'flex', alignItems: 'center', gap: 6, font: `600 9.5px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#8a807a' }}>
-      {label}{n != null && <span style={{ color: thin ? GOLD : '#5c554f', letterSpacing: 0 }}>n={n}</span>}
-      {onCopy && <button onClick={onCopy} title="copy the underlying array as JSON" style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#5c554f', cursor: 'pointer', font: `600 10px ${MONO}`, padding: 0 }}>{'{ }'}</button>}
+    style={{ background: 'linear-gradient(150deg,var(--bg-surface),var(--bg-base))', border: '1px solid var(--border-default)', borderRadius: 6, padding: '13px 14px', display: 'flex', flexDirection: 'column', gap: 5, position: 'relative' }}>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6, font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+      {label}{n != null && <span style={{ color: thin ? GOLD : 'var(--text-tertiary)', letterSpacing: 0 }}>n={n}</span>}
+      {onCopy && <button onClick={onCopy} title="copy the underlying array as JSON" style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', font: `600 10px ${MONO}`, padding: 0 }}>{'{ }'}</button>}
     </span>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-      <span style={{ font: `700 22px ${HEAD}`, color: c, letterSpacing: '-0.01em' }}><AnimatedValue value={value} /></span>
-      {delta && <span style={{ font: `600 10.5px ${MONO}`, color: delta.good ? GREEN : RED }}>{delta.txt}</span>}
+      <span style={{ font: `700 18px ${HEAD}`, color: c, letterSpacing: '-0.01em' }}><AnimatedValue value={value} /></span>
+      {delta && <span style={{ font: `600 11px ${MONO}`, color: delta.good ? GREEN : RED }}>{delta.txt}</span>}
     </div>
     <span style={{ font: `400 10px ${BODY}`, color: DIM }}>{sub}</span>
   </div>
 }
-export const MiniStat = ({ label, v, c = HI, sub }) => <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 9, background: 'rgba(13,11,10,0.5)', border: '1px solid rgba(255,255,255,0.06)' }}>
+export const MiniStat = ({ label, v, c = HI, sub }) => <div style={{ flex: 1, minWidth: 0, padding: '8px 10px', borderRadius: 6, background: 'var(--bg-base)', border: '1px solid var(--border-default)' }}>
   <div style={{ font: `700 16px ${HEAD}`, color: c }}>{v}</div>
-  <div style={{ font: `400 8.5px ${MONO}`, color: DIM, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
-  {sub && <div style={{ font: `400 8px ${MONO}`, color: '#5c554f', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}</div>
+  <div style={{ font: `400 9px ${MONO}`, color: DIM, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+  {sub && <div style={{ font: `400 8px ${MONO}`, color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</div>}</div>
 
 // ---------- deep links ----------
 const linkStyle = c => ({ color: c, textDecoration: 'none', borderBottom: `1px dotted ${c}66`, cursor: 'pointer' })
@@ -99,12 +99,12 @@ export function PRLink({ pr, color = PURPLE, children, style }) {
 }
 export function PrBadge({ state }) {
   const c = state === 'Merged' || state === 'Approved' ? GREEN : state === 'Closed' ? RED : GOLD
-  const bg = state === 'Merged' || state === 'Approved' ? 'rgba(95,211,154,0.14)' : state === 'Closed' ? 'rgba(242,119,122,0.14)' : 'rgba(245,196,81,0.14)'
-  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: `600 9.5px ${MONO}`, padding: '2px 8px', borderRadius: 5, background: bg, color: c }}>{state}</span>
+  const bg = state === 'Merged' || state === 'Approved' ? 'var(--green-bg)' : state === 'Closed' ? 'var(--red-bg)' : 'var(--amber-bg)'
+  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: `600 10px ${MONO}`, padding: '2px 8px', borderRadius: 5, background: bg, color: c }}>{state}</span>
 }
 // §11 — a red PR must be visibly red, on every PR row in the app
 export function Checks({ state }) {
-  if (!state) return <span style={{ font: `500 11px ${MONO}`, color: '#3a332e' }}>—</span>
+  if (!state) return <span style={{ font: `500 11px ${MONO}`, color: 'var(--bg-surface-active)' }}>—</span>
   const m = { SUCCESS: ['✓', GREEN], FAILURE: ['✕', RED], ERROR: ['✕', RED], PENDING: ['◔', GOLD], EXPECTED: ['◔', GOLD] }[state] || ['?', DIM]
   return <span title={`checks: ${state}`} style={{ font: `700 11px ${MONO}`, color: m[1] }}>{m[0]}</span>
 }
@@ -122,11 +122,11 @@ export function useCopy() {
 export const CopyBtn = ({ text, label = 'Copy', copy, copied, id, style }) => <button onClick={e => { e.stopPropagation(); copy(typeof text === 'function' ? text() : text, id) }} style={{ ...miniBtn, ...style }}>{copied === id ? '✓ copied' : label}</button>
 
 // ---------- pagination ----------
-export const pagerBtn = dis => ({ width: 26, height: 24, borderRadius: 7, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(28,24,21,0.9)', color: dis ? '#3a332e' : '#d8cfc7', cursor: dis ? 'default' : 'pointer', font: `600 13px ${BODY}` })
+export const pagerBtn = dis => ({ width: 26, height: 24, borderRadius: 7, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: dis ? 'var(--bg-surface-active)' : 'var(--text-primary)', cursor: dis ? 'default' : 'pointer', font: `600 13px ${BODY}` })
 export function Pager({ page, pages, setPage }) {
   if (pages <= 1) return null
   return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '10px 18px' }}>
-    <span style={{ font: `400 10.5px ${MONO}`, color: DIM }}>page {page + 1} / {pages}</span>
+    <span style={{ font: `400 11px ${MONO}`, color: DIM }}>page {page + 1} / {pages}</span>
     <button disabled={page === 0} onClick={() => setPage(page - 1)} style={pagerBtn(page === 0)}>‹</button>
     <button disabled={page >= pages - 1} onClick={() => setPage(page + 1)} style={pagerBtn(page >= pages - 1)}>›</button>
   </div>
@@ -162,22 +162,22 @@ export function DataTable({ title, meta, right, columns, rows, getKey, initialSo
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '13px 16px 11px', flexWrap: 'wrap' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
         {title && <div style={{ font: `600 14px ${HEAD}`, color: HI }}>{title}</div>}
-        <div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>{filtered.length}{filtered.length !== rows.length ? `/${rows.length}` : ''}{meta ? ' · ' + meta : ''}</div>
+        <div style={{ font: `400 11px ${MONO}`, color: DIM }}>{filtered.length}{filtered.length !== rows.length ? `/${rows.length}` : ''}{meta ? ' · ' + meta : ''}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {right}
         {raw !== false && <CopyBtn copy={copy} copied={copied} id="raw" label="{ }" style={{ padding: '5px 8px', font: `600 11px ${MONO}` }} text={() => JSON.stringify(raw || filtered, null, 2)} />}
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder={filterPlaceholder} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(13,11,10,0.7)', color: '#eee3da', font: `400 12px ${BODY}`, outline: 'none', width: 148 }} />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder={filterPlaceholder} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-base)', color: 'var(--text-primary)', font: `400 12px ${BODY}`, outline: 'none', width: 148 }} />
       </div>
     </div>
     <div style={{ overflowX: 'auto' }}><div style={{ minWidth }}>
-      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '0 16px 9px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-        {columns.map(c => <span key={c.key} onClick={() => toggle(c)} style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: c.align ? 'flex-end' : 'flex-start', font: `600 9px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: sort?.key === c.key ? '#d8cfc7' : DIM, cursor: c.sort ? 'pointer' : 'default', userSelect: 'none' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '0 16px 9px', borderBottom: '1px solid var(--border-default)' }}>
+        {columns.map(c => <span key={c.key} onClick={() => toggle(c)} style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: c.align ? 'flex-end' : 'flex-start', font: `600 9px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: sort?.key === c.key ? 'var(--text-primary)' : DIM, cursor: c.sort ? 'pointer' : 'default', userSelect: 'none' }}>
           {c.label}{c.sort && <span style={{ fontSize: 8, opacity: sort?.key === c.key ? 1 : 0.35 }}>{sort?.key === c.key ? (sort.dir > 0 ? '▲' : '▼') : '↕'}</span>}</span>)}
       </div>
       {slice.length === 0 && <Empty text="Nothing matches." />}
       <Stagger key={`${p}-${sort?.key}-${sort?.dir}`} step={22} max={260}>
-        {slice.map(row => <div key={getKey(row)} className={onRowClick ? 'lift' : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '12px 16px', alignItems: 'center', cursor: onRowClick ? 'pointer' : 'default', background: activeKey != null && getKey(row) === activeKey ? 'rgba(255,255,255,0.08)' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
+        {slice.map(row => <div key={getKey(row)} className={onRowClick ? 'lift' : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '12px 16px', alignItems: 'center', cursor: onRowClick ? 'pointer' : 'default', background: activeKey != null && getKey(row) === activeKey ? 'var(--bg-surface-active)' : 'transparent', borderBottom: '1px solid var(--border-subtle)' }}>
           {columns.map(c => <span key={c.key} style={{ textAlign: c.align ? 'right' : 'left', minWidth: 0 }}>{c.render(row)}</span>)}
         </div>)}
       </Stagger>

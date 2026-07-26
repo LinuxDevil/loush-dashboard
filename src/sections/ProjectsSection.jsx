@@ -7,8 +7,8 @@ import { Stagger, CountUp, Draw } from '../ui/anim.jsx'
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-const PROJ_COLORS = ['#5eb3f6', '#3fb96a', '#8b7cf6', '#e8a06a', '#d97757', '#c98bf6']
-const LANG_COLOR = { TypeScript: '#3b82f6', JavaScript: '#e5a03a', Python: '#3fb96a', Go: '#5eb3f6', Rust: '#e5484d', Ruby: '#e5484d', CSS: '#c98bf6', Markdown: '#9a9089', Shell: '#3fb96a', Vue: '#3fb96a', PHP: '#8b7cf6', Java: '#e8a06a', Kotlin: '#8b7cf6', Swift: '#e8a06a', Dart: '#5eb3f6' }
+const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const LANG_COLOR = { TypeScript: 'var(--blue)', JavaScript: 'var(--amber)', Python: 'var(--green)', Go: 'var(--blue)', Rust: 'var(--red)', Ruby: 'var(--red)', CSS: 'var(--violet)', Markdown: 'var(--text-secondary)', Shell: 'var(--green)', Vue: 'var(--green)', PHP: 'var(--violet)', Java: 'var(--accent-light)', Kotlin: 'var(--violet)', Swift: 'var(--accent-light)', Dart: 'var(--blue)' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
 
@@ -72,7 +72,7 @@ function Scaffolder({ projects, onClose, onDone }) {
             <input value={skillQ} onChange={e => setSkillQ(e.target.value)} placeholder="filter skills…" />
             <div style={{ maxHeight: 150, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3, textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
               {skills.filter(s => !skillQ || s.name.includes(skillQ)).slice(0, 40).map(s => (
-                <label key={s.name} style={{ display: 'flex', gap: 8, alignItems: 'center', font: "400 12px 'IBM Plex Mono'", color: '#c8bdb4', cursor: 'pointer' }}>
+                <label key={s.name} style={{ display: 'flex', gap: 8, alignItems: 'center', font: "400 12px var(--mono)", color: 'var(--text-secondary)', cursor: 'pointer' }}>
                   <input type="checkbox" style={{ width: 13 }} checked={picked.includes(s.name)}
                     onChange={e => { setPicked(p => e.target.checked ? [...p, s.name] : p.filter(x => x !== s.name)); setPreview(null) }} />
                   {s.name}
@@ -85,9 +85,9 @@ function Scaffolder({ projects, onClose, onDone }) {
             <div className="field">dry-run preview — nothing written yet
               <div style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
                 {preview.map(f => (
-                  <details key={f.rel} style={{ padding: '4px 0', font: "400 12px 'IBM Plex Mono'" }}>
-                    <summary style={{ cursor: 'pointer', color: f.exists ? '#e5a03a' : '#3fb96a' }}>{f.exists ? '⚠ overwrites' : '+ creates'} {f.rel}</summary>
-                    <pre style={{ margin: '6px 0 0', padding: 10, background: 'rgba(0,0,0,0.3)', borderRadius: 8, maxHeight: 160, overflow: 'auto', font: "400 10.5px/1.5 'IBM Plex Mono'", color: '#9a9089', whiteSpace: 'pre-wrap' }}>{f.content.slice(0, 1500)}</pre>
+                  <details key={f.rel} style={{ padding: '4px 0', font: "400 12px var(--mono)" }}>
+                    <summary style={{ cursor: 'pointer', color: f.exists ? 'var(--amber)' : 'var(--green)' }}>{f.exists ? '⚠ overwrites' : '+ creates'} {f.rel}</summary>
+                    <pre style={{ margin: '6px 0 0', padding: 10, background: 'var(--bg-inset)', borderRadius: 8, maxHeight: 160, overflow: 'auto', font: "400 11px/1.5 var(--mono)", color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{f.content.slice(0, 1500)}</pre>
                   </details>
                 ))}
               </div>
@@ -124,10 +124,10 @@ export default function ProjectsSection() {
   const totSess = projects.reduce((s, p) => s + p.sessions, 0)
 
   const stats = [
-    ['Active now', active.length, '#3fb96a', `of ${projects.length} tracked`],
-    ['Output tokens', fmtTok(totOut), '#d97757', 'all projects · all time'],
-    ['Lines changed', fmtTok(totAdd + totDel), '#5eb3f6', `+${fmtTok(totAdd)} / −${fmtTok(totDel)} via edits`],
-    ['Sessions', totSess, '#8b7cf6', `${projects.reduce((s, p) => s + p.running + p.runningAgents, 0)} running`],
+    ['Active now', active.length, 'var(--green)', `of ${projects.length} tracked`],
+    ['Output tokens', fmtTok(totOut), 'var(--accent)', 'all projects · all time'],
+    ['Lines changed', fmtTok(totAdd + totDel), 'var(--blue)', `+${fmtTok(totAdd)} / −${fmtTok(totDel)} via edits`],
+    ['Sessions', totSess, 'var(--violet)', `${projects.reduce((s, p) => s + p.running + p.runningAgents, 0)} running`],
   ]
 
   return (
@@ -158,12 +158,12 @@ export default function ProjectsSection() {
               <div className="proj-path">{p.path}{p.current ? '  ·  this project' : ''}</div>
               {p.langs.length > 0 && (
                 <div className="proj-langs">
-                  {p.langs.map(l => <span className="proj-lang" key={l}><i style={{ background: LANG_COLOR[l] || '#9a9089' }} />{l}</span>)}
+                  {p.langs.map(l => <span className="proj-lang" key={l}><i style={{ background: LANG_COLOR[l] || 'var(--text-secondary)' }} />{l}</span>)}
                 </div>
               )}
               {p.usage && (
                 <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="proj-spark">
-                  <Draw><polyline points={sparkPts(p.usage.spark, 30)} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" /></Draw>
+                  <Draw><polyline points={sparkPts(p.usage.spark, 30)} fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
                 </svg>
               )}
               {p.progress && (

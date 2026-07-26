@@ -30,11 +30,11 @@ export default function Export({ snap, win, me }) {
 
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
       {PRESETS.map(p => <button key={p.id} onClick={() => { setPreset(p.id); setEdited(false) }} style={{
-        padding: '8px 14px', borderRadius: 9, cursor: 'pointer', textAlign: 'left', border: `1px solid ${preset === p.id ? BB : 'rgba(255,255,255,0.12)'}`,
-        background: preset === p.id ? 'rgba(255,255,255,0.12)' : 'transparent',
+        padding: '8px 14px', borderRadius: 6, cursor: 'pointer', textAlign: 'left', border: `1px solid ${preset === p.id ? BB : 'var(--bg-surface-active)'}`,
+        background: preset === p.id ? 'var(--bg-surface-active)' : 'transparent',
       }}>
-        <div style={{ font: `600 12.5px ${BODY}`, color: preset === p.id ? '#f0e7e0' : '#9a9089' }}>{p.label}</div>
-        <div style={{ font: `400 9.5px ${MONO}`, color: DIM }}>{p.who}</div>
+        <div style={{ font: `600 13px ${BODY}`, color: preset === p.id ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{p.label}</div>
+        <div style={{ font: `400 10px ${MONO}`, color: DIM }}>{p.who}</div>
       </button>)}
     </div>
 
@@ -45,11 +45,11 @@ export default function Export({ snap, win, me }) {
           <span style={{ font: `400 10px ${MONO}`, color: edited ? GREEN : DIM }}>{edited ? 'edited — Reset to regenerate' : 'generated from the snapshot'}</span>
         </div>
         <textarea value={md} onChange={e => { setMd(e.target.value); setEdited(true) }} rows={26}
-          style={{ ...inp, resize: 'vertical', fontFamily: MONO, fontSize: 11.5, lineHeight: 1.6 }} />
+          style={{ ...inp, resize: 'vertical', fontFamily: MONO, fontSize: 12, lineHeight: 1.6 }} />
       </div>
       <div style={{ ...PANEL, padding: '12px 16px' }}>
         <div style={{ font: `600 12px ${HEAD}`, color: HI, marginBottom: 8 }}>Preview</div>
-        <div className="md" style={{ maxHeight: 520, overflow: 'auto', color: '#c8bdb4', font: `400 12.5px/1.65 ${BODY}` }} dangerouslySetInnerHTML={{ __html: marked.parse(md || '') }} />
+        <div className="md" style={{ maxHeight: 520, overflow: 'auto', color: 'var(--text-secondary)', font: `400 13px/1.65 ${BODY}` }} dangerouslySetInnerHTML={{ __html: marked.parse(md || '') }} />
       </div>
     </div>
   </section>

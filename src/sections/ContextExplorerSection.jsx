@@ -6,8 +6,8 @@ import Skeleton from '../ui/Skeleton.jsx'
 // e.in + e.cc + e.cr on a turn already IS the total prompt size the model saw for that turn
 // (Anthropic's usage block splits fresh/cache-write/cache-read of the SAME total) — no reconstruction
 // needed, unlike tools that only see raw token deltas. Ported concept from oh-my-hi's Context Explorer.
-const MONO = "'IBM Plex Mono', monospace"
-const FRESH = '#d97757', CACHE = '#5eb3f6', COMPACT = '#e5a03a', GRID = 'rgba(255,255,255,0.08)'
+const MONO = "var(--mono)"
+const FRESH = 'var(--accent)', CACHE = 'var(--blue)', COMPACT = 'var(--amber)', GRID = 'var(--bg-surface-active)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const fmtDate = t => new Date(t).toLocaleString()
 
@@ -62,15 +62,15 @@ export default function ContextExplorerSection() {
             <tbody>
               {filtered.map(s => (
                 <tr key={s.sessionId} onClick={() => setSessionId(s.sessionId)}
-                  style={{ cursor: 'pointer', background: sessionId === s.sessionId ? 'rgba(217,119,87,0.12)' : undefined }}>
+                  style={{ cursor: 'pointer', background: sessionId === s.sessionId ? 'var(--accent-bg)' : undefined }}>
                   <td className="mono">{s.project}</td>
                   <td className="num">{s.turns}</td>
                   <td className="num">{fmtTok(s.peak)}</td>
-                  <td className="mono" style={{ color: '#8a807a' }}>{(s.model || '').replace('claude-', '')}</td>
-                  <td className="mono" style={{ color: '#7a716a' }}>{new Date(s.last).toLocaleDateString()}</td>
+                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{(s.model || '').replace('claude-', '')}</td>
+                  <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{new Date(s.last).toLocaleDateString()}</td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={5} style={{ color: '#8a807a', padding: 12 }}>no replayable sessions (need ≥2 turns with usage)</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--text-secondary)', padding: 12 }}>no replayable sessions (need ≥2 turns with usage)</td></tr>}
             </tbody>
           </table>
         </div>
@@ -103,7 +103,7 @@ export function ContextTimeline({ data, hover, setHover, playing, setPlaying, cu
         <button className="mini" onClick={() => setPlaying(p => !p)}>{playing ? '⏸ pause' : '▶ replay'}</button>
         {cursor >= 0 && <button className="mini" onClick={() => setCursor(-1)}>show all</button>}
       </div>
-      {firstPrompt && <p className="small" style={{ padding: '0 16px', color: '#8a807a' }}>"{firstPrompt}"</p>}
+      {firstPrompt && <p className="small" style={{ padding: '0 16px', color: 'var(--text-secondary)' }}>"{firstPrompt}"</p>}
 
       <div className="kpi-grid" style={{ margin: '0 16px 12px' }}>
         <div className="kpi"><div className="kpi-label"><span>peak context</span></div>
@@ -119,24 +119,24 @@ export function ContextTimeline({ data, hover, setHover, playing, setPlaying, cu
         onMouseLeave={() => setHover(null)}>
         {[0.25, 0.5, 0.75, 1].map(f => (
           <g key={f}>
-            <line x1={PAD} x2={W - PAD} y1={y(budget * f)} y2={y(budget * f)} stroke={GRID} strokeWidth={1} />
-            <text x={W - PAD + 4} y={y(budget * f) + 3} fill="#6a615a" fontSize={9} fontFamily={MONO}>{fmtTok(budget * f)}</text>
+            <line x1={PAD} x2={W - PAD} y1={y(budget * f)} y2={y(budget * f)} strokeWidth={1}  style={{ stroke: (GRID) }} />
+            <text x={W - PAD + 4} y={y(budget * f) + 3} fontSize={9} fontFamily={MONO} style={{ fill: 'var(--text-tertiary)' }}>{fmtTok(budget * f)}</text>
           </g>
         ))}
-        <path d={areaPath} fill={FRESH} opacity={0.12} />
-        <path d={path} fill="none" stroke={FRESH} strokeWidth={2} />
+        <path d={areaPath} opacity={0.12}  style={{ fill: (FRESH) }} />
+        <path d={path} fill="none" strokeWidth={2}  style={{ stroke: (FRESH) }} />
         {compactionIdx.filter(i => cursor < 0 || i <= cursor).map(i => (
-          <line key={i} x1={x(i)} x2={x(i)} y1={PAD} y2={H - PAD} stroke={COMPACT} strokeWidth={1.5} strokeDasharray="3,3" />
+          <line key={i} x1={x(i)} x2={x(i)} y1={PAD} y2={H - PAD} strokeWidth={1.5} strokeDasharray="3,3"  style={{ stroke: (COMPACT) }} />
         ))}
         {shown.map((e, i) => (
           <circle key={i} cx={x(i)} cy={y(e.total)} r={hover === i ? 4 : 2.5}
-            fill={e.isCompaction ? COMPACT : CACHE}
-            onMouseEnter={() => setHover(i)} style={{ cursor: 'pointer' }} />
+           
+            onMouseEnter={() => setHover(i)} style={{ fill: (e.isCompaction ? COMPACT : CACHE), cursor: 'pointer' }} />
         ))}
       </svg>
 
       {active && (
-        <div style={{ margin: '0 16px 16px', padding: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 6, font: `400 11px ${MONO}`, color: '#c8bdb4' }}>
+        <div style={{ margin: '0 16px 16px', padding: 10, background: 'var(--bg-surface)', borderRadius: 6, font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>
           turn {(hover ?? cursor) + 1} of {entries.length} · {fmtDate(active.t)} · total {fmtTok(active.total)} tok
           {' '}(fresh {fmtTok(active.in)} · cache-write {fmtTok(active.cc)} · cache-read {fmtTok(active.cr)}) · {active.toolCalls} tool call{active.toolCalls === 1 ? '' : 's'}
           {active.isCompaction && <span style={{ color: COMPACT }}> · /compact detected</span>}

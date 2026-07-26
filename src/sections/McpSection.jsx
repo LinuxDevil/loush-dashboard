@@ -70,7 +70,7 @@ export default function McpSection() {
                 <div className="row-desc">{s.config.url || [s.config.command, ...(s.config.args || [])].join(' ')}</div>
                 {s.project && <div className="row-meta">{s.project}</div>}
                 {t && t.state !== 'testing' && (
-                  <div className="row-meta" style={t.state === 'auth' ? { color: '#e5a03a' } : undefined}>{t.state === 'ok' ? `connected ${t.ms}ms${t.serverInfo ? ' — ' + t.serverInfo.name + ' ' + (t.serverInfo.version || '') : ''}${t.status ? ' (HTTP ' + t.status + ')' : ''}` : t.state === 'auth' ? `reachable — needs auth (HTTP ${t.status})` : `failed: ${t.error || 'HTTP ' + t.status}`}</div>
+                  <div className="row-meta" style={t.state === 'auth' ? { color: 'var(--amber)' } : undefined}>{t.state === 'ok' ? `connected ${t.ms}ms${t.serverInfo ? ' — ' + t.serverInfo.name + ' ' + (t.serverInfo.version || '') : ''}${t.status ? ' (HTTP ' + t.status + ')' : ''}` : t.state === 'auth' ? `reachable — needs auth (HTTP ${t.status})` : `failed: ${t.error || 'HTTP ' + t.status}`}</div>
                 )}
                 <button className="mini" onClick={e => { e.stopPropagation(); test(s) }} disabled={t?.state === 'testing'}>
                   {t?.state === 'testing' ? 'testing…' : 'Test connection'}

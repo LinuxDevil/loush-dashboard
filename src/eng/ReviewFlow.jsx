@@ -5,7 +5,7 @@ import { MIN_N, stat, pctl, thin, spread } from './stats.js'
 // §4 — the review board is keyed on PERSON, not on PR. Deliberately NOT a slowest-reviewer leaderboard:
 // the unit of accountability is the team's review SLA. The two currently-invisible killers get their own
 // tables — requested-and-never-answered, and no reviewer requested at all.
-const cell = (v, n, u = 'd') => <span style={{ font: `600 12px ${MONO}`, color: v == null ? '#3a332e' : n < MIN_N ? '#8a807a' : HI }}>{v == null ? '—' : fx(v) + u}</span>
+const cell = (v, n, u = 'd') => <span style={{ font: `600 12px ${MONO}`, color: v == null ? 'var(--bg-surface-active)' : n < MIN_N ? 'var(--text-secondary)' : HI }}>{v == null ? '—' : fx(v) + u}</span>
 
 export default function ReviewFlow({ snap, project }) {
   const [copy, copied] = useCopy()
@@ -34,7 +34,7 @@ export default function ReviewFlow({ snap, project }) {
   szVals.forEach(v => { szCount[v < 10 ? 0 : v < 50 ? 1 : v < 250 ? 2 : v < 1000 ? 3 : 4]++ })
   const szMedian = pctl(szVals, 0.5), szN = szVals.length
   const szBig = szN ? (szCount[3] + szCount[4]) / szN * 100 : null
-  const bar = (counts, buckets, total) => <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}>
+  const bar = (counts, buckets, total) => <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--bg-surface-hover)' }}>
     {counts.map((c, i) => c > 0 && <div key={i} style={{ width: `${c / total * 100}%`, background: buckets[i][1] }} />)}</div>
   const dist = (counts, buckets, total) => <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(118px,1fr))', gap: '6px 14px', marginTop: 10 }}>
     {buckets.map((b, i) => <Legend key={b[0]} c={b[1]} label={b[0]} v={`${counts[i]} · ${fx(counts[i] / total * 100, 0)}%`} />)}</div>
@@ -50,11 +50,11 @@ export default function ReviewFlow({ snap, project }) {
       <Kpi label="No reviewer asked" value={String(R.noReviewerRequested?.length || 0)} color={(R.noReviewerRequested?.length || 0) ? RED : GREEN} sub="open PRs nobody was asked to look at" />
     </div>
 
-    {conc.top2Share != null && <Card style={{ borderColor: conc.flagged ? 'rgba(242,119,122,0.35)' : undefined }}>
+    {conc.top2Share != null && <Card style={{ borderColor: conc.flagged ? 'var(--red-bg)' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <span style={{ font: `700 20px ${HEAD}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
+        <span style={{ font: `700 18px ${HEAD}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
         <span style={{ font: `500 13px ${BODY}`, color: TXTC }}>of all reviews in 90d were done by 2 of {conc.reviewerCount} reviewers{conc.flagged ? ' — the two people reviewing everything are the two people who will quit.' : '. Load is spread.'}</span>
-        <span style={{ marginLeft: 'auto', font: `400 10.5px ${MONO}`, color: DIM }}>top-1 {fx(conc.top1Share, 0)}% · {conc.total90} reviews</span>
+        <span style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: DIM }}>top-1 {fx(conc.top1Share, 0)}% · {conc.total90} reviews</span>
       </div>
     </Card>}
 
@@ -88,8 +88,8 @@ export default function ReviewFlow({ snap, project }) {
       rows={R.unanswered || []} getKey={p => p.repo + p.num} initialSort={{ key: 'open', dir: -1 }} raw={R.unanswered}
       columns={[
         { key: 'pr', label: 'PR', width: '78px', sort: p => p.num, filter: p => p.num + ' ' + p.title, render: p => <PRLink pr={p}>#{p.num}</PRLink> },
-        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
-        { key: 'author', label: 'Author', width: '110px', sort: p => p.author, render: p => <span style={{ font: `500 11.5px ${BODY}`, color: '#a89f97' }}>{p.author}</span> },
+        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
+        { key: 'author', label: 'Author', width: '110px', sort: p => p.author, render: p => <span style={{ font: `500 12px ${BODY}`, color: 'var(--text-secondary)' }}>{p.author}</span> },
         { key: 'wait', label: 'Waiting on', width: '150px', sort: p => (p.waitingOn || []).join(','), render: p => <span style={{ font: `600 11px ${MONO}`, color: GOLD }}>{(p.waitingOn || []).join(', ')}</span> },
         { key: 'open', label: 'Open', width: '70px', align: 1, sort: p => p.openDays, render: p => <span style={{ font: `700 12px ${MONO}`, color: p.openDays > 2 ? RED : HI }}>{fx(p.openDays, 0)}d</span> },
         { key: 'act', label: '', width: '104px', align: 1, render: p => <button style={miniBtn} onClick={e => { e.stopPropagation(); copy(nudge(p), 'u' + p.num) }}>{copied === 'u' + p.num ? '✓' : 'Copy nudge'}</button> },
@@ -99,8 +99,8 @@ export default function ReviewFlow({ snap, project }) {
       rows={R.noReviewerRequested || []} getKey={p => p.repo + p.num} initialSort={{ key: 'open', dir: -1 }} raw={R.noReviewerRequested}
       columns={[
         { key: 'pr', label: 'PR', width: '78px', sort: p => p.num, filter: p => p.num + ' ' + p.title, render: p => <PRLink pr={p}>#{p.num}</PRLink> },
-        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
-        { key: 'author', label: 'Author', width: '110px', sort: p => p.author, render: p => <span style={{ font: `500 11.5px ${BODY}`, color: '#a89f97' }}>{p.author}</span> },
+        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
+        { key: 'author', label: 'Author', width: '110px', sort: p => p.author, render: p => <span style={{ font: `500 12px ${BODY}`, color: 'var(--text-secondary)' }}>{p.author}</span> },
         { key: 'open', label: 'Open', width: '70px', align: 1, sort: p => p.openDays, render: p => <span style={{ font: `700 12px ${MONO}`, color: p.openDays > 2 ? RED : HI }}>{fx(p.openDays, 0)}d</span> },
         { key: 'act', label: '', width: '190px', align: 1, render: p => <span style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
           <button style={miniBtn} onClick={e => { e.stopPropagation(); copy(nudge(p), 'n' + p.num) }}>{copied === 'n' + p.num ? '✓' : 'Copy nudge'}</button>
@@ -113,7 +113,7 @@ export default function ReviewFlow({ snap, project }) {
       columns={[
         { key: 'pr', label: 'PR', width: '76px', sort: p => p.num, filter: p => p.num + ' ' + p.title + ' ' + p.author + ' ' + p.ticket, render: p => <PRLink pr={p}>#{p.num}</PRLink> },
         { key: 'ticket', label: 'Ticket', width: '84px', sort: p => p.ticket, render: p => <span style={{ font: `500 11px ${MONO}`, color: BB }}>{p.ticket}</span> },
-        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: '#c8bdb4', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
+        { key: 'title', label: 'Title', width: '2fr', sort: p => p.title, render: p => <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{p.title}</span> },
         { key: 'state', label: 'State', width: '118px', sort: p => p.state, render: p => <PrBadge state={p.state} /> },
         { key: 'checks', label: 'Checks', width: '62px', align: 1, sort: p => p.checks || '', render: p => <Checks state={p.checks} /> },
         { key: 'rev', label: 'Reviewers', width: '130px', sort: p => (p.reviewers || []).join(), render: p => <span style={{ font: `500 11px ${MONO}`, color: (p.reviewers || []).length ? GREEN : (p.requestedReviewers || []).length ? GOLD : RED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{(p.reviewers || []).join(', ') || (p.requestedReviewers || []).join(', ') || 'nobody'}</span> },
@@ -121,4 +121,4 @@ export default function ReviewFlow({ snap, project }) {
       ]} />
   </section>
 }
-const TXTC = '#c8bdb4'
+const TXTC = 'var(--text-secondary)'

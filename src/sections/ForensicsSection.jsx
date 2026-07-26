@@ -6,9 +6,9 @@ import { Stagger, CountUp } from '../ui/anim.jsx'
 // ---------- 9: session forensics — failure signatures · context pressure · hook blast radius ----------
 // Three panels off the ONE extra parse that already lives in the failStats()/scanTranscripts() walkers.
 // Plane B: this machine's own transcripts, self-only. No user/machine parameter exists.
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', BLUE = '#5eb3f6', DIM = '#8a807a'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', DIM = 'var(--text-secondary)'
 const fmtChars = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n))
 const ago = t => { if (!t) return '—'; const d = Math.round((Date.now() - t) / 86400_000); return d < 1 ? 'today' : d + 'd ago' }
 const TREND = { up: ['▲', RED], down: ['▼', GREEN], flat: ['–', DIM] }
@@ -85,7 +85,7 @@ export default function ForensicsSection() {
         <select value={days} onChange={e => setDays(Number(e.target.value))}>
           <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
         </select>
-        <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}><CountUp value={d.sessions} /> sessions parsed · plane: this machine only, always</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}><CountUp value={d.sessions} /> sessions parsed · plane: this machine only, always</span>
       </div>
 
       {/* (a) failure signatures */}
@@ -99,18 +99,18 @@ export default function ForensicsSection() {
           const [tri, tc] = TREND[f.trend]
           const isOpen = open === f.sig
           return (
-            <div key={f.sig} style={{ padding: '10px 4px', borderBottom: '1px solid rgba(255,255,255,0.045)' }}>
+            <div key={f.sig} style={{ padding: '10px 4px', borderBottom: '1px solid var(--border-subtle)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ font: `700 12px ${HEAD}`, minWidth: 34, textAlign: 'right', color: f.biting ? RED : DIM }}>{f.count}×</span>
-                <span style={{ font: `600 9.5px ${MONO}`, padding: '2px 7px', borderRadius: 5, color: BLUE, background: BLUE + '1a', flexShrink: 0 }}>{f.tool}</span>
-                <span style={{ flex: 1, minWidth: 0, font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.sig}</span>
+                <span style={{ font: `600 10px ${MONO}`, padding: '2px 7px', borderRadius: 5, color: BLUE, background: BLUE + '1a', flexShrink: 0 }}>{f.tool}</span>
+                <span style={{ flex: 1, minWidth: 0, font: "400 13px var(--body)", color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.sig}</span>
                 <span title={`${f.recent} recently vs ${f.prior} before`} style={{ font: `600 11px ${MONO}`, color: tc, flexShrink: 0 }}>{tri}</span>
-                <span style={{ font: `400 10px ${MONO}`, color: '#6a615a', flexShrink: 0 }}>{f.sessions} sess · last {ago(f.last)}</span>
+                <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', flexShrink: 0 }}>{f.sessions} sess · last {ago(f.last)}</span>
                 <button className="mini" style={{ marginTop: 0 }} onClick={() => setOpen(isOpen ? null : f.sig)}>{isOpen ? 'hide' : 'trace'}</button>
                 <button className="mini" style={{ marginTop: 0 }} disabled={busy} onClick={() => fileBug(f)}>file as bug</button>
               </div>
               {isOpen && (
-                <pre style={{ margin: '8px 0 0 44px', padding: '10px 12px', borderRadius: 10, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', font: `400 11px ${MONO}`, color: '#b0a69e', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 180, overflowY: 'auto' }}>
+                <pre style={{ margin: '8px 0 0 44px', padding: '10px 12px', borderRadius: 6, background: 'var(--bg-inset)', border: '1px solid var(--border-default)', font: `400 11px ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 180, overflowY: 'auto' }}>
                   {f.example}
                   {'\n\n'}first seen {new Date(f.first).toLocaleString()} · projects: {f.projects.join(', ')}
                 </pre>
@@ -129,10 +129,10 @@ export default function ForensicsSection() {
             <h3>Context pressure <span className="muted" title={ctx.denominator}>{fmtChars(ctx.totalChars)} chars ≈ {fmtChars(ctx.totalEstTokens)} tok (est. {ctx.charsPerToken} chars/tok) of TOOL RESULTS · {ctx.compactions} compactions ({ctx.compactionsPerSession}/session)</span></h3>
           </div>
           {worstTool && (
-            <div style={{ font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4', marginBottom: 12 }}>
+            <div style={{ font: "400 13px var(--body)", color: 'var(--text-secondary)', marginBottom: 12 }}>
               {/* "of every byte pulled into your context" was wrong: the denominator is tool-result
                   bytes, which excludes the system prompt, CLAUDE.md, user turns and assistant output. */}
-              <b style={{ color: '#f2ebe4' }}>{worstTool.name}</b> is <b style={{ color: worstTool.shareOfToolBytes > 0.4 ? RED : GOLD }}>{Math.round((worstTool.shareOfToolBytes || 0) * 100)}%</b> of all <span title={ctx.denominator} style={{ borderBottom: '1px dotted #8a807a', cursor: 'help' }}>tool-result bytes</span>.
+              <b style={{ color: 'var(--text-primary)' }}>{worstTool.name}</b> is <b style={{ color: worstTool.shareOfToolBytes > 0.4 ? RED : GOLD }}>{Math.round((worstTool.shareOfToolBytes || 0) * 100)}%</b> of all <span title={ctx.denominator} style={{ borderBottom: '1px dotted var(--text-secondary)', cursor: 'help' }}>tool-result bytes</span>.
             </div>
           )}
           <table className="data inv">
@@ -140,7 +140,7 @@ export default function ForensicsSection() {
             <tbody>
               {ctx.tools.slice(0, 10).map(t => (
                 <tr key={t.name}>
-                  <td className="mono" style={{ color: t.hog ? GOLD : '#eee3da' }}>{t.name}{t.hog && <span title="median result over 20k chars — this tool is eating your context window" style={{ marginLeft: 6, font: `700 8.5px ${MONO}`, color: GOLD }}>HOG</span>}</td>
+                  <td className="mono" style={{ color: t.hog ? GOLD : 'var(--text-primary)' }}>{t.name}{t.hog && <span title="median result over 20k chars — this tool is eating your context window" style={{ marginLeft: 6, font: `700 9px ${MONO}`, color: GOLD }}>HOG</span>}</td>
                   <td className="num">{t.shareOfToolBytes == null ? '—' : Math.round(t.shareOfToolBytes * 100) + '%'}</td>
                   <td className="num">{t.medianChars == null ? '—' : fmtChars(t.medianChars)}</td>
                   <td className="num" style={{ color: t.p90Chars > 50000 ? RED : undefined }}>{t.p90Chars == null ? '—' : fmtChars(t.p90Chars)}</td>
@@ -193,14 +193,14 @@ export default function ForensicsSection() {
             <tbody>
               {d.hooks.map(h => (
                 <tr key={h.hook + h.event}>
-                  <td className="mono" style={{ color: '#eee3da', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.hook}</td>
+                  <td className="mono" style={{ color: 'var(--text-primary)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.hook}</td>
                   <td>{h.event || '—'}</td>
                   <td className="num">{h.fired}</td>
                   <td className="num" style={{ color: h.blocks ? RED : DIM }}>{h.blocks || '—'}</td>
                   <td className="num" style={{ color: h.blockRate > 0.2 ? RED : DIM }}>{Math.round(h.blockRate * 100)}%</td>
                   <td className="num">{h.p50Ms == null ? '—' : h.p50Ms + 'ms'}</td>
                   <td className="num" style={{ color: h.p90Ms > 2000 ? GOLD : undefined }}>{h.p90Ms == null ? '—' : h.p90Ms + 'ms'}</td>
-                  <td style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', maxWidth: 260 }}>
+                  <td style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', maxWidth: 260 }}>
                     {h.examples.length ? h.examples.slice(0, 2).map((e, i) => <div key={i} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.tool}: {e.reason || 'blocked'}</div>) : <span style={{ color: DIM }}>—</span>}
                   </td>
                   <td><button className="mini" style={{ marginTop: 0 }} disabled={busy} onClick={() => disableHook(h)}>disable</button></td>

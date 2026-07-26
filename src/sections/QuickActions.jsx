@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api, toast, tildify } from '../lib/api.js'
 import { buildBlocks, Block } from './ChatSection.jsx'
 
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)' }
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
 
 // each button is just a slash command + the project context — the run primitive does the rest
 const ACTIONS = [
@@ -20,15 +20,15 @@ function Analysis({ a }) {
   if (!a) return null
   const chip = (label, items) => items?.length ? (
     <div style={{ marginTop: 6 }}>
-      <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{label} </span>
-      {items.map(x => <span key={x} style={{ font: `400 11px ${MONO}`, color: '#e5dbd2', background: 'rgba(255,255,255,0.06)', borderRadius: 6, padding: '1px 7px', marginRight: 5 }}>{x}</span>)}
+      <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{label} </span>
+      {items.map(x => <span key={x} style={{ font: `400 11px ${MONO}`, color: 'var(--text-primary)', background: 'var(--bg-surface-hover)', borderRadius: 6, padding: '1px 7px', marginRight: 5 }}>{x}</span>)}
     </div>
   ) : null
   const tools = Object.entries(a.tools || {}).sort((x, y) => y[1] - x[1])
   return (
     <div style={{ ...PANEL, padding: '12px 16px', marginBottom: 10 }}>
-      <div style={{ font: `600 12px ${HEAD}`, color: '#d97757', marginBottom: 4 }}>Run analysis</div>
-      <div style={{ font: `400 11.5px ${MONO}`, color: '#e5dbd2' }}>
+      <div style={{ font: `600 12px ${HEAD}`, color: 'var(--accent)', marginBottom: 4 }}>Run analysis</div>
+      <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-primary)' }}>
         {a.durationMs != null && <span>⏱ {fmtDur(a.durationMs)} · </span>}
         {a.cost != null && <span>${a.cost.toFixed(3)} · </span>}
         {a.turns != null && <span>{a.turns} turns · </span>}
@@ -61,16 +61,16 @@ export function RunWindow({ run, onClose }) {
   return (
     <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', minHeight: 300, maxHeight: '72vh' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-        <span style={{ font: `600 14px ${HEAD}`, color: '#e5dbd2' }}>{r.cmd}{r.args ? ` ${r.args}` : ''}</span>
-        <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>{tildify(r.cwd)}</span>
-        <span style={{ font: `400 11px ${MONO}`, color: r.alive ? '#5eb3f6' : r.exitCode === 0 ? '#3fb96a' : '#e5484d' }}>
+        <span style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>{r.cmd}{r.args ? ` ${r.args}` : ''}</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{tildify(r.cwd)}</span>
+        <span style={{ font: `400 11px ${MONO}`, color: r.alive ? 'var(--blue)' : r.exitCode === 0 ? 'var(--green)' : 'var(--red)' }}>
           {r.alive ? '● running' : r.exitCode === 0 ? '✓ done' : `✗ exit ${r.exitCode}`}
         </span>
         <button style={{ marginLeft: 'auto' }} onClick={onClose}>✕</button>
       </div>
       <Analysis a={r.analysis} />
       <div style={{ overflowY: 'auto', flex: 1 }}>
-        {events.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>waiting for output…</div>}
+        {events.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>waiting for output…</div>}
         {buildBlocks(events).map((b, i) => <Block key={i} b={b} />)}
         <div ref={endRef} />
       </div>
@@ -105,7 +105,7 @@ export default function QuickActions() {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ ...PANEL, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>run in</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>run in</span>
         <select value={cwd} onChange={e => setCwd(e.target.value)} style={{ font: `400 12px ${MONO}`, maxWidth: 340 }}>
           {projects.map(p => <option key={p.path} value={p.path}>{tildify(p.path)}</option>)}
         </select>
@@ -120,14 +120,14 @@ export default function QuickActions() {
       </div>
       {open && <RunWindow run={open} onClose={() => setOpen(null)} />}
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: '#e5dbd2', marginBottom: 8 }}>Runs</div>
-        {runs.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: '#7a716a' }}>no action runs yet — pick a project and hit a button</div>}
+        <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Runs</div>
+        {runs.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>no action runs yet — pick a project and hit a button</div>}
         {runs.map(r => (
-          <div key={r.id} onClick={() => setOpen(r)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-            <span style={{ font: `400 11px ${MONO}`, color: r.alive ? '#5eb3f6' : r.exitCode === 0 ? '#3fb96a' : '#e5484d' }}>{r.alive ? '●' : r.exitCode === 0 ? '✓' : '✗'}</span>
-            <span style={{ font: `500 12.5px ${MONO}`, color: '#e5dbd2' }}>{r.cmd}</span>
-            <span style={{ font: `400 11px ${MONO}`, color: '#7a716a' }}>{tildify(r.cwd)}</span>
-            <span style={{ font: `400 11px ${MONO}`, color: '#7a716a', marginLeft: 'auto' }}>
+          <div key={r.id} onClick={() => setOpen(r)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)' }}>
+            <span style={{ font: `400 11px ${MONO}`, color: r.alive ? 'var(--blue)' : r.exitCode === 0 ? 'var(--green)' : 'var(--red)' }}>{r.alive ? '●' : r.exitCode === 0 ? '✓' : '✗'}</span>
+            <span style={{ font: `500 13px ${MONO}`, color: 'var(--text-primary)' }}>{r.cmd}</span>
+            <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{tildify(r.cwd)}</span>
+            <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>
               {r.analysis?.cost != null && `$${r.analysis.cost.toFixed(3)} · `}
               {r.endedAt ? fmtDur(r.endedAt - r.startedAt) : 'running'}
             </span>

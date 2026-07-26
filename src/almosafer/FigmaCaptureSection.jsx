@@ -6,12 +6,12 @@ import { api, tildify } from '../lib/api.js'
 // only reads/writes the on-disk convention: <repo>/.claude/figma-captures/<slug>/{capture.json,
 // screenshot.png, annotations.json, context.md}. See dashboard/CONTEXT.md for the glossary
 // (Capture, Annotation, Component catalog).
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const SANS = '"IBM Plex Sans", sans-serif'
-const PANEL = { background: 'rgba(28,24,21,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 16, padding: '18px 20px', backdropFilter: 'blur(10px)', minWidth: 0 }
-const ACCENT = '#5eb3f6'
-const Dim = ({ children, style }) => <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a', ...style }}>{children}</div>
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const SANS = 'var(--body)'
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const ACCENT = 'var(--blue)'
+const Dim = ({ children, style }) => <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', ...style }}>{children}</div>
 
 // smallest-area node whose rect contains (px,py) — "most specific" layer under the click
 function nodeAt(nodes, px, py) {
@@ -45,14 +45,14 @@ function ComponentPicker({ catalog, projectComponents, value, onChange }) {
     <div style={{ display: 'grid', gap: 6 }}>
       <input value={value} onChange={e => onChange(e.target.value)}
         placeholder="design-system component — pick below, or type your own" style={{ font: `400 12px ${MONO}` }} />
-      <div style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, padding: 6, maxHeight: 240, overflow: 'auto' }}>
+      <div style={{ background: 'var(--bg-inset)', border: '1px solid var(--border-default)', borderRadius: 6, padding: 6, maxHeight: 240, overflow: 'auto' }}>
         {grouped.length === 0 && <Dim style={{ padding: 4 }}>no catalog yet — run `npm run catalog:refresh`</Dim>}
         {grouped.map(([cat, comps]) => {
           const catOpen = openCat[cat] !== false
           return (
             <div key={cat}>
               <div onClick={() => setOpenCat(o => ({ ...o, [cat]: !catOpen }))}
-                style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', font: `600 10px ${MONO}`, color: '#9a8f86', letterSpacing: '0.08em', padding: '4px 2px' }}>
+                style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', font: `600 10px ${MONO}`, color: 'var(--text-secondary)', letterSpacing: '0.08em', padding: '4px 2px' }}>
                 {chevron(catOpen)}{cat.toUpperCase()}
               </div>
               {catOpen && comps.map(c => {
@@ -60,18 +60,18 @@ function ComponentPicker({ catalog, projectComponents, value, onChange }) {
                 const hasVariants = c.variants?.length > 0
                 return (
                   <div key={c.fullTitle}>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', paddingLeft: 14, borderRadius: 4, background: value === c.fullTitle ? 'rgba(94,179,246,0.14)' : 'transparent' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', paddingLeft: 14, borderRadius: 4, background: value === c.fullTitle ? 'var(--blue-bg)' : 'transparent' }}>
                       <span onClick={() => hasVariants && setOpenComp(o => ({ ...o, [c.fullTitle]: !compOpen }))}
                         style={{ cursor: hasVariants ? 'pointer' : 'default', visibility: hasVariants ? 'visible' : 'hidden' }}>{chevron(compOpen)}</span>
-                      <span onClick={() => onChange(c.fullTitle)} style={{ flex: 1, cursor: 'pointer', font: `400 11.5px ${SANS}`, color: value === c.fullTitle ? ACCENT : '#d8cfc7', padding: '3px 2px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                        ⊞ {c.name}{c.file && <span style={{ marginLeft: 6, font: `400 10px ${MONO}`, color: '#7a716a' }}>{c.file}</span>}
+                      <span onClick={() => onChange(c.fullTitle)} style={{ flex: 1, cursor: 'pointer', font: `400 12px ${SANS}`, color: value === c.fullTitle ? ACCENT : 'var(--text-primary)', padding: '3px 2px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        ⊞ {c.name}{c.file && <span style={{ marginLeft: 6, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>{c.file}</span>}
                       </span>
                     </div>
                     {compOpen && c.variants.map(v => {
                       const full = `${c.fullTitle} / ${v}`
                       return (
                         <div key={v} onClick={() => onChange(full)}
-                          style={{ marginLeft: 34, padding: '3px 6px', cursor: 'pointer', borderRadius: 4, font: `400 11px ${MONO}`, color: value === full ? ACCENT : '#9a8f86', background: value === full ? 'rgba(94,179,246,0.14)' : 'transparent' }}>
+                          style={{ marginLeft: 34, padding: '3px 6px', cursor: 'pointer', borderRadius: 4, font: `400 11px ${MONO}`, color: value === full ? ACCENT : 'var(--text-secondary)', background: value === full ? 'var(--blue-bg)' : 'transparent' }}>
                           {v}
                         </div>
                       )
@@ -250,7 +250,7 @@ function Editor({ repo, slug, catalog, onBack }) {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, alignItems: 'start' }}>
-        <div style={{ position: 'relative', lineHeight: 0, userSelect: 'none', background: '#3a3633', borderRadius: 8, padding: 16 }}
+        <div style={{ position: 'relative', lineHeight: 0, userSelect: 'none', background: 'var(--bg-surface-active)', borderRadius: 8, padding: 16 }}
           onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}>
           <img ref={imgRef} src={screenshotUrl} alt={capture.frameName} style={{ maxWidth: '100%', display: 'block', cursor: 'crosshair' }} draggable={false}
             onLoad={e => setImgSize({ w: e.target.naturalWidth, h: e.target.naturalHeight })} />
@@ -268,21 +268,21 @@ function Editor({ repo, slug, catalog, onBack }) {
               return (
                 <g key={a.id}>
                   <rect x={a.region.x} y={a.region.y} width={a.region.w} height={a.region.h}
-                    fill={selected ? 'rgba(94,179,246,0.18)' : a.locked ? 'rgba(122,113,106,0.06)' : 'rgba(63,185,106,0.10)'}
-                    stroke={selected ? ACCENT : a.locked ? '#7a716a' : '#3fb96a'} strokeWidth={2} strokeDasharray={a.locked ? '5 4' : undefined}
-                    style={{ pointerEvents: a.locked ? 'none' : 'auto', cursor: 'move' }} onMouseDown={a.locked ? undefined : startDrag('move', a)} />
+                   
+                    strokeWidth={2} strokeDasharray={a.locked ? '5 4' : undefined}
+                    style={{ fill: (selected ? 'var(--blue-bg)' : a.locked ? 'var(--bg-surface-active)' : 'var(--green-bg)'), stroke: (selected ? ACCENT : a.locked ? 'var(--text-tertiary)' : 'var(--green)'), pointerEvents: a.locked ? 'none' : 'auto', cursor: 'move' }} onMouseDown={a.locked ? undefined : startDrag('move', a)} />
                   {handles.map(h => (
                     <rect key={h.key} x={h.cx - hs} y={h.cy - hs} width={hs * 2} height={hs * 2}
-                      fill={ACCENT} stroke="#141110" strokeWidth={1}
-                      style={{ pointerEvents: 'auto', cursor: `${h.key}-resize` }} onMouseDown={startDrag('resize', a, h.key)} />
+                      strokeWidth={1}
+                      style={{ fill: (ACCENT), stroke: 'var(--bg-surface)', pointerEvents: 'auto', cursor: `${h.key}-resize` }} onMouseDown={startDrag('resize', a, h.key)} />
                   ))}
                 </g>
               )
             })}
             {liveRect && <rect x={liveRect.x} y={liveRect.y} width={liveRect.w} height={liveRect.h}
-              fill="rgba(94,179,246,0.12)" stroke={ACCENT} strokeWidth={2} strokeDasharray="4 3" />}
+              strokeWidth={2} strokeDasharray="4 3"  style={{ fill: 'var(--blue)', stroke: (ACCENT) }} />}
             {draft && <rect x={draft.region.x} y={draft.region.y} width={draft.region.w} height={draft.region.h}
-              fill="rgba(94,179,246,0.18)" stroke={ACCENT} strokeWidth={2} strokeDasharray="4 3" />}
+              strokeWidth={2} strokeDasharray="4 3"  style={{ fill: 'var(--blue)', stroke: (ACCENT) }} />}
           </svg>
         </div>
 
@@ -296,8 +296,8 @@ function Editor({ repo, slug, catalog, onBack }) {
           <div style={{ ...PANEL, display: 'grid', gap: 6, maxHeight: 360, overflow: 'auto' }}>
             {annotations.length === 0 && <Dim>no annotations yet</Dim>}
             {annotations.map(a => (
-              <div key={a.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', font: `400 11px ${SANS}`, color: '#d8cfc7' }}>
-                <span style={{ color: a.locked ? '#7a716a' : ACCENT, cursor: 'pointer' }} onClick={() => { setDraft(null); setEditingId(a.id) }}>{a.component || '(untitled)'}</span>
+              <div key={a.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', font: `400 11px ${SANS}`, color: 'var(--text-primary)' }}>
+                <span style={{ color: a.locked ? 'var(--text-tertiary)' : ACCENT, cursor: 'pointer' }} onClick={() => { setDraft(null); setEditingId(a.id) }}>{a.component || '(untitled)'}</span>
                 <Dim style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.note}</Dim>
                 <button style={{ font: `400 10px ${MONO}`, padding: '1px 6px' }} title={a.locked ? 'unlock (make editable)' : 'lock (click-through, so you can draw over it)'} onClick={() => toggleLock(a.id)}>{a.locked ? '🔒' : '🔓'}</button>
                 <button style={{ font: `400 10px ${MONO}`, padding: '1px 6px' }} onClick={() => deleteAnnotation(a.id)}>✕</button>
@@ -306,8 +306,8 @@ function Editor({ repo, slug, catalog, onBack }) {
           </div>
           {contextMd && (
             <details style={PANEL} open>
-              <summary style={{ font: `600 12px ${HEAD}`, color: '#e5dbd2', cursor: 'pointer' }}>context.md</summary>
-              <pre style={{ font: `400 10.5px ${MONO}`, color: '#9a8f86', whiteSpace: 'pre-wrap', marginTop: 8 }}>{contextMd}</pre>
+              <summary style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', cursor: 'pointer' }}>context.md</summary>
+              <pre style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', marginTop: 8 }}>{contextMd}</pre>
             </details>
           )}
         </div>
@@ -341,7 +341,7 @@ function CreateCaptureForm({ repo, onCreated }) {
         <button onClick={create} disabled={busy || !link.trim()}>{busy ? 'fetching…' : 'create'}</button>
         <button onClick={() => setOpen(false)}>cancel</button>
       </div>
-      {err && <div style={{ font: `400 11.5px ${MONO}`, color: '#e5484d' }}>{err}</div>}
+      {err && <div style={{ font: `400 12px ${MONO}`, color: 'var(--red)' }}>{err}</div>}
     </div>
   )
 }
@@ -355,7 +355,7 @@ function CaptureList({ repo, onOpen }) {
     <div style={{ display: 'grid', gap: 12 }}>
       <CreateCaptureForm repo={repo} onCreated={onOpen} />
       {captures.length === 0 ? (
-        <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#7a716a' }}>
+        <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>
           No Captures found under <span style={{ color: ACCENT }}>.claude/figma-captures/</span> in this repo yet.
           Use the button above (needs <span style={{ color: ACCENT }}>FIGMA_TOKEN</span> set on the dashboard server), or run
           {' '}<span style={{ color: ACCENT }}>/figma-capture &lt;figma-link&gt;</span> from that repo in Claude Code.
@@ -393,9 +393,9 @@ function FigmaTokenBar() {
   const put = token => { setBusy(true); return api.put('/api/figma-capture/token', { token }).then(() => { setVal(''); setOpen(false); load() }).catch(e => alert(e.message)).finally(() => setBusy(false)) }
   if (!status) return null
   return (
-    <div style={{ ...PANEL, padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', font: `400 11px ${MONO}`, color: '#9a8f86' }}>
-      <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.set ? '#3fb96a' : '#e8a06a', display: 'inline-block' }} />
-      <span>Figma API key: <span style={{ color: status.set ? '#3fb96a' : '#e8a06a' }}>{status.set ? `set · ${status.source}` : 'not set'}</span></span>
+    <div style={{ ...PANEL, padding: '10px 14px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.set ? 'var(--green)' : 'var(--accent-light)', display: 'inline-block' }} />
+      <span>Figma API key: <span style={{ color: status.set ? 'var(--green)' : 'var(--accent-light)' }}>{status.set ? `set · ${status.source}` : 'not set'}</span></span>
       {status.envLocked ? <Dim>managed via FIGMA_TOKEN env — unset it there to edit here</Dim>
         : !open ? <button style={{ font: `400 10px ${MONO}`, padding: '2px 8px' }} onClick={() => setOpen(true)}>{status.set ? 'change' : '+ add key'}</button>
         : <>
@@ -448,7 +448,7 @@ export default function FigmaCaptureSection() {
   if (!repo) return (
     <div style={{ display: 'grid', gap: 12 }}>
       <FigmaTokenBar />
-      <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: '#7a716a' }}>
+      <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>
         No projects found under Workspaces — paste a repo path below.
       </div>
       {pathInput}

@@ -25,11 +25,11 @@ const Num = ({ value, ...rest }) =>
 //     → Harness → Usage (the heatmap is a green-squares clone measuring "was he typing").
 // RERANKED: Top projects sorted by SESSIONS, not by output tokens (which rewarded whichever project
 //   made Claude write the most text).
-const A = '#d97757'
-const PROJ_COLORS = ['#5eb3f6', '#3fb96a', '#8b7cf6', '#e8a06a', '#d97757', '#c98bf6']
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a'
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
+const A = 'var(--accent)'
+const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
@@ -42,14 +42,14 @@ const sparkPts = (arr, h = 26) => {
 }
 const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" className={className} style={{ height: h }}>
-    <Draw><polyline points={sparkPts(data, h)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9" /></Draw>
+    <Draw><polyline points={sparkPts(data, h)} fill="none" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
   </svg>
 )
 
 function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint }) {
   return (
     <div className={`kpi${onClick ? ' press' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
-      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: '#8a807a', background: 'rgba(255,255,255,0.05)' } : null}>{tag.text}</span>}</div>
+      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
       <div className="kpi-value"><Num value={value} /></div>
       <div className="kpi-sub">{sub}</div>
       {data && data.length > 1 && <Spark data={data} color={accent} />}
@@ -89,9 +89,9 @@ function DeliveryTiles({ snap, onNav }) {
     }
   }, [snap])
 
-  if (!snap) return <div className="kpi-grid">{[0, 1, 2, 3, 4].map(i => <div className="kpi" key={i}><div className="kpi-label"><span>delivery</span></div><div className="kpi-value" style={{ color: '#5a514a' }}>…</div><div className="kpi-sub">reading JIRA + GitHub…</div></div>)}</div>
+  if (!snap) return <div className="kpi-grid">{[0, 1, 2, 3, 4].map(i => <div className="kpi" key={i}><div className="kpi-label"><span>delivery</span></div><div className="kpi-value" style={{ color: 'var(--text-tertiary)' }}>…</div><div className="kpi-sub">reading JIRA + GitHub…</div></div>)}</div>
   if (!snap.available) return (
-    <div className="panel" style={{ borderColor: 'rgba(229,160,58,0.3)' }}>
+    <div className="panel" style={{ borderColor: 'var(--amber)' }}>
       <h3>Delivery <span className="muted">not configured</span></h3>
       <p className="small" style={{ marginTop: 0 }}>The delivery tiles read <code>/api/eng/snapshot</code> — {snap.reason || snap.error || 'JIRA credentials / gh auth are not wired'}. Nothing is fabricated here: no snapshot, no numbers.</p>
     </div>
@@ -104,7 +104,7 @@ function DeliveryTiles({ snap, onNav }) {
         sub={t.atRisk ? `worst is ${d1(t.worstRisk)}d past its stage budget` : 'nothing past its stage budget'} />
       <Kpi label="shipped · 30d" delay=".06s" accent={GREEN} onClick={go} data={t.spark} hint="tickets that reached Live/Closed · 12-week trend"
         value={t.shipped30} tag={{ text: `${t.pts30} pts`, dim: true }} sub="12-week trend" />
-      <Kpi label="cycle time" delay=".1s" accent="#8b7cf6" onClick={go} hint="working days, first In Progress → live. p50/p90 over the last 30d vs the 30d before it."
+      <Kpi label="cycle time" delay=".1s" accent="var(--violet)" onClick={go} hint="working days, first In Progress → live. p50/p90 over the last 30d vs the 30d before it."
         value={t.p50 == null ? '—' : `${d1(t.p50)}d`}
         tag={t.delta == null ? { text: 'n<1', dim: true } : { text: `${t.delta > 0 ? '+' : ''}${d1(t.delta)}d`, color: t.delta > 0 ? RED : GREEN }}
         sub={t.p50 == null ? 'nothing shipped in 30d' : `p90 ${d1(t.p90)}d · n=${t.n}`} />
@@ -125,7 +125,7 @@ function CiStrip({ onNav }) {
   if (!ci || !ci.repos?.length) return null
   const red = ci.repos.filter(r => r.mainRed)
   return (
-    <div className="panel" style={{ animationDelay: '.22s', borderColor: red.length ? 'rgba(229,72,77,0.35)' : undefined, background: red.length ? 'linear-gradient(90deg, rgba(229,72,77,0.09), rgba(28,24,21,0.55))' : undefined }}>
+    <div className="panel" style={{ animationDelay: '.22s', borderColor: red.length ? 'var(--red-bg)' : undefined, background: red.length ? 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))' : undefined }}>
       <div className="panel-head" style={{ marginBottom: 10 }}>
         <h3>CI health <span className="muted">default branch · {ci.days}d · {ci.repos.length} repo{ci.repos.length === 1 ? '' : 's'}</span></h3>
         {red.length > 0 && <span style={{ font: `700 10px ${MONO}`, letterSpacing: '0.08em', padding: '4px 9px', borderRadius: 6, color: '#fff', background: RED }}>MAIN IS RED</span>}
@@ -134,11 +134,11 @@ function CiStrip({ onNav }) {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {ci.repos.map(r => (
           <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="lift"
-            style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 12, border: `1px solid ${r.mainRed ? RED + '66' : 'rgba(255,255,255,0.06)'}`, background: 'rgba(255,255,255,0.02)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? '#6a615a' : r.mainRed ? RED : GREEN, boxShadow: `0 0 8px ${r.mainRed ? RED : GREEN}` }} />
+            style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 6, border: `1px solid ${r.mainRed ? RED + '66' : 'var(--bg-surface-hover)'}`, background: 'var(--bg-surface)' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? 'var(--text-tertiary)' : r.mainRed ? RED : GREEN, boxShadow: `0 0 0 1px ${r.mainRed ? RED : GREEN}` }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ font: `500 12.5px ${MONO}`, color: '#eee3da', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
-              <div style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>
+              <div style={{ font: `500 13px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
+              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
                 {r.error ? r.error.slice(0, 40)
                   : r.failureRate == null ? `no completed runs on ${r.branch} in ${ci.days}d`
                     : <><CountUp value={Math.round(r.failureRate * 100)} />% fail · {r.flaky.length} flaky · {r.medianDurationMin ?? '—'}m median</>}
@@ -192,10 +192,10 @@ export default function Overview({ onNav }) {
 
       {cap?.headline?.deadCount > 0 && (
         <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'rgba(229,160,58,0.14)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
+          <span style={{ width: 30, height: 30, borderRadius: 6, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'var(--amber-bg)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ font: `600 13.5px ${HEAD}`, color: '#f2ebe4' }}>You pay <CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok every session for {cap.items.length} capabilities.</div>
-            <div style={{ font: `400 11.5px ${MONO}`, color: '#8a807a', marginTop: 3 }}>
+            <div style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>You pay <CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok every session for {cap.items.length} capabilities.</div>
+            <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-secondary)', marginTop: 3 }}>
               <b style={{ color: RED }}><CountUp value={cap.headline.deadCount} /> have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
             </div>
           </div>
@@ -209,9 +209,9 @@ export default function Overview({ onNav }) {
         <Kpi label="lines · 7d" tag={{ text: `+${fmtTok(usage?.kpis.lines7d.add || 0)}` }} accent={GREEN} delay=".3s"
           value={usage ? fmtTok(usage.kpis.lines7d.add + usage.kpis.lines7d.del) : '…'}
           sub={usage ? `+${fmtTok(usage.kpis.lines7d.add)} · −${fmtTok(usage.kpis.lines7d.del)} (edits)` : ''} data={usage && last10('lines')} />
-        <Kpi label="tool calls" tag={{ text: 'today' }} accent="#8b7cf6" delay=".34s"
+        <Kpi label="tool calls" tag={{ text: 'today' }} accent="var(--violet)" delay=".34s"
           value={usage ? fmtTok(usage.kpis.toolCallsToday) : '…'} sub={usage ? `${fmtTok(usage.kpis.toolCallsTotal)} all-time` : ''} data={usage && last10('tools')} />
-        <Kpi label="sessions" tag={{ text: '30d', dim: true }} accent="#e8a06a" delay=".38s" onClick={() => onNav?.('harness')}
+        <Kpi label="sessions" tag={{ text: '30d', dim: true }} accent="var(--accent-light)" delay=".38s" onClick={() => onNav?.('harness')}
           value={usage ? usage.kpis.sessions30 : '…'} sub={usage ? `${usage.activeDays} active days · open the ledger` : ''} data={usage && last10('msgs')} />
       </div>
 
@@ -265,7 +265,7 @@ export default function Overview({ onNav }) {
           <h3>◆ Memory <span className="muted">{memory.project} · {memory.items.length} recalled · your past self</span></h3>
           <div className="mini-list">
             {memory.items.map(m => {
-              const c = { user: '#8a807a', feedback: '#e8a06a', project: '#5eb3f6', reference: GREEN, memory: '#c98bf6' }[m.type] || '#c98bf6'
+              const c = { user: 'var(--text-secondary)', feedback: 'var(--accent-light)', project: 'var(--blue)', reference: GREEN, memory: 'var(--violet)' }[m.type] || 'var(--violet)'
               const open = openMem === m.path
               return (
                 <div key={m.path} className="mini-row" style={{ alignItems: 'flex-start', cursor: 'pointer', flexWrap: 'wrap' }} onClick={() => setOpenMem(open ? null : m.path)}>
@@ -294,7 +294,7 @@ export default function Overview({ onNav }) {
               <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('authoring')}>open →</button>
             </div>
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ font: `700 30px ${MONO}`, color: c }}>{pq.avg}<span style={{ color: '#7a716a', fontWeight: 400, fontSize: 12 }}>/10</span></div>
+              <div style={{ font: `700 20px ${MONO}`, color: c }}>{pq.avg}<span style={{ color: 'var(--text-tertiary)', fontWeight: 400, fontSize: 12 }}>/10</span></div>
               <div style={{ display: 'flex', gap: 5, flex: 1, minWidth: 200 }}>
                 {pq.dimensions.map((dm, i) => (
                   <div key={i} title={`${dm.name}: ${dm.score}/10`} style={{ flex: 1, height: 28, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
@@ -302,7 +302,7 @@ export default function Overview({ onNav }) {
                   </div>
                 ))}
               </div>
-              <div style={{ font: `400 11px ${MONO}`, color: '#8a807a', minWidth: 180 }}>
+              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', minWidth: 180 }}>
                 weakest: <span style={{ color: RED }}>{weakest.name}</span> ({weakest.score}/10)
               </div>
             </div>

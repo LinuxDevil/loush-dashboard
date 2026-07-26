@@ -120,8 +120,8 @@ export default function Drawer({ open, mode, kind, initial, onSave, onClose, ext
                   </select>
                 ) : f.type === 'color' ? (
                   <div className="color-field">
-                    <input type="color" value={values[f.k] || '#2a78d6'} onChange={e => set(f.k, e.target.value)} />
-                    <input type="text" value={values[f.k] || ''} placeholder="#F59E0B (optional)" onChange={e => set(f.k, e.target.value)} />
+                    <input type="color" value={values[f.k] || 'var(--blue)'} onChange={e => set(f.k, e.target.value)} />
+                    <input type="text" value={values[f.k] || ''} placeholder="var(--amber) (optional)" onChange={e => set(f.k, e.target.value)} />
                   </div>
                 ) : (
                   <input type="text" value={values[f.k] || ''} placeholder={f.ph} disabled={disabled} onChange={e => set(f.k, e.target.value)} />

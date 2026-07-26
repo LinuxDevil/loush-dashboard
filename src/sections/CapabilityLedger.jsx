@@ -9,9 +9,9 @@ import { Stagger, CountUp } from '../ui/anim.jsx'
 // fired is worthless; a scruffy 41-scored skill invoked ten times a day is the most valuable file on
 // disk. So the metric is fires × cost, not frontmatter completeness.
 // Plane B (this machine's own transcripts), self-only by construction.
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', BLUE = '#5eb3f6', DIM = '#8a807a'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', DIM = 'var(--text-secondary)'
 // NEW exists so a capability installed this morning is not labelled DEAD alongside one abandoned a
 // year ago — it has not had a chance to fire yet, which is not the same as never firing.
 const VERDICT = {
@@ -83,16 +83,16 @@ export default function CapabilityLedger() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="panel" style={{ marginBottom: 0, background: 'linear-gradient(90deg, rgba(229,72,77,0.08), rgba(28,24,21,0.55))', borderColor: 'rgba(229,72,77,0.22)' }}>
-        <div style={{ font: `600 17px ${HEAD}`, color: '#f6efe9', lineHeight: 1.5 }}>
-          You pay <b style={{ color: '#d97757' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
+      <div className="panel" style={{ marginBottom: 0, background: 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))', borderColor: 'var(--red)' }}>
+        <div style={{ font: `600 16px ${HEAD}`, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+          You pay <b style={{ color: 'var(--accent)' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
           <b style={{ color: RED }}><CountUp value={h.deadCount} /> of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
           {h.newCount > 0 && <span style={{ color: BLUE }}> {h.newCount} more {h.newCount === 1 ? 'is' : 'are'} too new to judge — installed less than {h.newAfterDays}d ago.</span>}
         </div>
         <div style={{ display: 'flex', gap: 22, marginTop: 12, flexWrap: 'wrap' }}>
           {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['NEW', h.newCount || 0, h.newTokens || 0], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens - (h.newTokens || 0)]].map(([v, n, tok]) => (
             <div key={v} title={VERDICT[v].hint}>
-              <div style={{ font: `700 22px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
+              <div style={{ font: `700 18px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
               <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.08em', color: DIM }}>{v} · {fmtTok(tok)} tok/session</div>
             </div>
           ))}
@@ -108,7 +108,7 @@ export default function CapabilityLedger() {
           <h3>The ledger <span className="muted">{rows.length} of {d.items.length}</span></h3>
           {Object.keys(VERDICT).map(v => (
             <button key={v} onClick={() => setVerdicts(s => ({ ...s, [v]: !s[v] }))} title={VERDICT[v].hint}
-              style={{ marginTop: 0, cursor: 'pointer', font: `600 10.5px ${MONO}`, padding: '5px 10px', borderRadius: 9, border: `1px solid ${verdicts[v] ? VERDICT[v].c + '77' : 'rgba(255,255,255,0.08)'}`, background: verdicts[v] ? VERDICT[v].c + '1f' : 'transparent', color: verdicts[v] ? VERDICT[v].c : '#6a615a' }}>
+              style={{ marginTop: 0, cursor: 'pointer', font: `600 11px ${MONO}`, padding: '5px 10px', borderRadius: 6, border: `1px solid ${verdicts[v] ? VERDICT[v].c + '77' : 'var(--bg-surface-active)'}`, background: verdicts[v] ? VERDICT[v].c + '1f' : 'transparent', color: verdicts[v] ? VERDICT[v].c : 'var(--text-tertiary)' }}>
               {v}
             </button>
           ))}
@@ -117,21 +117,21 @@ export default function CapabilityLedger() {
         </div>
 
         {chosen.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 13px', marginBottom: 12, borderRadius: 12, border: '1px solid rgba(217,119,87,0.3)', background: 'rgba(217,119,87,0.08)', flexWrap: 'wrap' }}>
-            <span style={{ font: `600 12.5px ${HEAD}`, color: '#f2ebe4' }}>{chosen.length} selected</span>
-            <span style={{ font: `400 11.5px ${MONO}`, color: GREEN }}>reclaims {fmtTok(reclaim)} tok / session</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 13px', marginBottom: 12, borderRadius: 6, border: '1px solid var(--accent)', background: 'var(--accent-bg)', flexWrap: 'wrap' }}>
+            <span style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)' }}>{chosen.length} selected</span>
+            <span style={{ font: `400 12px ${MONO}`, color: GREEN }}>reclaims {fmtTok(reclaim)} tok / session</span>
             {chosen.some(i => !ARCHIVABLE.has(i.kind)) && <span style={{ font: `400 11px ${MONO}`, color: GOLD }}>· MCP servers are not archivable here — remove them in Harness → MCP</span>}
             <button className="mini" style={{ marginTop: 0, marginLeft: 'auto' }} onClick={() => setSel({})}>clear</button>
-            <button className="mini" style={{ marginTop: 0, borderColor: '#d97757', color: '#d97757' }} disabled={busy} onClick={dryRun}>⏏ archive {chosen.length} — dry run first</button>
+            <button className="mini" style={{ marginTop: 0, borderColor: 'var(--accent)', color: 'var(--accent)' }} disabled={busy} onClick={dryRun}>⏏ archive {chosen.length} — dry run first</button>
           </div>
         )}
 
         {plan && (
-          <div style={{ padding: '12px 14px', marginBottom: 12, borderRadius: 12, border: '1px solid rgba(229,160,58,0.35)', background: 'rgba(229,160,58,0.07)' }}>
-            <div style={{ font: `600 13px ${HEAD}`, color: '#f2ebe4', marginBottom: 8 }}>Dry run — nothing has been touched yet</div>
-            <div style={{ maxHeight: 200, overflowY: 'auto', font: `400 11px ${MONO}`, color: '#b0a69e', lineHeight: 1.7 }}>
+          <div style={{ padding: '12px 14px', marginBottom: 12, borderRadius: 6, border: '1px solid var(--amber)', background: 'var(--amber-bg)' }}>
+            <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Dry run — nothing has been touched yet</div>
+            <div style={{ maxHeight: 200, overflowY: 'auto', font: `400 11px ${MONO}`, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
               {plan.results.map((r, i) => (
-                <div key={i} style={{ color: r.error ? RED : r.changed ? '#d8cfc7' : DIM }}>
+                <div key={i} style={{ color: r.error ? RED : r.changed ? 'var(--text-primary)' : DIM }}>
                   {r.error ? `✗ ${r.name}: ${r.error}` : r.changed ? `→ remove ${r.kind}/${r.name} (${r.scope}) · ${fmtTok(r.reclaimTokens || 0)} tok · ${r.path || r.target}` : `· ${r.name}: already gone`}
                 </div>
               ))}
@@ -161,16 +161,16 @@ export default function CapabilityLedger() {
                   <td><input type="checkbox" checked={!!sel[id]} disabled={!ARCHIVABLE.has(it.kind)}
                     title={ARCHIVABLE.has(it.kind) ? 'select to archive' : 'MCP servers are managed in Harness → MCP'}
                     onChange={e => setSel(s => { const n = { ...s }; e.target.checked ? (n[id] = it) : delete n[id]; return n })} style={{ width: 13 }} /></td>
-                  <td className="mono" style={{ color: '#eee3da' }}>{it.name}</td>
+                  <td className="mono" style={{ color: 'var(--text-primary)' }}>{it.name}</td>
                   <td>{it.kind}</td>
                   <td><span className="chip">{it.scope}</span></td>
-                  <td className="num" style={{ color: it.alwaysOnTokens > 100 ? '#e8a06a' : undefined }}>{it.alwaysOnTokens ? fmtTok(it.alwaysOnTokens) : '—'}</td>
+                  <td className="num" style={{ color: it.alwaysOnTokens > 100 ? 'var(--accent-light)' : undefined }}>{it.alwaysOnTokens ? fmtTok(it.alwaysOnTokens) : '—'}</td>
                   <td className="num">{it.fullTokens ? fmtTok(it.fullTokens) : '—'}</td>
                   <td className="num" style={{ color: it.fires30 ? GREEN : DIM }}>{it.fires30 || '—'}</td>
                   <td className="num" style={{ color: it.fires90 ? GREEN : DIM }}>{it.fires90 || '—'}</td>
-                  <td className="mono" style={{ color: it.last ? '#b0a69e' : RED }}>{ago(it.last)}</td>
+                  <td className="mono" style={{ color: it.last ? 'var(--text-secondary)' : RED }}>{ago(it.last)}</td>
                   <td className="num" title="always-on tokens × sessions ÷ fires, over 90d">{it.tokPerFire == null ? '—' : fmtTok(it.tokPerFire)}</td>
-                  <td><span style={{ font: `700 9.5px ${MONO}`, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 5, color: v.c, background: v.c + '1c' }} title={v.hint}>{it.verdict}</span></td>
+                  <td><span style={{ font: `700 10px ${MONO}`, letterSpacing: '0.06em', padding: '2px 7px', borderRadius: 5, color: v.c, background: v.c + '1c' }} title={v.hint}>{it.verdict}</span></td>
                 </tr>
               )
             })}
@@ -192,7 +192,7 @@ export default function CapabilityLedger() {
 // It used to be "Setup health: 68/100" on the landing page — three panels rendering one static heuristic,
 // a linter cosplaying as a metric. It is a perfectly good AUTHORING AID. It is not a measure of value.
 // That is now the ledger above.
-const LEVEL_COLOR = { poor: RED, good: GOLD, excellent: GREEN, perfect: '#8b7cf6' }
+const LEVEL_COLOR = { poor: RED, good: GOLD, excellent: GREEN, perfect: 'var(--violet)' }
 const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.']]
 
 export function Inventory() {
@@ -235,7 +235,7 @@ export function Inventory() {
         <tbody>
           {pg.slice.map(it => (
             <tr key={it.kind + ':' + it.name + ':' + it.scope}>
-              <td className="mono" style={{ color: '#eee3da' }}>{it.name}</td>
+              <td className="mono" style={{ color: 'var(--text-primary)' }}>{it.name}</td>
               <td>{it.kind}</td>
               <td><span className="chip">{it.group}</span></td>
               <td className="tags-cell" onClick={() => editTags(it)} title="click to edit tags">

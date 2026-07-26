@@ -7,9 +7,9 @@ import { Stagger, CountUp } from '../ui/anim.jsx'
 // The app's only previous "resume" spawned the session INSIDE the dashboard's chat pane, which is not
 // what a terminal-first dev wants. This copies `cd <cwd> && claude --resume <id>` and gets out of the way.
 // Plane B: this machine's own transcripts. There is no user/machine parameter and there never will be.
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', DIM = '#8a807a'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd' }
@@ -81,13 +81,13 @@ export default function SessionsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="kpi-grid" style={{ marginBottom: 0 }}>
-        <div className="kpi"><div className="kpi-label"><span>spend</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>{days}d</span></div>
+        <div className="kpi"><div className="kpi-label"><span>spend</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>{days}d</span></div>
           <div className="kpi-value"><CountUp value={t.cost} prefix="$" decimals={2} /></div>
           <div className="kpi-sub"><CountUp value={t.sessions} /> sessions · ${(t.cost / (t.sessions || 1)).toFixed(2)} median-ish per session</div></div>
         <div className="kpi"><div className="kpi-label"><span>output</span></div>
           <div className="kpi-value"><CountUp value={t.out} format={fmtTok} /></div><div className="kpi-sub">tokens written by Claude</div></div>
         <div className="kpi" title="an estimate (90% of input price) × an estimate (~4 chars/token), against a counterfactual that never happened, that only ever goes up. It is here, in small type, because no decision hangs on it — it was NOT worth a headline KPI tile.">
-          <div className="kpi-label"><span>cache saved</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>est · all time</span></div>
+          <div className="kpi-label"><span>cache saved</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>est · all time</span></div>
           <div className="kpi-value" style={{ color: DIM }}>{usage ? '$' + fmtTok(usage.kpis.costSaved) : '…'}</div>
           <div className="kpi-sub">estimate × estimate vs a counterfactual — hover</div></div>
         <div className="kpi"><div className="kpi-label"><span>compactions</span></div>
@@ -102,7 +102,7 @@ export default function SessionsSection() {
           <select value={days} onChange={e => setDays(Number(e.target.value))}>
             <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
           </select>
-          <span style={{ font: `400 10.5px ${MONO}`, color: '#6a615a' }}>/ filter · j/k move · y copy resume · ↵ open raw</span>
+          <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>/ filter · j/k move · y copy resume · ↵ open raw</span>
         </div>
         <div style={{ maxHeight: '60vh', overflowY: 'auto' }} ref={bodyRef}>
           <table className="data inv">
@@ -116,17 +116,17 @@ export default function SessionsSection() {
             <Stagger tag="tbody" step={14} max={300}>
               {rows.map((r, i) => (
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
-                  style={{ background: i === cur ? 'rgba(217,119,87,0.12)' : undefined, cursor: 'pointer' }}>
-                  <td className="mono" style={{ color: '#eee3da' }} title={r.cwd}>{r.project}</td>
-                  <td className="mono" style={{ color: r.branch ? '#8b7cf6' : DIM }}>{r.branch || '—'}</td>
-                  <td className="num" style={{ color: r.cost > 20 ? GOLD : '#eee3da' }}>${r.cost.toFixed(2)}</td>
+                  style={{ background: i === cur ? 'var(--accent-bg)' : undefined, cursor: 'pointer' }}>
+                  <td className="mono" style={{ color: 'var(--text-primary)' }} title={r.cwd}>{r.project}</td>
+                  <td className="mono" style={{ color: r.branch ? 'var(--violet)' : DIM }}>{r.branch || '—'}</td>
+                  <td className="num" style={{ color: r.cost > 20 ? GOLD : 'var(--text-primary)' }}>${r.cost.toFixed(2)}</td>
                   <td className="num">{fmtTok(r.out)}</td>
                   <td className="num" title="share of input tokens served from the prompt cache">{Math.round(r.cacheReadPct * 100)}%</td>
                   <td className="num">{fmtDur(r.durationMs)}</td>
                   <td className="num">{r.toolCalls}</td>
                   <td className="num" style={{ color: r.compactions ? GOLD : DIM }}>{r.compactions || '—'}</td>
                   <td className="num" style={{ color: r.errors ? RED : DIM }}>{r.errors || '—'}</td>
-                  <td className="mono" style={{ color: '#7a716a' }}>{ago(r.last)} ago</td>
+                  <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{ago(r.last)} ago</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="mini" style={{ marginTop: 0 }} title="resume this session inside the dashboard" onClick={e => { e.stopPropagation(); resumeHere(r) }}>r · resume</button>
                     <button className="mini" style={{ marginTop: 0 }} title={r.resume} onClick={e => { e.stopPropagation(); copyResume(r) }}>y · copy</button>

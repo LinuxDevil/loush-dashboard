@@ -40,7 +40,7 @@ export default function CmdK({ snap, routes, onRoute, onOpenTicket, open, setOpe
     }
     setOpen(false)
   }
-  return <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(4,7,11,0.7)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'center', paddingTop: '12vh' }}>
+  return <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'var(--bg-base)', display: 'flex', justifyContent: 'center', paddingTop: '12vh' }}>
     <div onClick={e => e.stopPropagation()} style={{ ...PANEL, width: 620, maxWidth: '94vw', height: 'fit-content', maxHeight: '70vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <input autoFocus value={q} placeholder="jump to a ticket, a PR number, or a page…" onChange={e => { setQ(e.target.value); setSel(0) }}
         onKeyDown={e => {
@@ -48,12 +48,12 @@ export default function CmdK({ snap, routes, onRoute, onOpenTicket, open, setOpe
           if (e.key === 'ArrowUp') { e.preventDefault(); setSel(s => Math.max(0, s - 1)) }
           if (e.key === 'Enter' && items[sel]) run(items[sel])
         }}
-        style={{ padding: '15px 18px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#f6efe9', font: `500 15px ${BODY}`, outline: 'none' }} />
+        style={{ padding: '15px 18px', border: 'none', borderBottom: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-primary)', font: `500 14px ${BODY}`, outline: 'none' }} />
       <div style={{ overflowY: 'auto' }}>
         {items.map((it, i) => <div key={it.kind + it.id + i} onMouseEnter={() => setSel(i)} onClick={() => run(it)}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', cursor: 'pointer', background: i === sel ? 'rgba(255,255,255,0.1)' : 'transparent' }}>
-          <span style={{ font: `600 8.5px ${MONO}`, letterSpacing: '0.05em', width: 46, color: it.kind === 'ticket' ? BB : it.kind === 'pr' ? '#8b7cf6' : it.kind === 'copy' ? GOLD : DIM }}>{it.kind.toUpperCase()}</span>
-          <span style={{ flex: 1, minWidth: 0, font: `500 12.5px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</span>
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 18px', cursor: 'pointer', background: i === sel ? 'var(--bg-surface-active)' : 'transparent' }}>
+          <span style={{ font: `600 9px ${MONO}`, letterSpacing: '0.05em', width: 46, color: it.kind === 'ticket' ? BB : it.kind === 'pr' ? 'var(--violet)' : it.kind === 'copy' ? GOLD : DIM }}>{it.kind.toUpperCase()}</span>
+          <span style={{ flex: 1, minWidth: 0, font: `500 13px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</span>
           <span style={{ font: `400 10px ${MONO}`, color: DIM, flexShrink: 0 }}>{it.sub}</span>
         </div>)}
       </div>

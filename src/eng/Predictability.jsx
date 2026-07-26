@@ -57,7 +57,7 @@ export default function Predictability({ snap, onOpenTicket }) {
         columns={[
           { key: 'name', label: 'Sprint', width: '1.6fr', sort: s => s.startDate || '', filter: s => s.name, render: s => <span style={{ minWidth: 0 }}>
             <span style={{ font: `600 12px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{s.name}</span>
-            <span style={{ font: `400 9.5px ${MONO}`, color: DIM }}>{fdate(s.startDate)} → {fdate(s.completeDate || s.endDate)}{/active/i.test(s.state || '') ? ' · active' : ''}</span></span> },
+            <span style={{ font: `400 10px ${MONO}`, color: DIM }}>{fdate(s.startDate)} → {fdate(s.completeDate || s.endDate)}{/active/i.test(s.state || '') ? ' · active' : ''}</span></span> },
           { key: 'com', label: 'Committed', width: '92px', align: 1, sort: s => s.committedPts, render: s => <span style={{ font: `600 12px ${MONO}`, color: HI }}>{s.committedPts}<span style={{ color: DIM, fontSize: 10 }}>/{s.committed}</span></span> },
           { key: 'add', label: 'Added', width: '86px', align: 1, sort: s => s.addedPts, render: s => <span style={{ font: `600 12px ${MONO}`, color: s.addedPts ? RED : DIM }}>{s.addedPts ? '+' + s.addedPts : '—'}</span> },
           { key: 'del', label: 'Delivered', width: '92px', align: 1, sort: s => s.deliveredPts, render: s => <span style={{ font: `600 12px ${MONO}`, color: GREEN }}>{s.deliveredPts}<span style={{ color: DIM, fontSize: 10 }}>/{s.delivered}</span></span> },

@@ -11,9 +11,9 @@ import { api, toast } from '../lib/api.js'
 // Export — are IMPORTED wholesale. Nothing was rebuilt. Three panels the Eng shell does not carry hang
 // off the same snapshot as extra tabs here: the idea→prod funnel (11), the cohort AI ROI (8) and the
 // 1:1 prep card (15).
-const MONO = "'IBM Plex Mono', monospace"
-const HEAD = "'Space Grotesk', sans-serif"
-const RED = '#e5484d', GOLD = '#e5a03a', GREEN = '#3fb96a', BLUE = '#5eb3f6', PURPLE = '#8b7cf6', DIM = '#8a807a'
+const MONO = "var(--mono)"
+const HEAD = "var(--head)"
+const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', PURPLE = 'var(--violet)', DIM = 'var(--text-secondary)'
 const d1 = n => (n == null ? '—' : (Math.round(n * 10) / 10).toFixed(1))
 const pctl = (a, q) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor((s.length - 1) * q))] }
 
@@ -30,7 +30,7 @@ const NotWired = ({ s }) => (
 export default function DeliverySection({ onNav }) {
   return (
     <Hub items={[
-      { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 14, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
+      { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 8, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
       { label: 'Idea → prod funnel', el: <Funnel /> },
       { label: 'AI ROI', el: <Roi /> },
       { label: 'DORA', el: <Dora /> },
@@ -74,10 +74,10 @@ function Funnel() {
     const p90w = Math.min(100, (s.p90 / max) * 100)
     return (
       <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr 155px', gap: 10, alignItems: 'center', padding: '5px 0' }}>
-        <span style={{ font: `400 11.5px ${MONO}`, color: '#d8cfc7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-        <div style={{ position: 'relative', height: 18, background: 'rgba(255,255,255,0.04)', borderRadius: 9 }}>
-          <div title={`p90 ${d1(s.p90)}d${p90w >= 100 ? ' — off the scale' : ''}`} style={{ position: 'absolute', inset: 0, width: p90w + '%', background: color + '33', borderRadius: 9 }} />
-          <div title={`p50 ${d1(s.p50)}d`} style={{ position: 'absolute', inset: 0, width: Math.max(2, (s.p50 / max) * 100) + '%', background: color, borderRadius: 9, opacity: 0.9 }} />
+        <span style={{ font: `400 12px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+        <div style={{ position: 'relative', height: 18, background: 'var(--bg-surface-hover)', borderRadius: 6 }}>
+          <div title={`p90 ${d1(s.p90)}d${p90w >= 100 ? ' — off the scale' : ''}`} style={{ position: 'absolute', inset: 0, width: p90w + '%', background: color + '33', borderRadius: 6 }} />
+          <div title={`p50 ${d1(s.p50)}d`} style={{ position: 'absolute', inset: 0, width: Math.max(2, (s.p50 / max) * 100) + '%', background: color, borderRadius: 6, opacity: 0.9 }} />
         </div>
         <span style={{ font: `500 11px ${MONO}`, color: DIM }}>p50 <b style={{ color }}>{d1(s.p50)}d</b> · p90 <b style={{ color: s.p90 > max ? RED : DIM }}>{d1(s.p90)}d</b> · n={s.n}</span>
       </div>
@@ -89,11 +89,11 @@ function Funnel() {
       <div className="panel" style={{ marginBottom: 0 }}>
         <h3>Lead time vs cycle time <span className="muted">{f.shipped} tickets shipped · 90d · working days</span></h3>
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div><div style={{ font: `700 26px ${HEAD}`, color: '#f6efe9' }}>{d1(f.leadP50)}d</div><div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>LEAD (created → live) · p90 {d1(f.leadP90)}d</div></div>
-          <div style={{ font: `600 20px ${HEAD}`, color: DIM }}>−</div>
-          <div><div style={{ font: `700 26px ${HEAD}`, color: BLUE }}>{d1(f.cycP50)}d</div><div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>CYCLE (first In Progress → live) · p90 {d1(f.cycP90)}d</div></div>
-          <div style={{ font: `600 20px ${HEAD}`, color: DIM }}>=</div>
-          <div><div style={{ font: `700 26px ${HEAD}`, color: f.gap > f.cycP50 ? RED : GOLD }}>{d1(f.gap)}d</div><div style={{ font: `400 10.5px ${MONO}`, color: DIM }}>TIME IT SAT WAITING ON US</div></div>
+          <div><div style={{ font: `700 20px ${HEAD}`, color: 'var(--text-primary)' }}>{d1(f.leadP50)}d</div><div style={{ font: `400 11px ${MONO}`, color: DIM }}>LEAD (created → live) · p90 {d1(f.leadP90)}d</div></div>
+          <div style={{ font: `600 18px ${HEAD}`, color: DIM }}>−</div>
+          <div><div style={{ font: `700 20px ${HEAD}`, color: BLUE }}>{d1(f.cycP50)}d</div><div style={{ font: `400 11px ${MONO}`, color: DIM }}>CYCLE (first In Progress → live) · p90 {d1(f.cycP90)}d</div></div>
+          <div style={{ font: `600 18px ${HEAD}`, color: DIM }}>=</div>
+          <div><div style={{ font: `700 20px ${HEAD}`, color: f.gap > f.cycP50 ? RED : GOLD }}>{d1(f.gap)}d</div><div style={{ font: `400 11px ${MONO}`, color: DIM }}>TIME IT SAT WAITING ON US</div></div>
           <p className="small" style={{ flex: 1, minWidth: 240, marginTop: 0 }}>
             If the queue half is bigger than the active half, no amount of AI coding speed moves the number a
             stakeholder feels. Here it is <b style={{ color: f.gap > f.cycP50 ? RED : GOLD }}>{f.cycP50 ? Math.round((f.gap / f.cycP50) * 100) : 0}%</b> of cycle time.
@@ -130,7 +130,7 @@ function Roi() {
   const max = Math.max(...pts.map(t => t.perPoint), 1)
 
   const Cell = ({ c, field, fmt = d1 }) => (
-    <td className="num" style={{ color: c.n === 0 ? DIM : c.low ? '#6a615a' : '#eee3da' }}
+    <td className="num" style={{ color: c.n === 0 ? DIM : c.low ? 'var(--text-tertiary)' : 'var(--text-primary)' }}
       title={c.low ? `n=${c.n} — fewer than 5 tickets. Greyed on purpose: this cell is noise.` : `n=${c.n}`}>
       {c.n === 0 ? '—' : fmt(c[field])}{c.low && c.n > 0 ? <span style={{ fontSize: 9, marginLeft: 3 }}>n={c.n}</span> : ''}
     </td>
@@ -139,10 +139,10 @@ function Roi() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="kpi-grid" style={{ marginBottom: 0 }}>
-        <div className="kpi"><div className="kpi-label"><span>AI $ per shipped point</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>90d</span></div>
+        <div className="kpi"><div className="kpi-label"><span>AI $ per shipped point</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>90d</span></div>
           <div className="kpi-value">${h.spendPerPoint ?? '—'}</div>
           <div className="kpi-sub">${h.spend.toLocaleString()} spend ÷ {h.shippedPoints} points</div></div>
-        <div className="kpi"><div className="kpi-label"><span>rework rate</span><span className="kpi-tag" style={{ background: 'rgba(255,255,255,0.05)', color: DIM }}>90d</span></div>
+        <div className="kpi"><div className="kpi-label"><span>rework rate</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>90d</span></div>
           <div className="kpi-value" style={{ color: h.reworkRate > 0.25 ? GOLD : undefined }}>{h.reworkRate == null ? '—' : Math.round(h.reworkRate * 100) + '%'}</div>
           <div className="kpi-sub">{h.reworkedTickets} of {h.shippedTickets} shipped tickets bounced back (reopened / re-entered In Progress)</div></div>
         <div className="kpi"><div className="kpi-label"><span>unattributed spend</span></div>
@@ -163,7 +163,7 @@ function Roi() {
           {pts.map(t => (
             <div key={t.week} title={`${t.week}: $${t.perPoint}/pt · $${t.spend} · ${t.points} pts`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
               <div style={{ width: '100%', height: (t.perPoint / max) * 90 + 'px', background: `linear-gradient(180deg, ${PURPLE}, ${PURPLE}77)`, borderRadius: 5 }} />
-              <span style={{ font: `400 8.5px ${MONO}`, color: '#6a615a' }}>{t.week.slice(5)}</span>
+              <span style={{ font: `400 9px ${MONO}`, color: 'var(--text-tertiary)' }}>{t.week.slice(5)}</span>
             </div>
           ))}
           {!pts.length && <p className="small">no week has both spend and shipped points</p>}
@@ -181,7 +181,7 @@ function Roi() {
           <tbody>
             {d.cohort.map(c => (
               <tr key={c.bucket}>
-                <td className="mono" style={{ color: '#eee3da' }}>{c.bucket} pts</td>
+                <td className="mono" style={{ color: 'var(--text-primary)' }}>{c.bucket} pts</td>
                 <Cell c={c.aiTouched} field="medianCycleDays" />
                 <Cell c={c.aiTouched} field="medianQaCycles" />
                 <Cell c={c.aiTouched} field="reworkRate" fmt={v => (v == null ? '—' : Math.round(v * 100) + '%')} />
@@ -225,9 +225,9 @@ function BandStrip({ segs, active }) {
         const on = active === i
         return (
           <div key={b.key} style={{ flex: 1, textAlign: 'center' }}>
-            <div style={{ height: 6, borderRadius: 3, background: dead ? 'rgba(255,255,255,0.06)' : on ? b.color : b.color + '2e' }} />
-            <div style={{ font: `600 9px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 4, color: dead ? '#5a524c' : on ? b.color : DIM }}>{b.key}</div>
-            <div style={{ font: `400 8.5px ${MONO}`, color: dead ? '#4a433e' : '#6a615a' }}>{segs[i]}</div>
+            <div style={{ height: 6, borderRadius: 3, background: dead ? 'var(--bg-surface-hover)' : on ? b.color : b.color + '2e' }} />
+            <div style={{ font: `600 9px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 4, color: dead ? 'var(--text-tertiary)' : on ? b.color : DIM }}>{b.key}</div>
+            <div style={{ font: `400 9px ${MONO}`, color: dead ? 'var(--text-tertiary)' : 'var(--text-tertiary)' }}>{segs[i]}</div>
           </div>
         )
       })}
@@ -237,15 +237,15 @@ function BandStrip({ segs, active }) {
 
 function DoraCard({ title, tag, value, unit, sub, segs, active, low, body }) {
   const dead = active == null && !low
-  const valColor = dead || low ? '#6a615a' : (active != null ? DORA_BANDS[active].color : '#f6efe9')
+  const valColor = dead || low ? 'var(--text-tertiary)' : (active != null ? DORA_BANDS[active].color : 'var(--text-primary)')
   return (
     <div className="panel" style={{ marginBottom: 0 }}>
       <h3>{title} <span className="muted">{tag}</span></h3>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ font: `700 30px ${HEAD}`, color: valColor }}>{value}</span>
+        <span style={{ font: `700 20px ${HEAD}`, color: valColor }}>{value}</span>
         {unit && <span style={{ font: `500 12px ${MONO}`, color: DIM }}>{unit}</span>}
       </div>
-      {sub && <div style={{ font: `400 10.5px ${MONO}`, color: DIM, marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ font: `400 11px ${MONO}`, color: DIM, marginTop: 2 }}>{sub}</div>}
       <BandStrip segs={segs} active={active} />
       {body && <p className="small" style={{ marginTop: 12, marginBottom: 0 }}>{body}</p>}
     </div>
@@ -377,26 +377,26 @@ function OneOnOne() {
                 ['rework', card.reopened, '30d', card.reopened ? GOLD : DIM],
                 ['3+ QA rounds', card.qaHeavy, '30d', card.qaHeavy ? GOLD : DIM],
                 ['bugs assigned', card.bugs, '30d', DIM]].map(([l, v, s, c]) => (
-                <div key={l}><div style={{ font: `700 22px ${HEAD}`, color: c }}>{v}</div>
+                <div key={l}><div style={{ font: `700 18px ${HEAD}`, color: c }}>{v}</div>
                   <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.06em', color: DIM, textTransform: 'uppercase' }}>{l}</div>
-                  <div style={{ font: `400 10px ${MONO}`, color: '#6a615a' }}>{s}</div></div>
+                  <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>{s}</div></div>
               ))}
             </div>
-            <div style={{ font: `600 13px ${HEAD}`, color: '#f2ebe4', marginBottom: 8 }}>Talking points <span className="muted">drafted from the artifacts above</span></div>
+            <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Talking points <span className="muted">drafted from the artifacts above</span></div>
             {card.talking.map((t, i) => (
-              <div key={i} style={{ display: 'flex', gap: 9, padding: '7px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                <span style={{ color: '#d97757', font: `600 12px ${MONO}` }}>{i + 1}</span>
-                <span style={{ font: "400 12.5px 'IBM Plex Sans'", color: '#c8bdb4' }}>{t}</span>
+              <div key={i} style={{ display: 'flex', gap: 9, padding: '7px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                <span style={{ color: 'var(--accent)', font: `600 12px ${MONO}` }}>{i + 1}</span>
+                <span style={{ font: "400 13px var(--body)", color: 'var(--text-secondary)' }}>{t}</span>
               </div>
             ))}
             {card.list.length > 0 && (
               <>
-                <div style={{ font: `600 13px ${HEAD}`, color: '#f2ebe4', margin: '16px 0 8px' }}>In flight <span className="muted">oldest first</span></div>
+                <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', margin: '16px 0 8px' }}>In flight <span className="muted">oldest first</span></div>
                 {card.list.map(i => (
-                  <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                    <a href={i.url} target="_blank" rel="noreferrer" style={{ font: `600 11.5px ${MONO}`, color: BLUE, textDecoration: 'none', flexShrink: 0 }}>{i.key}</a>
-                    <span style={{ flex: 1, minWidth: 0, font: "400 12px 'IBM Plex Sans'", color: '#c8bdb4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.summary}</span>
-                    <span style={{ font: `400 10.5px ${MONO}`, color: i.rec?.atRisk ? RED : DIM, flexShrink: 0 }}>{i.status} · {d1(i.inCurrent)}d</span>
+                  <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                    <a href={i.url} target="_blank" rel="noreferrer" style={{ font: `600 12px ${MONO}`, color: BLUE, textDecoration: 'none', flexShrink: 0 }}>{i.key}</a>
+                    <span style={{ flex: 1, minWidth: 0, font: "400 12px var(--body)", color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.summary}</span>
+                    <span style={{ font: `400 11px ${MONO}`, color: i.rec?.atRisk ? RED : DIM, flexShrink: 0 }}>{i.status} · {d1(i.inCurrent)}d</span>
                   </div>
                 ))}
               </>
