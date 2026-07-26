@@ -123,7 +123,13 @@ export default function PromptStudio() {
         <div style={{ ...PANEL, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <span style={{ font: `600 14px ${HEAD}` }}>Generated prompt</span>
+            {doc.quality && (() => {
+              const s = doc.quality.score, c = s >= 9 ? '#3fb96a' : s >= 7 ? '#e5a03a' : '#e5484d'
+              const tip = doc.quality.gaps?.length ? `to reach 10: ${doc.quality.gaps.join(', ')}` : 'full marks — plan-first, output expectations, behavioural AC, constraints all present'
+              return <span title={tip} style={{ font: `700 11px ${MONO}`, color: c, border: `1px solid ${c}55`, borderRadius: 6, padding: '2px 8px', cursor: 'help' }}>quality {s}/10</span>
+            })()}
             <span style={{ font: `400 10.5px ${MONO}`, color: '#7a716a' }}>{doc.output ? `~${Math.ceil(doc.output.length / 4)} tok` : ''}</span>
+            {doc.quality?.needsGoal && <span style={{ font: `400 10.5px ${MONO}`, color: '#e5a03a' }}>add a goal (first text block) to clear 9/10</span>}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               <button className="mini" style={{ marginTop: 0 }} onClick={copy} disabled={!doc.output}>copy</button>
               <button className="mini" style={{ marginTop: 0 }} onClick={download} disabled={!doc.output}>export .md</button>

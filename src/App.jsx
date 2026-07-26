@@ -15,6 +15,7 @@ import GovernanceSection from './GovernanceSection.jsx'
 import ReliabilitySection from './ReliabilitySection.jsx'
 import LibrarySection from './LibrarySection.jsx'
 import PromptStudio from './PromptStudio.jsx'
+import PromptQuality from './PromptQuality.jsx'
 import FlowSection from './FlowSection.jsx'
 import RunsSection from './RunsSection.jsx'
 import Hub from './Hub.jsx'
@@ -96,7 +97,12 @@ const SECTIONS = [
   { id: 'constitution', label: 'Constitution', icon: '⚖', kicker: 'Knowledge', title: 'Constitution — verified repo knowledge base', el: <ConstitutionSection /> },
   { id: 'memory', label: 'Memory', icon: '◆', kicker: 'Knowledge', title: 'Memory Recall — ask your past self', el: <MemorySection /> },
   { id: 'figma-capture', label: 'Figma Capture', icon: '▣', kicker: 'Design', title: 'Figma Capture — annotate design screenshots with component mappings', el: <FigmaCaptureSection /> },
-  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
+  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio & prompt quality', el: (
+    <Hub items={[
+      { label: 'Prompt Studio', el: <PromptStudio /> },
+      { label: 'Prompt Quality', el: <PromptQuality source="claude" /> },
+    ]} />
+  ) },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
   // Mindwalk + Agent Teams + Team Designer are demos. Both cost money per run and neither should outrank

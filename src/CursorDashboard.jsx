@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast, tildify, fmtDate } from './api.js'
 import { RunWindow } from './QuickActions.jsx'
+import PromptQuality from './PromptQuality.jsx'
 import { DataTable, Facts, StackedBar, Bars } from './charts.jsx'
 import { Columns } from './cursor/charts.jsx'
 import { GameStats, useGame, CountUp, Stagger } from './game/index.js'
@@ -1241,6 +1242,7 @@ const SECTIONS = [
   { id: 'harness', label: 'Harness', icon: '⚙', title: 'Governance across every repo, and the context you pay for' },
   { id: 'wasted', label: 'Wasted turns', icon: '⚠', title: 'Tool failures — the turns you paid for and threw away' },
   { id: 'sessions', label: 'Sessions', icon: '⌨', title: 'Search everything you have ever asked' },
+  { id: 'prompting', label: 'Prompting', icon: '✍', title: 'How you prompt Cursor — rated, with examples and fixes' },
   { id: 'projects', label: 'Projects', icon: '⊞', title: 'Workspaces' },
   { id: 'team', label: 'Team', icon: '⧉', title: 'Seats, adoption and spend — Admin API only' },
   { id: 'tooling', label: 'Tooling', icon: '✎', title: 'Capabilities, MCP servers, headless runs, raw export' },
@@ -1297,6 +1299,7 @@ export default function CursorDashboard({ onSwitch }) {
         )}
         {section === 'wasted' && <Wasted q={q} onOpenSession={id => go('sessions', () => setOpenSession(id))} />}
         {section === 'sessions' && <Sessions workspace={workspace} open={openSession} setOpen={setOpenSession} />}
+        {section === 'prompting' && <PromptQuality source="cursor" />}
         {section === 'projects' && (project
           ? <ProjectDetail project={project} onBack={() => setProject(null)}
               onOpenSessions={p => { setWorkspace(p.workspaceId || p.folder); setProject(null); setSection('sessions') }} />
