@@ -254,11 +254,24 @@ import path from 'node:path'
 const STORY_RE = /\.stories\.tsx?$/
 // Matches both /file/ and /design/ URLs. The node id stops at a quote, &, or whitespace so a
 // trailing &t=<tracking> is not swallowed into the id.
-const FIGMA_URL_RE = /figma\.com\/(?:file|design)\/([A-Za-z0-9]+)\/[^"'\s]*?node-id=([^"'&\s]+)/g
+// Deliberately NOT global: both call sites (here and parseFigmaLink in Task 7) exec once and never
+// iterate matches, so a /g flag would only add cross-call lastIndex state to have to reset.
+// ponytail: grep over source text, not an AST — the first figma.com URL in a story file wins, so a
+// stray earlier reference would be picked up instead. Parse the `parameters.design` object properly
+// if that ever bites.
+const FIGMA_URL_RE = /figma\.com\/(?:file|design)\/([A-Za-z0-9]+)\/[^"'\s]*?node-id=([^"'&\s]+)/
 
 // Figma writes the same node id three ways: "601:5", "601%3A5" and "601-5". Normalise to colons
 // so a collision check can actually see duplicates. Node ids contain no other dashes.
-export const normaliseNodeId = raw => decodeURIComponent(String(raw)).replace(/-/g, ':')
+// These URLs are hand-copied, so a malformed %-sequence is in scope: decodeURIComponent throws
+// URIError on one, and an uncaught throw here would abort the harvest of every OTHER story file
+// too. Fall back to the raw string — a wrong-but-harmless id beats losing the whole run.
+export const normaliseNodeId = raw => {
+  const s = String(raw)
+  let decoded
+  try { decoded = decodeURIComponent(s) } catch { decoded = s }
+  return decoded.replace(/-/g, ':')
+}
 
 export function harvestStories(dsRepo) {
   const dir = path.join(dsRepo, 'stories')
@@ -270,7 +283,6 @@ export function harvestStories(dsRepo) {
     let src
     try { src = fs.readFileSync(path.join(dir, file), 'utf8') } catch { continue }
     const m = FIGMA_URL_RE.exec(src)
-    FIGMA_URL_RE.lastIndex = 0
     if (!m) continue
     rows.push({
       component: file.replace(STORY_RE, ''),
@@ -958,7 +970,6 @@ export function writeMap(file, map, now = () => new Date().toISOString()) {
 // pasted it, since this is reached straight from a UI field.
 export function parseFigmaLink(link) {
   const m = FIGMA_URL_RE.exec(String(link))
-  FIGMA_URL_RE.lastIndex = 0
   if (!m) throw Object.assign(new Error('link must include a file key and a node-id (select the component in Figma, then Share > Copy link)'), { status: 400 })
   return { fileKey: m[1], nodeId: normaliseNodeId(m[2]) }
 }
