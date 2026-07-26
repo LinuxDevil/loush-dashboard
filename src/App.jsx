@@ -13,6 +13,7 @@ import GovernanceSection from './GovernanceSection.jsx'
 import ReliabilitySection from './ReliabilitySection.jsx'
 import LibrarySection from './LibrarySection.jsx'
 import PromptStudio from './PromptStudio.jsx'
+import PromptQuality from './PromptQuality.jsx'
 import FlowSection from './FlowSection.jsx'
 import RunsSection from './RunsSection.jsx'
 import Hub from './Hub.jsx'
@@ -92,7 +93,15 @@ const BASE_SECTIONS = [
       { label: 'MCP', el: <McpSection /> },
     ]} />
   ) },
-  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio', el: <PromptStudio /> },
+  // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
+  // top-level entries — they moved into ALMOSAFER_SECTION below, behind the Almosafer_Tools flag.
+  // The Memory browse UI stays deleted (server-memory.mjs is kept; Overview's recall tile uses it).
+  { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio & prompt quality', el: (
+    <Hub items={[
+      { label: 'Prompt Studio', el: <PromptStudio /> },
+      { label: 'Prompt Quality', el: <PromptQuality source="claude" /> },
+    ]} />
+  ) },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
   // Everything org-specific is user config now, so there has to be somewhere to enter it. Credentials

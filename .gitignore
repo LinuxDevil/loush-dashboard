@@ -7,6 +7,7 @@ atoms/reviewed.json
 config.json
 projects.json
 bug-ownership.json
+promptcheck.json
 .playwright-mcp
 .serena
 

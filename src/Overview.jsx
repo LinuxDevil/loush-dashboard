@@ -162,11 +162,13 @@ export default function Overview({ onNav }) {
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
   const [cap, setCap] = useState(null)
+  const [pq, setPq] = useState(null)   // prompt-quality rating (from main); showAch went with the deleted achievement wall
 
   useEffect(() => {
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
     api.get('/api/eng/snapshot?project=all').then(setSnap).catch(() => setSnap({ available: false, reason: 'the eng snapshot could not be read' }))
     api.get('/api/capabilities').then(setCap).catch(() => {})
+    api.get('/api/promptcheck?source=claude').then(setPq).catch(() => {})
     api.get('/api/projects').then(ps => {
       setProjects(ps)
       const cur = ps.find(p => p.current)
@@ -281,6 +283,32 @@ export default function Overview({ onNav }) {
           </div>
         </div>
       )}
+
+      {pq?.dimensions?.length > 0 && (() => {
+        const c = pq.avg >= 8 ? GREEN : pq.avg >= 6 ? GOLD : RED
+        const weakest = [...pq.dimensions].sort((a, b) => a.score - b.score)[0]
+        return (
+          <div className="panel" style={{ animationDelay: '.52s' }}>
+            <div className="panel-head">
+              <h3>✍ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
+              <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('authoring')}>open →</button>
+            </div>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ font: `700 30px ${MONO}`, color: c }}>{pq.avg}<span style={{ color: '#7a716a', fontWeight: 400, fontSize: 12 }}>/10</span></div>
+              <div style={{ display: 'flex', gap: 5, flex: 1, minWidth: 200 }}>
+                {pq.dimensions.map((dm, i) => (
+                  <div key={i} title={`${dm.name}: ${dm.score}/10`} style={{ flex: 1, height: 28, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                    <div style={{ height: `${dm.score * 10}%`, borderRadius: 3, background: dm.score >= 8 ? GREEN : dm.score >= 6 ? GOLD : RED, opacity: 0.85 }} />
+                  </div>
+                ))}
+              </div>
+              <div style={{ font: `400 11px ${MONO}`, color: '#8a807a', minWidth: 180 }}>
+                weakest: <span style={{ color: RED }}>{weakest.name}</span> ({weakest.score}/10)
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* The reward, deliberately at the foot of the page — after the work that needs a human, not above it.
           Your own body of work over your own past: level, XP, streak, closest badge. Self-only, no leaderboard.
