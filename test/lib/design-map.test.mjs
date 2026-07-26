@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { harvestStories, markCollisions } from '../../lib/design-map.mjs'
+import { harvestStories, markCollisions, enumerateComponents, buildMap } from '../../lib/design-map.mjs'
 
 const DS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'ds-repo')
 
@@ -90,4 +90,32 @@ test('markCollisions names ALL other claimants on a 3+-way collision, not just o
   assert.deepEqual(by.Button.evidence.collisionWith, ['VoucherCodeField', 'InputFieldDesktop'])
   assert.deepEqual(by.VoucherCodeField.evidence.collisionWith, ['Button', 'InputFieldDesktop'])
   assert.deepEqual(by.InputFieldDesktop.evidence.collisionWith, ['Button', 'VoucherCodeField'])
+})
+
+test('enumerateComponents lists every src/components/<Name> directory', () => {
+  assert.deepEqual(enumerateComponents(DS), ['Button', 'Card', 'IconButton', 'Icons', 'Tooltip'])
+})
+
+test('buildMap merges stories with the component list', () => {
+  const map = buildMap(DS)
+  assert.equal(map.dsPackage, '@tajawal/ct-web-design-system')
+  assert.equal(map.dsVersion, '0.28.0-rc.0')
+  assert.equal(map.rows.length, 5)
+
+  const by = Object.fromEntries(map.rows.map(r => [r.component, r]))
+  // a component with no story link is explicitly unmapped, not missing
+  assert.equal(by.Tooltip.status, 'unmapped')
+  assert.equal(by.Tooltip.figma, null)
+  assert.equal(by.Tooltip.source, null)
+  // one with a link starts as proposed — never confirmed on harvest alone
+  assert.equal(by.Button.status, 'proposed')
+  assert.equal(by.Button.codePath, 'src/components/Button')
+  assert.equal(by.Button.importFrom, '@tajawal/ct-web-design-system')
+  assert.deepEqual(by.Button.evidence.collisionWith, ['IconButton'])
+  // rows are sorted by component name for a stable diff
+  assert.deepEqual(map.rows.map(r => r.component), ['Button', 'Card', 'IconButton', 'Icons', 'Tooltip'])
+})
+
+test('buildMap never marks a row confirmed', () => {
+  assert.equal(buildMap(DS).rows.some(r => r.status === 'confirmed'), false)
 })
