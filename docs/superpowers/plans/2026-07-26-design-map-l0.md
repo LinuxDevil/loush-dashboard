@@ -370,6 +370,11 @@ Append to `lib/design-map.mjs`:
 ```js
 const nodeKey = figma => figma ? `${figma.fileKey}|${figma.nodeId}` : null
 
+// The ONE definition of "unset evidence". Every writer of `evidence` — markCollisions here,
+// buildMap in Task 4, verifyRows in Task 6 — must start from this. Three hand-copied literals is
+// how the meaning of "unscored" silently drifts apart between writers.
+const EMPTY_EVIDENCE = { nameScore: 0, collisionWith: [], verifiedAt: null }
+
 // A node claimed by more than one component means the story link was copy-pasted from a sibling.
 // Costs zero Figma API calls and is the single highest-signal check in L0: on the real repo it
 // flags 37 components across 9 nodes.
@@ -386,7 +391,7 @@ export function markCollisions(rows) {
     const others = k ? claimants.get(k).filter(c => c !== r.component) : []
     // collisionWith is recomputed from scratch every call, so it comes AFTER the spread of any
     // existing evidence — a stale list from a previous run must never win.
-    return { ...r, evidence: { nameScore: 0, verifiedAt: null, ...r.evidence, collisionWith: others } }
+    return { ...r, evidence: { ...EMPTY_EVIDENCE, ...r.evidence, collisionWith: others } }
   })
 }
 ```
@@ -489,7 +494,7 @@ export function buildMap(dsRepo) {
       figma: hit?.figma ?? null,
       source: hit ? 'story' : null,
       status: hit ? 'proposed' : 'unmapped',
-      evidence: { nameScore: 0, collisionWith: hit?.evidence?.collisionWith ?? [], verifiedAt: null },
+      evidence: { ...EMPTY_EVIDENCE, collisionWith: hit?.evidence?.collisionWith ?? [] },
     }
   })
 
@@ -500,7 +505,7 @@ export function buildMap(dsRepo) {
     rows.push({
       component, codePath: null, importFrom,
       figma: hit.figma, source: 'story', status: 'proposed',
-      evidence: { nameScore: 0, collisionWith: hit.evidence?.collisionWith ?? [], verifiedAt: null },
+      evidence: { ...EMPTY_EVIDENCE, collisionWith: hit.evidence?.collisionWith ?? [] },
     })
   }
 
