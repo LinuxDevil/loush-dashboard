@@ -40,8 +40,8 @@ import { spawnSync } from 'node:child_process'
 import {
   loadEngConfig, workMsWith, workDaysWith, addWorkTimeWith, offHoursWith, isWeekendWith,
   weekKeyWith, describeWork, invalidateEngConfig,
-} from './eng-config.mjs'
-import { estAccuracy, escapeRateSeries, busFactor } from './eng-metrics.mjs'
+} from './lib/eng-config.mjs'
+import { estAccuracy, escapeRateSeries, busFactor } from './lib/eng-metrics.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DAY = 864e5

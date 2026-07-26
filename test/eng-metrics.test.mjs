@@ -3,7 +3,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { estAccuracy, escapeRateSeries, busFactor, BUS_FACTOR_MIN_TICKETS } from '../eng-metrics.mjs'
+import { estAccuracy, escapeRateSeries, busFactor, BUS_FACTOR_MIN_TICKETS } from '../lib/eng-metrics.mjs'
 
 const DAY = 86400_000
 

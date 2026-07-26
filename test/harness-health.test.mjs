@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeUsageHealth, computeRegression, MIN_TURNS_FOR_GRADE } from '../harness-health.mjs'
+import { computeUsageHealth, computeRegression, MIN_TURNS_FOR_GRADE } from '../lib/harness-health.mjs'
 
 const DAY = 86400_000
 const NOW = Date.parse('2026-06-15T12:00:00Z')

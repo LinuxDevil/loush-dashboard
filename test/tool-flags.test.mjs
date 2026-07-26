@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeToolFlag, toolFlagAllows, parseEngConfig } from '../eng-config.mjs'
+import { normalizeToolFlag, toolFlagAllows, parseEngConfig } from '../lib/eng-config.mjs'
 
 test('an absent flag is OFF — org-specific tools must never be the default', () => {
   assert.deepEqual(normalizeToolFlag(undefined), { enabled: false, emails: [] })

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { remediationPlan } from '../scheduler.mjs'
+import { remediationPlan } from '../lib/scheduler.mjs'
 
 test('red main → proposes a git revert scoped to the repo', () => {
   const p = remediationPlan([{ kind: 'ci', key: 'ci:red:acme/web-flights', severity: 'error', text: 'main is red' }])

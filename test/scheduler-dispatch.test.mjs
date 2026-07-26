@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { dispatchPlan } from '../scheduler.mjs'
+import { dispatchPlan } from '../lib/scheduler.mjs'
 
 const T = [
   { id: 'a', stage: 'backlog', project: '/p1' },

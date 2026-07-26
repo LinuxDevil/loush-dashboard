@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { verdictFrom } from '../run-verdict.mjs'
+import { verdictFrom } from '../lib/run-verdict.mjs'
 
 test('awaiting approval → NEEDS-HUMAN (wins over everything)', () => {
   assert.equal(verdictFrom({ awaitingApproval: true, terminalFailed: true }), 'NEEDS-HUMAN')

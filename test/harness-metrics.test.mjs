@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import {
   capabilityVerdict, tokPerFire, sessionsSince, contextPressure,
   NEW_CAPABILITY_DAYS, CHARS_PER_TOKEN, median,
-} from '../harness-metrics.mjs'
+} from '../lib/harness-metrics.mjs'
 
 // ---------------------------------------------------------------- capabilityVerdict
 

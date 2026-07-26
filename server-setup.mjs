@@ -25,7 +25,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from './eng-config.mjs'
+import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from './lib/eng-config.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PROJECTS_FILE = path.join(HERE, 'projects.json')
