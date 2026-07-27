@@ -16,9 +16,9 @@ npm run dev          # http://localhost:5177 (Vite) → API on :5178 (Express)
 ```
 
 Nothing needs configuring to start. **Working Set**, **Capabilities**, **Harness**, **Projects**,
-**Chat**, **Workflows** and **Hooks** all work five minutes after install with zero external
-services. JIRA and GitHub are needed only for the **Delivery** section, and it says so plainly rather
-than rendering empty charts.
+**Chat**, **Workflows**, **Authoring**, **Artifacts** and **Hooks** all work five minutes after
+install with zero external services. JIRA and GitHub are needed only for **Delivery** and **Ticket**,
+and they say so plainly rather than rendering empty charts.
 
 ---
 
@@ -30,14 +30,19 @@ than rendering empty charts.
 
 ![Loush — every section, real data](docs/screenshots/tour.webp)
 
-Twenty seconds sampled from the [full three-minute tour](docs/screenshots/showcase.mp4) — 15
-sections and 40 panels, in order, against a real install: live transcripts, a live JIRA board, and
-nothing mocked. The CI really is red and the ROI ledger really does say 128 of 183 capabilities
-have never fired.
+Twenty seconds sampled from the [full three-minute tour](docs/screenshots/showcase.mp4), which walks
+all 15 sections and all 46 panels in order. The numbers are real — real transcripts, real token
+volumes, real failure signatures — but this was filmed on an install with **no JIRA credentials and
+no `gh`**, which is why Delivery, Ticket and the delivery half of Overview show their "not
+configured" cards instead of charts. Engineering has fourteen routes of its own; with no snapshot to
+draw they all render the same empty card, so the tour films one and says so rather than padding
+itself with thirteen more.
 
-Re-record it after a UI change with `node scripts/showcase.mjs` (needs `npm run dev` already
-running). The tour is not scripted: it reads the sidebar, the breadcrumb and the tablists out of the
-DOM, so a new section films itself with no edit to the script.
+Re-record after a UI change with `node scripts/showcase.mjs`, and re-shoot the stills with
+`node scripts/shots.mjs` — both need a dev server already running, and both take a `URL=` if you
+want to point them at something other than `localhost:5177`. Neither is scripted against a fixed
+list: the tour reads the sidebar, the breadcrumb and the tablists out of the DOM, so a section added
+to `App.jsx` films itself with no edit to the script.
 
 ---
 
@@ -49,7 +54,7 @@ DOM, so a new section films itself with no edit to the script.
 - [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger
 - [Harness](#harness--sessions-forensics-and-usage) — sessions, forensics, usage
 - [Inbox](#inbox--what-needs-a-decision) · [Overview](#overview--what-needs-a-human-today) · [Delivery](#delivery--jira-github-ci)
-- [Everything else](#everything-else) — Chat, Workflows, Projects, Hooks, MCP, Artifacts, ⌘K
+- [Everything else](#everything-else) — Ticket, Chat, Workflows, Projects, Hooks, MCP, Artifacts, ⌘K
 - [Org-specific tools](#org-specific-tools--behind-a-flag) — Constitution + Figma Capture, flag-gated
 - [The two data planes](#the-two-data-planes) — the privacy boundary
 - [Honesty rules](#honesty-rules) — why null is never rendered as 0
@@ -76,7 +81,7 @@ One row per file an agent **edited** (reads are not evidence of difficulty):
 | **rank**                  | How much this file has fought you: `revisitSessions×3 + revisitDays×2 + failures×2 + extraEdits×1` |
 | **sessions / days**       | How many separate times you came _back_ to it                                                      |
 | **fails**                 | Tool errors attributed to that exact file                                                          |
-| **importers**             | Blast radius — product code counted separately from tests                                          |
+| **importers**             | Blast radius — how many files in the repo import it (`—` when the file was never walked)           |
 | **t/s**                   | Whether a test or a Storybook story actually covers it                                             |
 | **dirty / orphan / gone** | Uncommitted, imported by nothing, or no longer on disk                                             |
 
@@ -187,7 +192,8 @@ chance) · **COLD** (not in 30d) · **NEW** (installed < 14d ago) · **HOT** (fi
 Then it closes the loop: select rows → **dry-run first** → archive. Backed up, versioned, reversible
 — it moves the file out, it does not delete your work.
 
-Also here: Skills / Commands / Agents CRUD, the Flow graph, and the Inventory frontmatter linter —
+Also here: Skills / Commands / Agents CRUD, the Flow graph, Customize (enable or disable a
+capability on disk), and the Inventory frontmatter linter —
 demoted off the landing page and relabelled **an authoring aid, not a metric**, which is what it
 always was.
 
@@ -248,6 +254,9 @@ Reliability, Library, MCP and Team baseline.
 
 ![Inbox](docs/screenshots/inbox.png)
 
+_Screenshotted on an install with no JIRA and no `gh`, so the work plane is empty and only the
+harness plane has anything to say. Pointed at a real board this list runs to hundreds of rows._
+
 **The problem.** Signals that need a human are scattered across GitHub, JIRA, CI and your own harness,
 and none is individually urgent enough to interrupt you.
 
@@ -280,13 +289,17 @@ rendering a green zero. That is the rule the whole app is held to.
 **The problem.** Cycle time, review latency and escaped defects live in three systems, and nobody
 computes them the same way twice.
 
-**What it does.** Tabs: **Engineering** (Attention Queue, Review flow with PR pickup-time and PR-size
-distributions, Quality, Investment, Predictability, Epics, CI, Load, Board, Members, OKRs, Export),
-**Idea → prod funnel** (median working-days per stage, headlined by _lead time − cycle time = "time
-it sat waiting on us"_), **DORA** (deployment frequency + lead time against Google Cloud's
-elite/high/medium/low bands — change-failure-rate and MTTR render as honest "no data source" cards
-rather than a fabricated proxy), **AI ROI** (cohort only, paired with a rework-rate guardrail), and
-**1:1 prep**.
+**What it does.** Tabs, in order: **Engineering**, **Idea → prod funnel** (median working-days per
+stage, headlined by _lead time − cycle time = "time it sat waiting on us"_), **AI ROI** (cohort only,
+paired with a rework-rate guardrail), **DORA** (deployment frequency + lead time against Google
+Cloud's elite/high/medium/low bands — change-failure-rate and MTTR render as honest "no data source"
+cards rather than a fabricated proxy), and **1:1 prep**.
+
+**Engineering** is a dashboard in its own right, with fourteen views of its own: Attention Queue,
+Team Overview, Review flow (PR pickup-time and PR-size distributions), Quality, Investment,
+Predictability, Epics, CI, Projects, Load, Board, Members, OKRs, Export. Each one is a real route —
+`?dash=eng&route=members` is bookmarkable and pasteable into Slack, and it is the only part of the
+app whose state lives in the URL rather than in React.
 
 CI failures now have a **re-run failed** button. (`POST /api/ci/rerun` shells `gh run rerun`, was
 documented, and had zero callers anywhere in the UI — the panel that showed you the red run could not
@@ -301,11 +314,13 @@ re-run it.)
 
 | Section                        | What it does                                                                                                                                                                                           | Problem it solves                                                                                     |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Ticket**                     | Type a JIRA key and go: fetches the ticket without waiting on Delivery's ~65s snapshot, generates acceptance criteria and test cases, runs a design agent against a real checkout of the repo, and renders an editable design graph plus a verified / planned-edit / planned-new files view. Sub-tabs: **Ticket · Criteria · Design · Files** | Delivery answers _"how is the board doing"_; this answers _"I have a key, what do I do with it"_ |
 | **⌘K palette**                 | Jump anywhere, and search everything Claude ever said, ran or edited — prompts, assistant text, bash commands, Edit hunks — filterable by kind and **by file path**                                    | _"What has Claude ever done to `src/auth.ts`?"_ — a question no other tool on your machine can answer |
 | **Chat**                       | Talk to Claude Code from the browser; resume any session; per-turn memory grounding with `[memory:<name>]` citations; ✓/✗ review trail written to disk                                                 | Steering agent work without a terminal, with "a human checked this" recorded rather than assumed      |
 | **Chat Insights**              | One-shot rate, cost/chat, day×hour heatmap; duplicate-prompt clustering (exact + Jaccard) with **save as command**                                                                                     | You retype the same prompt weekly — this finds it and turns it into a `/command`                      |
 | **Workflows → Quick Actions**  | One-shot `claude -p "/command"` against a chosen project, streamed live, result dropped in the Inbox                                                                                                   | Running `/code-review` or `/security-review` without leaving what you're doing                        |
 | **Workflows → Task Board**     | Agentic kanban: isolated git worktree per ticket, headless dev agent, manual review/QA/release gates, merge queue, first-class **Blocked** state you can reply to inline                               | Supervising several agent tasks at once without them colliding in one working tree                    |
+| **Workflows → Loush Runs**     | Every loush flow run across your projects with an aggregated PASSING / BLOCKED / NEEDS-HUMAN verdict, per-run cost, artifacts and file diffs; batch-approve the converged ones                                          | Seeing which agent runs actually landed without opening each one                                      |
 | **Workflows → Bugs**           | Paste a trace; file paths and stack frames auto-extracted; **auto-bisect** runs real `git bisect` against your repro command and names the culprit commit                                              | Finding the offending commit without babysitting a bisect                                             |
 | **Workflows → Quality**        | Analytics-event registry + taxonomy lint; **design drift** vs a manifest; `/review` history parsed from transcripts with a recurring-finding detector                                                  | Catching bad event names and prop drift before they land                                              |
 | **Projects**                   | Card per project Claude Code has opened: running-now indicator, sessions, token usage, most-used model, roadmap progress, its own skills/commands/agents/MCP                                           | Seeing which projects the agent is actually active in                                                 |
@@ -314,7 +329,7 @@ re-run it.)
 | **MCP**                        | JSON editor per server + **Test connection** that actually speaks MCP (JSON-RPC `initialize`, reports latency and server version)                                                                      | Distinguishing "unreachable" from "reachable but needs OAuth" — the state everyone gets wrong         |
 | **Governance**                 | Versioned writes, drift vs a baseline bundle, rollback, batch ops across projects                                                                                                                      | Undoing a config change you cannot remember making                                                    |
 | **Artifacts**                  | Read-only scan of `~/.claude` with rename/delete and per-type viewers                                                                                                                                  | Finding what is actually taking up space                                                              |
-| **Authoring**                  | Prompt Studio: compose, expand `$ARGUMENTS`, save as a command                                                                                                                                         | Iterating on a prompt before committing it                                                            |
+| **Authoring**                  | **Prompt Studio**: compose, expand `$ARGUMENTS`, save as a command. **Prompt Quality**: a cached `claude -p` rating of how you actually prompt, scored out of 10 with the weakest habit named           | Iterating on a prompt before committing it                                                            |
 
 **Design drift, honestly.** `POST /api/design/manifest` bootstraps a manifest _by scanning the code_ —
 so diffing it against that same code is diffing a file against a photocopy of itself, and drift is
@@ -328,6 +343,10 @@ manifest agree". Variant drift is now checked for real; that loop's body used to
 ## Org-specific tools — behind a flag
 
 ![Company tools](docs/screenshots/company-tools.png)
+
+_The flag is on here and the knowledge base is absent, which is the state worth showing: it names
+what it could not find rather than rendering an empty graph. One org's constitution is not something
+this repo can ship a screenshot of._
 
 **The problem, and the mistake.** Two features assume one organisation's repo layout: the
 **Constitution** reader needs a `.wakeel/constitution/` knowledge base, and **Figma Capture** ships
@@ -358,8 +377,8 @@ the package's type declarations:
 "designSystem": { "storybook": "https://your-org.github.io/ds/" }  // a static Storybook build
 ```
 
-Hit **Extract components** in **Setup → Company tools**, or run `npm run catalog:refresh`
-(`-- --package @your-org/design-system` for a one-off). The generated `design-system-catalog.json` is
+Hit **Extract components** in **Setup → Company tools**, or run
+`node scripts/refresh-design-catalog.mjs` (`--package @your-org/design-system` for a one-off). The generated `design-system-catalog.json` is
 gitignored: it describes your design system, not this app, so it is built per machine and never
 committed. With nothing configured the picker falls back to free text, which still works.
 
@@ -394,7 +413,7 @@ only, never a person. There is no team-adoption view, no tokens-per-engineer, no
 no leaderboard. That is a boundary, not a preference: measure the work (cycle time, escaped defects,
 review latency), not the keystrokes.
 
-`test/eng-privacy.test.js` enforces this structurally — it walks payloads for banned fields and fails
+`test/server/eng-privacy.test.js` enforces this structurally — it walks payloads for banned fields and fails
 the build if one appears.
 
 Two things this app will never do: **auto-nudge** (every nudge copies a line for a human to send) and
@@ -404,7 +423,7 @@ Two things this app will never do: **auto-nudge** (every nudge copies a line for
 
 ## Honesty rules
 
-The app is held to four rules. They exist because it previously broke all four.
+The app is held to seven rules. They exist because it previously broke all seven.
 
 1. **`null` is never rendered as `0`.** "Not measured" and "measured, and it is zero" are different
    facts, and the idiom `Math.round((n || 0) * 100)` erased the difference wherever it appeared. An
@@ -462,7 +481,8 @@ panels accumulated. These were deleted:
   the same day; `src/App.jsx` carried the tombstone comment three lines below the import that
   contradicted it. The presentational helpers survive as `src/ui/anim.jsx` — motion is not a metric,
   only the scoring was the problem.
-- **Figma Capture** and **Constitution** were deleted here too — that part was **reverted**. Both are
+- **Figma Capture**, **Constitution** and **Atoms** were deleted here too — that part was
+  **reverted**. All three are
   genuinely needed by the org whose layout they assume, so they are back behind the `Company_Tools`
   flag described in [Org-specific tools](#org-specific-tools--behind-a-flag) rather than shipped to
   everyone. The original criticism still stands and is why the flag exists: the design-system catalog
@@ -479,8 +499,9 @@ Demoted rather than deleted: the frontmatter linter (→ Capabilities, as an aut
 counterfactual that never happened, and it only ever goes up), and the 18-week token heatmap (→
 Harness ▸ Usage; it measures volume, which is a proxy for "was he typing").
 
-**Net: ~15,300 lines and 100 endpoints removed**, full test suite green, every surviving endpoint
-verified `200`.
+**Net: ~15,300 lines and 100 endpoints removed**, every surviving endpoint verified `200`. The suite
+was green at the time; it currently has one known failure — `test/server/ticket.test.mjs` _"spawnAgent
+calls onExit exactly once"_, where `onExit` never fires for a spawn of a missing binary.
 
 ---
 
@@ -504,7 +525,8 @@ verified `200`.
 | `GET /api/search?q=&file=&kind=`                                                                                                                            | Prompts, assistant text, bash commands, Edit hunks; `?file=` = "only sessions that touched this path"              |
 | `GET /api/design/drift?project=` · `POST /api/design/manifest`                                                                                              | Component drift with a `status` that reports when drift is _not_ detectable                                        |
 | `GET /api/gov/team` · `POST /api/gov/team/{baseline,export,sync}`                                                                                           | Team harness baseline + per-repo drift                                                                             |
-| `GET /api/scheduler` · `PUT /api/scheduler`                                                                                                                 | The cadence-loop config (`{enabled, jobs[]}`); digest / dispatch / remediate. Off by default                       |
+| `GET /api/scheduler` · `PUT /api/scheduler`                                                                                                                 | The cadence-loop config (`{enabled, jobs[]}`); dispatch / remediate. Off by default — and its digest job still calls the deleted career endpoint, so that one job is dead |
+| `GET /api/ticket/index` · `GET /api/ticket/:key` · `POST /api/ticket/:key/generate` · `GET\|POST /api/ticket/:key/design*` · `GET /api/ticket/:key/files`    | Ticket: key-first fetch, AC + test-case generation, the design run and its SSE event stream, the editable graph, and the files split. **Plane B** — it spawns agents and accrues cost, which is why `server/eng.mjs` never imports it |
 | `GET /api/runs[?verdict=]` · `POST /api/runs/approve-batch`                                                                                                 | Runs with an aggregated PASSING/BLOCKED/NEEDS-HUMAN verdict; batch-approve converged runs                          |
 | `POST /api/chat-review`                                                                                                                                     | Records a per-output accept/reject review-trail entry                                                              |
 
@@ -533,7 +555,8 @@ plaintext copy of a token is a liability, not a safety net.
   access, no navigation. Don't add `allow-same-origin` — that would let a malicious artifact call the
   dashboard API, which can write to your `~/.claude`.
 - **The API can write your real config.** It binds to localhost only and refuses any path outside
-  `~/.claude`, `~/.claude.json` and this project's `.claude/`. Still: anything running on your machine
+  `~/.claude`, `~/.claude.json` and the `.claude/` of the repo it watches — which is the dashboard's
+  own **parent** directory (`lib/paths.mjs`), not the dashboard checkout. Still: anything on your machine
   can hit `localhost:5178`. Don't leave it running on shared machines, and don't port-forward it.
 - **Hooks/settings edits take effect on the next Claude Code session.** A JSON typo is caught
   client-side before writing, but a _semantically_ wrong hook can block tool calls — the timestamped
@@ -545,7 +568,7 @@ plaintext copy of a token is a liability, not a safety net.
 
 By file extension, in `src/ui/viewers.jsx`: `.md` → rendered markdown · `.html` → sandboxed iframe ·
 `.svg` → via `<img>` so embedded scripts can never execute · images → preview on a checkerboard ·
-`.csv` → quote-aware sortable table (first 1000 rows) · `.json` → array-of-objects becomes a sortable
+`.csv` → quote-aware sortable table, paginated 100 rows at a time · `.json` → array-of-objects becomes a sortable
 table, else pretty-printed · `.jsx/.tsx` → live-mounted in a sandboxed iframe with React + Babel
 standalone · everything else → syntax-highlighted read-only CodeMirror.
 
@@ -576,7 +599,7 @@ npx vite build   # dist/ is gitignored; regenerate as needed
 
 `node --test` discovers recursively, and it also treats **any** `.js`/`.mjs` under `test/` as a test
 file — so put helpers elsewhere. It exits 0 when it discovers nothing at all, which means the check
-that matters is "179 tests ran", not "the command succeeded".
+that matters is "317 tests ran", not "the command succeeded".
 
 **Invariants worth knowing before extending it:**
 
@@ -606,11 +629,17 @@ lib/harness-usage-trends.mjs  pure: cache-TTL waste, daily anomalies, month-end 
 lib/run-verdict.mjs       pure: aggregate a run's gates into one verdict
 lib/scheduler.mjs         the unattended cadence loop (digest/dispatch/remediate) + pure planners
 lib/customize-toggle.mjs  pure: what enabling/disabling a capability does on disk
+lib/design-schema.mjs     pure: design-graph parse / validate / merge / layout / mermaid
+lib/design-map.mjs        pure: component ↔ code mapping for design drift
+lib/agent.mjs             spawn and stream a `claude -p` agent
+lib/clone.mjs             resolve a `githubRepo` to a local checkout
+lib/adf.mjs               Atlassian Document Format ↔ markdown
 
 server/index.mjs          Express API (CRUD, backups, inbox, capabilities, forensics, sessions, roi, search, CI)
 server/fe.mjs             Working Set: agent edit history × import graph × git state
 server/setup.mjs          /api/setup/* — visual config; secrets are write-only
 server/eng.mjs            plane A: JIRA changelog + GitHub PRs → the delivery snapshot
+server/ticket.mjs         /api/ticket/* — key → AC/tests → design run → canvas → files
 server/memory.mjs         memory recall + chat grounding
 server/promptcheck.mjs    prompt-quality scoring
 server/constitution.mjs   ┐
@@ -625,11 +654,13 @@ src/sections/             the routable sections
   Overview.jsx              delivery tiles + CI strip + harness KPIs
   InboxSection.jsx          plane chips · nudge (copies, never sends) · snooze 24h
   DeliverySection.jsx       mounts EngDashboard + funnel + AI ROI + 1:1 prep
+  TicketSection.jsx         key-first ticket: AC/tests, design run, canvas, files
   CapabilityLedger.jsx      the ROI ledger (+ the demoted Inventory linter)
   SessionsSection.jsx       session ledger, real $, keyboard layer, in-app resume
   ForensicsSection.jsx      failure signatures · context pressure · hook blast radius
   UsagePanel.jsx            harness health/regression, cache-TTL waste, anomalies, cost projection
   ContextExplorerSection.jsx  per-turn context occupancy replay
+src/ticket/               the Ticket section's design canvas, chat and graph editor
 src/company/            Constitution, Atoms, Figma Capture — the flag-gated bundle
 src/ui/                   reusable presentation, imported across sections
   Palette.jsx               ⌘K — search my past self (incl. the `file:` filter)
@@ -640,9 +671,10 @@ src/ui/                   reusable presentation, imported across sections
 src/lib/                  api.js, hooks.js, plan.js, runMetrics.js
 src/eng/                  the Delivery dashboard's own panels
 
-test/lib/, test/server/, test/src/    mirror the above
+test/lib/, test/server/, test/src/, test/scripts/   mirror the above
+test/fixtures/            redacted JIRA / GitHub / usage samples
 docs/screenshots/         the images and the tour video in this README
-scripts/showcase.mjs      records the tour video against a running dev server
+scripts/                  showcase.mjs (records the tour) · refresh-design-catalog.mjs · redact-fixture.mjs
 atoms/                    stays at the repo root — .gitignore anchors two files inside it
 ```
 

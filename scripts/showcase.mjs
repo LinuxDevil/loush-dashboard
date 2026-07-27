@@ -214,6 +214,37 @@ async function main() {
     await sleep(300)
   }
 
+  // Delivery → Engineering carries a second nav that the tablist walk above cannot see: it is a row
+  // of unclassed buttons, and it is the only part of the app with real bookmarkable routes
+  // (`?dash=eng&route=…`, src/eng/urlState.js). So drive it by URL — no selector to go stale. The
+  // ids and labels are copied from the NAV array in src/sections/EngDashboard.jsx.
+  const ENG = [
+    ['queue', 'Attention queue'], ['overview', 'Team overview'], ['review', 'Review flow'],
+    ['quality', 'Quality'], ['investment', 'Investment'], ['sprints', 'Predictability'],
+    ['epics', 'Epics'], ['ci', 'CI'], ['projects', 'Projects'], ['load', 'Load'],
+    ['sprint', 'Board'], ['members', 'Members'], ['okrs', 'OKRs'], ['export', 'Export'],
+  ]
+  // Without JIRA + gh every one of these renders the same "not configured" card, and fourteen
+  // identical empty panels is padding, not a showcase. Film one and say so.
+  const engLive = await page
+    .evaluate(() => fetch('/api/eng/snapshot?project=all').then((r) => r.json()).then((d) => d.available !== false))
+    .catch(() => false)
+  const engRoutes = engLive ? ENG : ENG.slice(0, 1)
+  if (!engLive) console.log(`   (eng: not configured — filmed 1 of ${ENG.length} routes)`)
+
+  for (const [route, label] of engRoutes) {
+    await page.goto(`${URL}/?dash=eng&route=${route}`, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('nav.sidebar button', { timeout: 30000 })
+    await settled(page)
+    await sleep(SETTLE)
+    await page.addScriptTag({ content: OVERLAY }) // the reload took the previous overlay with it
+    console.log(`   · eng/${route}`)
+    await page.evaluate(([k, t]) => window.__cap(k, t), ['Delivery › Engineering', label])
+    await tour(page, SCROLL_MS * 0.8)
+    await sleep(DWELL * 0.8)
+    await page.evaluate(() => window.__cap(null))
+  }
+
   // Two chrome-level features that are not sections: the command palette and the theme switch.
   await page.evaluate(([k, t]) => window.__cap(k, t), ['Anywhere', 'Command palette — ⌘K searches sections, skills, sessions'])
   await page.keyboard.press('Meta+k')
