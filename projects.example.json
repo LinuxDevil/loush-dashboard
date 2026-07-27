@@ -19,8 +19,11 @@
   "//defaultDevEmails": "Fallback dev roster for any project that does not set its own `devEmails`. Leave empty rather than guessing — a wrong roster attributes your team's work to other people.",
   "defaultDevEmails": [],
 
-  "//Almosafer_Tools": "Org-specific tool bundle: the Constitution reader (needs a .wakeel/constitution/ knowledge base in the repo) and Figma Capture (ships against a specific design-system catalog). Off by default because both are useless outside the org that has that layout. Hidden from everyone unless this is set. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
-  "Almosafer_Tools": false,
+  "//Company_Tools": "Org-specific tool bundle: the Constitution reader (needs a .wakeel/constitution/ knowledge base in the repo) and Figma Capture (needs a component catalog extracted from your own design system, see designSystem below). Off by default because both are useless without that layout. Hidden from everyone unless this is set. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
+  "Company_Tools": false,
+
+  "//designSystem": "Where the Figma Capture component picker gets its catalog. Nothing ships by default. Either a package — resolved from node_modules or a path, with components and variants read out of its .d.ts files — or a static Storybook build URL. Extract it from Setup -> Company tools, or run `npm run catalog:refresh`. The generated design-system-catalog.json is gitignored: it describes your design system, not this app.",
+  "designSystem": { "package": "@your-org/design-system" },
 
   "//projects": "One entry per JIRA board + GitHub repo. `key` is the JIRA project key. `writes` must be explicitly true before the dashboard will transition a ticket or comment on a PR; the default is copy-to-clipboard.",
   "projects": [

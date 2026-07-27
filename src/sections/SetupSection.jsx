@@ -344,36 +344,65 @@ function StoryPoints({ d, reload }) {
 
 // ---------- org-specific tool bundles ----------
 function OrgTools({ d, reload }) {
-  const flag = d.eng.almosaferTools || { enabled: false, emails: [] }
+  const flag = d.eng.companyTools || { enabled: false, emails: [] }
+  const ds = d.eng.designSystem || {}
   const [enabled, setEnabled] = useState(!!flag.enabled)
   const [emails, setEmails] = useState((flag.emails || []).join('\n'))
+  // one field, two sources: a URL is a Storybook build, anything else is a package name or path.
+  const [dsSource, setDsSource] = useState(ds.storybook || ds.package || '')
   const [busy, setBusy] = useState(false)
+  const [extracting, setExtracting] = useState(false)
+  const asDesignSystem = () => {
+    const v = dsSource.trim()
+    if (!v) return null
+    return /^https?:\/\//i.test(v) ? { storybook: v, package: null } : { package: v, storybook: null }
+  }
   const save = async () => {
     setBusy(true)
     try {
-      const r = await api.put('/api/setup/eng', { almosaferTools: { enabled, emails: emails.split(/[\s,;]+/).filter(Boolean) } })
+      const r = await api.put('/api/setup/eng', {
+        companyTools: { enabled, emails: emails.split(/[\s,;]+/).filter(Boolean) },
+        designSystem: asDesignSystem(),
+      })
       toast(r.restartRequired ? 'saved — restart the server for the tab to appear/disappear' : 'saved', 'success')
       reload()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
   }
+  // Extract runs against what is TYPED, not what is saved, so a wrong package name is one click to
+  // find out about rather than a save + a terminal round-trip.
+  const extract = async () => {
+    setExtracting(true)
+    try {
+      const r = await api.post('/api/setup/design-system/extract', asDesignSystem() || {})
+      toast(`extracted ${r.count} components from ${r.source}`, 'success')
+      reload()
+    } catch (e) { toast(e.message, 'error') } finally { setExtracting(false) }
+  }
   return (
-    <Section title="Almosafer tools" sub="org-specific bundle — Constitution + Figma Capture">
+    <Section title="Company tools" sub="org-specific bundle — Constitution + Figma Capture">
       <p style={{ color: DIM, font: '400 12px sans-serif', margin: '0 0 14px', lineHeight: 1.6 }}>
         The <b style={{ color: 'var(--text-primary)' }}>Constitution</b> reader needs a <code style={{ fontFamily: MONO }}>.wakeel/constitution/</code> knowledge
-        base in the repo, and <b style={{ color: 'var(--text-primary)' }}>Figma Capture</b> ships against a specific design-system catalog. Both are
-        useless outside the org that has that layout, so they are off unless this is on. The server
-        gates the same flag at mount time — with it off those routes do not exist at all.
+        base in the repo, and <b style={{ color: 'var(--text-primary)' }}>Figma Capture</b> needs a component catalog extracted from your own
+        design system. Both are useless without that layout, so they are off unless this is on. The
+        server gates the same flag at mount time — with it off those routes do not exist at all.
       </p>
       <label style={{ display: 'flex', gap: 9, alignItems: 'center', justifyContent: 'flex-start', width: 'fit-content', marginBottom: 12, cursor: 'pointer' }}>
         <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} style={{ width: 'auto', flex: '0 0 auto', margin: 0 }} />
-        <span style={{ font: '400 13px sans-serif', color: 'var(--text-secondary)' }}>Enable the <b style={{ color: 'var(--text-primary)' }}>Almosafer tools</b> tab</span>
+        <span style={{ font: '400 13px sans-serif', color: 'var(--text-primary)' }}>Enable the <b style={{ color: 'var(--text-primary)' }}>Company tools</b> tab</span>
       </label>
       <Field label="Restrict to these identities" hint="Optional. Leave empty to enable for whoever is running the dashboard; otherwise the configured JIRA email (or JIRA_EMAIL) must be listed.">
         <textarea value={emails} onChange={e => setEmails(e.target.value)} rows={2} placeholder="you@example.com" style={{ ...inp, resize: 'vertical' }} />
       </Field>
+      <Field label="Design system" hint="Your design system — an npm package name (or a path to one), whose exported components and variants are extracted from its type declarations. A https:// URL is treated as a static Storybook build instead. Nothing ships by default; the catalog is generated on this machine.">
+        <input value={dsSource} onChange={e => setDsSource(e.target.value)}
+          placeholder="@your-org/design-system   ·   or https://your-org.github.io/ds/" style={{ ...inp, fontFamily: MONO }} />
+      </Field>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button style={primary} disabled={busy} onClick={save}>Save</button>
-        <span style={{ font: `400 11px ${MONO}`, color: GOLD }}>takes effect on server restart</span>
+        <button disabled={extracting || !dsSource.trim()} onClick={extract}>
+          {extracting ? 'extracting…' : 'Extract components'}
+        </button>
+        <span style={{ font: `400 11px ${MONO}`, color: GOLD }}>tab toggle takes effect on server restart</span>
       </div>
     </Section>
   )

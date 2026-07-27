@@ -27,8 +27,8 @@ import DeliverySection from './sections/DeliverySection.jsx'
 import WorkingSet from './sections/WorkingSet.jsx'
 import SetupSection from './sections/SetupSection.jsx'
 import TicketSection from './sections/TicketSection.jsx'
-import ConstitutionSection from './almosafer/ConstitutionSection.jsx'
-import FigmaCaptureSection from './almosafer/FigmaCaptureSection.jsx'
+import ConstitutionSection from './company/ConstitutionSection.jsx'
+import FigmaCaptureSection from './company/FigmaCaptureSection.jsx'
 import CapabilityLedger, { Inventory } from './sections/CapabilityLedger.jsx'
 import SessionsSection from './sections/SessionsSection.jsx'
 import ForensicsSection from './sections/ForensicsSection.jsx'
@@ -99,7 +99,7 @@ const BASE_SECTIONS = [
     ]} />
   ) },
   // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
-  // top-level entries — they moved into ALMOSAFER_SECTION below, behind the Almosafer_Tools flag.
+  // top-level entries — they moved into COMPANY_SECTION below, behind the Company_Tools flag.
   // The Memory browse UI stays deleted (server/memory.mjs is kept; Overview's recall tile uses it).
   { id: 'authoring', label: 'Authoring', icon: '✍', kicker: 'Authoring', title: 'Authoring — prompt studio & prompt quality', el: (
     <Hub items={[
@@ -116,11 +116,11 @@ const BASE_SECTIONS = [
 
 // Org-specific bundle. These were deleted outright once — wrongly, because for the org that HAS a
 // `.wakeel/constitution/` knowledge base and that design-system catalog they are load-bearing. They
-// are now behind `almosaferTools` in projects.json, gated at MOUNT TIME on the server too, so with the
+// are now behind `companyTools` in projects.json, gated at MOUNT TIME on the server too, so with the
 // flag off the routes do not exist rather than 404-ing from a nav entry that should not be there.
-const ALMOSAFER_SECTION = {
-  id: 'almosafer', label: 'Almosafer tools', icon: '◉', kicker: 'Org tools',
-  title: 'Almosafer tools — constitution & design capture',
+const COMPANY_SECTION = {
+  id: 'company', label: 'Company tools', icon: '◉', kicker: 'Org tools',
+  title: 'Company tools — constitution & design capture',
   el: (
     <Hub items={[
       { label: 'Constitution', el: <ConstitutionSection /> },
@@ -128,7 +128,7 @@ const ALMOSAFER_SECTION = {
     ]} />
   ),
 }
-const sectionsFor = features => (features?.almosaferTools ? [...BASE_SECTIONS, ALMOSAFER_SECTION] : BASE_SECTIONS)
+const sectionsFor = features => (features?.companyTools ? [...BASE_SECTIONS, COMPANY_SECTION] : BASE_SECTIONS)
 
 
 // There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;

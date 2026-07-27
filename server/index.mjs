@@ -60,13 +60,13 @@ mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...
 // are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
 
-// ---------- org-specific tool bundle: Almosafer tools ----------
-// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture ships
-// against a specific design-system catalog, so these are useless — and were previously misleading —
-// outside the org that has that layout. They are now behind a flag in projects.json rather than
-// deleted or unconditional. Gated HERE, at mount time: when the flag is off the routes do not exist
-// at all, so a stale client cannot reach them.
-function almosaferToolsEnabled() {
+// ---------- org-specific tool bundle: Company tools ----------
+// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture needs a
+// design-system catalog, so these are useless — and were previously misleading — outside an org that
+// has that layout. They are now behind a flag in projects.json rather than deleted or unconditional.
+// Gated HERE, at mount time: when the flag is off the routes do not exist at all, so a stale client
+// cannot reach them.
+function companyToolsEnabled() {
   // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
   // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
   // into a confident `false`, silently disabling the feature with the config plainly set to true.
@@ -76,25 +76,25 @@ function almosaferToolsEnabled() {
   try {
     const cfg = loadEngCfg(PROJECTS_FILE)
     const email = process.env.JIRA_EMAIL || readLocal(SECRETS_FILE).jiraEmail || null
-    return toolFlagAllows(cfg.almosaferTools, email)
+    return toolFlagAllows(cfg.companyTools, email)
   } catch (e) {
-    console.error('[claude-dashboard] could not evaluate almosaferTools flag — leaving it OFF:', e.message)
+    console.error('[claude-dashboard] could not evaluate companyTools flag — leaving it OFF:', e.message)
     return false
   }
 }
-const ALMOSAFER_TOOLS = almosaferToolsEnabled()
-if (ALMOSAFER_TOOLS) {
+const COMPANY_TOOLS = companyToolsEnabled()
+if (COMPANY_TOOLS) {
   mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
   mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
   mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
-  console.log('[claude-dashboard] Almosafer tools enabled (projects.json -> Almosafer_Tools)')
+  console.log('[claude-dashboard] Company tools enabled (projects.json -> Company_Tools)')
 }
 // Feature flags the client needs before it can decide which nav entries exist.
-app.get('/api/features', (req, res) => res.json({ almosaferTools: ALMOSAFER_TOOLS }))
+app.get('/api/features', (req, res) => res.json({ companyTools: COMPANY_TOOLS }))
 
 mountPromptCheck(app) // /api/promptcheck — cached `claude -p` rating of how the user prompts (claude|cursor)
 // (from main: mountMindwalk / mountGame are not mounted — Labs and the gamification layer are deleted;
-//  mountFigmaCapture is mounted above, inside the Almosafer_Tools gate.)
+//  mountFigmaCapture is mounted above, inside the Company_Tools gate.)
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.

@@ -98,7 +98,7 @@ test('enumerateComponents lists every src/components/<Name> directory', () => {
 
 test('buildMap merges stories with the component list', () => {
   const map = buildMap(DS)
-  assert.equal(map.dsPackage, '@tajawal/ct-web-design-system')
+  assert.equal(map.dsPackage, '@your-org/design-system')
   assert.equal(map.dsVersion, '0.28.0-rc.0')
   assert.equal(map.rows.length, 5)
 
@@ -110,7 +110,7 @@ test('buildMap merges stories with the component list', () => {
   // one with a link starts as proposed — never confirmed on harvest alone
   assert.equal(by.Button.status, 'proposed')
   assert.equal(by.Button.codePath, 'src/components/Button')
-  assert.equal(by.Button.importFrom, '@tajawal/ct-web-design-system')
+  assert.equal(by.Button.importFrom, '@your-org/design-system')
   assert.deepEqual(by.Button.evidence.collisionWith, ['IconButton'])
   // rows are sorted by component name for a stable diff
   assert.deepEqual(map.rows.map(r => r.component), ['Button', 'Card', 'IconButton', 'Icons', 'Tooltip'])

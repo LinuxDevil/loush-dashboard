@@ -25,3 +25,6 @@ docs/
 
 # Ticket section design state — one file per JIRA key, written by server/ticket.mjs
 .ticket-state/
+
+# design-system catalog — generated from YOUR design system (npm run catalog:refresh)
+design-system-catalog.json

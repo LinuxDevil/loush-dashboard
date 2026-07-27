@@ -24,8 +24,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, DEFAULT_WORK, DEFAULT_SP_DAYS } from '../lib/eng-config.mjs'
-import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, GITIGNORE_FILE } from '../lib/paths.mjs'
+import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, normalizeDesignSystem, DEFAULT_WORK, DEFAULT_SP_DAYS } from '../lib/eng-config.mjs'
+import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, GITIGNORE_FILE, CATALOG_FILE } from '../lib/paths.mjs'
 
 // From lib/paths.mjs, not from this file's own location. GITIGNORE especially: if it resolves to a
 // missing file, gitignoreText() returns '' and the "your token is committable" banner becomes a
@@ -193,7 +193,8 @@ export default function mountSetup(app, deps = {}) {
           workDescription: describeWork(cfg.work),
           storyPointDays: cfg.storyPointDays,
           defaultDevEmails: cfg.defaultDevEmails,
-          almosaferTools: cfg.almosaferTools,
+          companyTools: cfg.companyTools,
+          designSystem: cfg.designSystem,
           projects: cfg.projects,
           file: { path: PROJECTS_FILE, exists: fs.existsSync(PROJECTS_FILE), gitignored: isIgnored(gi, 'projects.json') },
         },
@@ -212,7 +213,7 @@ export default function mountSetup(app, deps = {}) {
   // --- org config (projects.json) -------------------------------------------------
   app.put('/api/setup/eng', (req, res) => {
     try {
-      const { jiraHost, work, storyPointDays, defaultDevEmails, almosaferTools } = req.body || {}
+      const { jiraHost, work, storyPointDays, defaultDevEmails, companyTools, designSystem } = req.body || {}
       const errors = []
       if (jiraHost && !HOST_RE.test(jiraHost)) errors.push('JIRA host must be a bare hostname, e.g. your-org.atlassian.net')
       if (work) errors.push(...validateWork(work))
@@ -228,15 +229,38 @@ export default function mountSetup(app, deps = {}) {
       if (defaultDevEmails) base.defaultDevEmails = defaultDevEmails.filter(Boolean).map(s => s.toLowerCase())
       // Toggling this changes which server routes get MOUNTED, which only happens at boot — so the
       // response says so rather than letting the UI imply the tab appears immediately.
-      if (almosaferTools !== undefined) {
-        base.Almosafer_Tools = normalizeToolFlag(almosaferTools)
-        delete base.almosaferTools; delete base.almosafer_tools   // never leave two spellings on disk
+      if (companyTools !== undefined) {
+        base.Company_Tools = normalizeToolFlag(companyTools)
+        // never leave two spellings on disk — including the pre-rename `Almosafer_*` keys, which
+        // parseEngConfig still reads, so leaving one behind would let a stale key win a later edit.
+        for (const k of ['companyTools', 'company_tools', 'Almosafer_Tools', 'almosaferTools', 'almosafer_tools']) delete base[k]
       }
+      // Unlike the tab flag this needs no restart: the catalog is read per request from disk.
+      if (designSystem !== undefined) base.designSystem = normalizeDesignSystem(designSystem) || undefined
       writeConfigFile(PROJECTS_FILE, base)
       invalidateEngConfig()
       const cfg = loadEngConfig(PROJECTS_FILE)
-      res.json({ ok: true, workDescription: describeWork(cfg.work), restartRequired: almosaferTools !== undefined })
+      res.json({ ok: true, workDescription: describeWork(cfg.work), restartRequired: companyTools !== undefined })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  })
+
+  // --- design-system catalog -------------------------------------------------------
+  // Extract the component catalog from the user's OWN design system into CATALOG_FILE (gitignored,
+  // generated per machine — nothing ships). Takes the source from the body so the Setup UI can
+  // extract what is typed before it is saved; falls back to the saved config for a plain re-run.
+  //
+  // The body names a package or a URL, NOT a path this endpoint writes to — the only write target is
+  // the CATALOG_FILE constant, per rule 3 in this file's header.
+  app.post('/api/setup/design-system/extract', async (req, res) => {
+    try {
+      const src = normalizeDesignSystem(req.body) || loadEngConfig(PROJECTS_FILE).designSystem
+      if (!src) return res.status(400).json({ error: 'no design system configured — set a package name or Storybook URL first' })
+      const { fromPackage, fromStorybook } = await import('../scripts/refresh-design-catalog.mjs')
+      const { source, components } = src.package ? fromPackage(src.package) : await fromStorybook(src.storybook)
+      const out = components.sort((a, b) => a.fullTitle.localeCompare(b.fullTitle))
+      fs.writeFileSync(CATALOG_FILE, JSON.stringify({ source, scrapedAt: new Date().toISOString(), components: out }, null, 2))
+      res.json({ ok: true, source, count: out.length })
+    } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
   })
 
   app.put('/api/setup/project', (req, res) => {

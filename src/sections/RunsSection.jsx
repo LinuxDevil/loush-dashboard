@@ -46,7 +46,7 @@ function Dispatch({ projects, flows, onDone }) {
       <span style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)' }}>Dispatch a run</span>
       <select value={proj} onChange={e => setProj(e.target.value)}><option value="">pick project…</option>{projects.map(p => <option key={p.path} value={p.path}>{p.name}</option>)}</select>
       <select value={flow} onChange={e => setFlow(e.target.value)}>{flows.map(fl => <option key={fl}>{fl}</option>)}</select>
-      <input value={ticket} onChange={e => setTicket(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="ticket (e.g. TRN-189)" style={{ width: 180 }} />
+      <input value={ticket} onChange={e => setTicket(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="ticket (e.g. ABC-123)" style={{ width: 180 }} />
       <button className="primary" disabled={busy} onClick={go}>{busy ? 'starting…' : '▸ Start'}</button>
       <button disabled={busy} onClick={() => setOpen(false)}>cancel</button>
       <span className="small" style={{ flexBasis: '100%', color: 'var(--text-tertiary)' }}>runs <code>claude -p /{flow || '…'} &lt;ticket&gt;</code> in the repo · appears below as running once it writes .loush/</span>
