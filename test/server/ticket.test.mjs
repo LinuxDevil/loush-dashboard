@@ -156,10 +156,14 @@ test('the partial-delete route derives its path and never accepts one', () => {
 
 test('only one design agent may run in a given repository', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  // The global cap alone let two tickets run agents in the SAME working tree, each reading a tree
-  // the other might be mid-write in.
-  assert.ok(/const sameRepo = live\.find\(x => x\.cwd === repo\.dir\)/.test(src), 'a per-cwd lock exists')
-  assert.ok(/one agent per repository at a time/.test(src), 'and it says why')
+  // The global cap alone let two tickets run design agents in the SAME working tree, each writing
+  // into the same specs directory and reading a tree the other might be mid-write in.
+  assert.ok(/const sameRepo = live\.filter\(writesRepo\)\.find\(x => x\.cwd === repo\.dir\)/.test(src), 'a per-cwd lock exists')
+  assert.ok(/one design agent per repository at a time/.test(src), 'and it says why')
+  // WRITERS only. This test used to pass with an unscoped `live.find`, which is how a read-only
+  // AC/test generation ended up 409-ing behind an unrelated one — and being told a design was
+  // running that the user had never started.
+  assert.ok(/const writesRepo = run => run\.kind === 'design'/.test(src), 'and it applies to writers only')
 })
 
 test('"files read" counts reads, not writes', () => {
@@ -283,6 +287,70 @@ test('saved tickets are listed as cards carrying what was already paid for', () 
   const ui = fs.readFileSync(path.join(ROOT, 'src/sections/TicketSection.jsx'), 'utf8')
   assert.ok(/function SavedCard\(/.test(ui), 'and rendered as a card')
   assert.ok(/gridTemplateColumns: 'repeat\(auto-fill/.test(ui), 'in a grid')
+})
+
+// ── the run registry ────────────────────────────────────────────────────────────────────────────
+// A 409 the user cannot clear is worse than no lock at all. These pin the four defects that made
+// "generate test cases" fail against a repository with nothing wrong with it.
+test('a read-only generation is not blocked by the per-repo write lock', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const gen = src.slice(src.indexOf("app.post('/api/ticket/:key/generate'"), src.indexOf("app.get('/api/ticket/:key/design'"))
+  // Generation reads the tree and returns markdown — server/prompts/tests.md says "do not emit a
+  // test file" — so two of them conflict with nothing. Only the same artifact twice is refused.
+  assert.ok(!/x\.cwd === repo\.dir/.test(gen), 'generation takes no per-repo lock')
+  assert.ok(/live\.find\(x => x\.id === id\)/.test(gen), 'but the same artifact twice is refused')
+  assert.ok(/MAX_CONCURRENT/.test(gen), 'and the global agent cap still applies')
+  // The design lock is scoped to writers, and says "design" only when it means it.
+  const run = src.slice(src.indexOf("app.post('/api/ticket/:key/design/run'"), src.indexOf("app.get('/api/ticket/:key/design/events'"))
+  assert.ok(/live\.filter\(writesRepo\)\.find\(x => x\.cwd === repo\.dir\)/.test(run), 'the design lock counts writers only')
+})
+
+test('pruning a finished generation cannot evict a live design run', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const fn = src.slice(src.indexOf('function pruneRuns()'), src.indexOf('const MAX_EVENTS'))
+  // A design is filed under `TRN-1` and a generation under `TRN-1:tests`, and both carry
+  // `key: 'TRN-1'`. Deleting by `key` removed the DESIGN entry while pruning a finished
+  // generation — leaving an agent running that /design/events could not stream and
+  // /design/cancel could not kill.
+  assert.ok(/runs\.delete\(r\.id\)/.test(fn), 'pruning deletes by map id')
+  assert.ok(!/runs\.delete\(r\.key\)/.test(fn), 'never by ticket key')
+  for (const m of ['id: `${r.key}:${kind}`', 'id: r.key'])
+    assert.ok(src.includes(m) || src.includes('runs.set(id, run)'), 'every run carries the id it is filed under')
+})
+
+test('a leaked run does not hold the lock forever', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const fn = src.slice(src.indexOf('function inFlight()'), src.indexOf('const writesRepo'))
+  // pruneRuns only drops FINISHED runs, so an entry stuck at `done: false` is never collected and
+  // the repository stays locked for the life of the process. Liveness needs a way to be wrong.
+  assert.ok(/run\.child && run\.child\.alive === false/.test(fn), 'a dead child ends the run')
+  assert.ok(/now > run\.expiresAt/.test(fn), 'and so does passing its own timeout')
+  assert.ok(/run\.error = run\.error \|\|/.test(fn), 'reaping says why, and never overwrites a real error')
+  // Every registration sets an expiry, or the age guard above can never fire.
+  const sets = src.match(/const run = \{ id[^\n]*/g) || []
+  assert.equal(sets.length, 2, 'two run registrations')
+  for (const line of sets) assert.ok(/expiresAt:/.test(line), `expiry set: ${line.slice(0, 60)}`)
+  // Anything that asks "what is running" must go through the reaper.
+  assert.ok(!/\[\.\.\.runs\.values\(\)\]\.filter\(x => !x\.done\)/.test(src), 'no raw !done scans remain')
+})
+
+test('spawnAgent calls onExit exactly once', async () => {
+  const src = fs.readFileSync(path.join(ROOT, 'lib/agent.mjs'), 'utf8')
+  // Node emits BOTH 'error' and 'exit' for a failed spawn. The Ticket handler promotes a staging
+  // file into the user's repo and bumps `rev`; running it twice double-bumps and re-runs a move
+  // whose source it already consumed.
+  assert.ok(/if \(ended\) return; ended = true/.test(src), 'onExit is one-shot')
+  assert.ok(!/onExit\?\.\(\{ code, error: null \}\)/.test(src), "the 'exit' handler goes through finish()")
+
+  // And prove it, rather than only asserting the source reads right: `claude` is absent here, so
+  // spawning it exercises the real failed-spawn path.
+  const { spawnAgent } = await import('../../lib/agent.mjs')
+  const calls = []
+  await new Promise(resolve => {
+    spawnAgent({ cwd: ROOT, prompt: 'x', onEvent: () => {}, onExit: p => { calls.push(p); setTimeout(resolve, 120) } })
+    setTimeout(resolve, 3000)
+  })
+  assert.equal(calls.length, 1, `onExit fired ${calls.length}x for a spawn of a missing binary`)
 })
 
 // ── the project's own skills ─────────────────────────────────────────────────────────────────────

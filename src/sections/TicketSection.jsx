@@ -423,10 +423,10 @@ function CriteriaTab({ t, onUpdate }) {
       ? `/api/ticket/${t.key}/generate?workspace=${t.workspace.id}`
       : `/api/eng/ticket/${t.key}/generate?project=${t.project.key}`
     api.post(url, { kind })
-      .then(a => setArt(kind, a)).catch(e => setErr(e.message)).finally(() => setBusy(''))
+      .then(a => setArt(kind, a)).catch(e => setErr({ message: e.message, detail: e.detail })).finally(() => setBusy(''))
   }
   const save = (kind, md) => api.put(`/api/eng/ticket/${t.key}/artifact?project=${t.project.key}`, { kind, md })
-    .then(a => { setArt(kind, a); setEdit(null) }).catch(e => setErr(e.message))
+    .then(a => { setArt(kind, a); setEdit(null) }).catch(e => setErr({ message: e.message, detail: e.detail }))
   const post = (kind, md) => {
     if (!confirm(`Post these ${META[kind].noun} as a comment on ${t.key}?`)) return
     api.post(`/api/eng/ticket/${t.key}/comment?project=${t.project.key}`, { md })
@@ -440,7 +440,14 @@ function CriteriaTab({ t, onUpdate }) {
 
   return (
     <>
-      {err && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 12 }}>{err}</div>}
+      {/* `detail` is rendered, not dropped. A 409 whose first line is "test cases are already
+          being generated" is only actionable with the second line saying how long it has been
+          going — otherwise the user's next move is to click again, which is what they were told
+          not to do. */}
+      {err && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 12 }}>
+        {err.message}
+        {err.detail && <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{err.detail}</div>}
+      </div>}
       {['ac', 'tests'].map(kind => {
         const a = arts[kind]
         const editing = edit?.kind === kind

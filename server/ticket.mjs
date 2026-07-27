@@ -308,17 +308,63 @@ function repoFor(ws) {
 // Run state lives HERE, not in the React component: src/App.jsx's refresh() resets `visited` and
 // bumps `tick`, which is in the section key, so a refresh click remounts the section and would tear
 // down a client-owned EventSource mid-run. Replay-then-live SSE means a remount reattaches.
-const runs = new Map() // key -> {key, kind, startedAt, events, listeners, child, done, error, cost, tools, files, cwd, stageRel, docRel, partial}
+// The MAP KEY is not the ticket key: a design run is stored under `TRN-1` and a generation under
+// `TRN-1:tests`, so the same ticket can have both. Every run therefore carries `id` — the key it is
+// filed under — and anything that deletes from this map must use it.
+const runs = new Map() // id -> {id, key, kind, startedAt, expiresAt, events, listeners, child, done, error, cost, tools, files, cwd, stageRel, docRel, partial}
 const KEEP_FINISHED = 8   // a finished run holds its whole event buffer; keep a few for the "what
                           // happened" panel and drop the rest, or a long-lived server accumulates
                           // thousands of events per ticket forever.
 function pruneRuns() {
   const finished = [...runs.values()].filter(r => r.done).sort((a, b) => b.startedAt - a.startedAt)
-  for (const r of finished.slice(KEEP_FINISHED)) runs.delete(r.key)
+  // `r.id`, NOT `r.key`. Deleting by ticket key evicted the LIVE design run for that ticket while
+  // pruning a finished generation of it — leaving an agent running that /design/events could no
+  // longer stream and /design/cancel could no longer kill.
+  for (const r of finished.slice(KEEP_FINISHED)) runs.delete(r.id)
 }
 const MAX_EVENTS = 4000   // a long agentic run is thousands of events; replaying all of them on every
                           // remount is its own performance bug. Keep a bounded tail.
 const MAX_CONCURRENT = 2
+
+/**
+ * The runs actually still going, with dead ones reaped on the way past.
+ *
+ * A lock needs a way to be wrong. `!x.done` alone is a deadlock waiting to happen: a spawn that
+ * errors without an exit event, a child killed out from under the server, a handler that throws
+ * before its `finally` — any of those leaves an entry that is forever "in flight", and `pruneRuns`
+ * never collects it because it only drops FINISHED runs. The repository would then be locked for
+ * the life of the process, which is exactly the shape of a bug the user cannot work around.
+ *
+ * So liveness is checked against the child where there is one, and against the run's own timeout
+ * otherwise (`runAgent` is buffered and hands back no handle).
+ */
+function inFlight() {
+  const now = Date.now()
+  for (const run of runs.values()) {
+    if (run.done) continue
+    const dead = run.child && run.child.alive === false
+    const expired = run.expiresAt && now > run.expiresAt
+    if (!dead && !expired) continue
+    run.done = true
+    run.error = run.error || (dead
+      ? 'the agent exited without reporting a result'
+      : `no result after ${Math.round((run.expiresAt - run.startedAt) / 60000)}m — treating the run as finished`)
+  }
+  return [...runs.values()].filter(r => !r.done)
+}
+
+/**
+ * Does this run WRITE into the user's repository?
+ *
+ * Only a design run does: the agent writes a staging file under `docs/superpowers/specs/`. A
+ * generation is read-only — `server/prompts/tests.md` says "do not emit a test file" — and its
+ * output is stored in this app's own eng-artifacts.json. That distinction is the whole basis of the
+ * per-repo lock, so it is stated once here rather than assumed at each call site.
+ */
+const writesRepo = run => run.kind === 'design'
+
+/** What to call each artifact in a message to a human. "ac are already being generated" is not English. */
+const META_KIND = { ac: 'acceptance criteria', tests: 'test cases' }
 
 function emit(run, ev) {
   run.events.push(ev)
@@ -480,7 +526,9 @@ export default function mountTicket(app) {
       boards: loadProjects().map(p => ({ key: p.key, name: p.name, jiraHost: p.jiraHost || null, jiraProjectKey: p.jiraProjectKey, githubRepo: p.githubRepo || null })),
       workspace: sel?.id || null,
       saved: sel ? listKeys(sel.id) : [],
-      runs: [...runs.values()].filter(r => !r.done).map(runView),
+      // inFlight(), not a raw !done scan: a leaked run would otherwise be reported as still running
+      // in the UI forever, and the user would wait for something that already ended.
+      runs: inFlight().map(runView),
     })
   })
 
@@ -560,9 +608,30 @@ export default function mountTicket(app) {
     const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
 
-    const live = [...runs.values()].filter(x => !x.done)
-    const sameRepo = live.find(x => x.cwd === repo.dir)
-    if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is running a design in ${repo.repo} — one agent per repository at a time` })
+    // NO per-repo lock here, deliberately. Generation is READ-ONLY: the prompts forbid emitting
+    // files and the result is stored in this app's own eng-artifacts.json, so two of these in one
+    // working tree conflict with nothing. The lock used to apply and it was wrong twice over — it
+    // blocked a harmless read behind another read, and it said "is running a design" when the
+    // blocker was another generation, naming work the user had never started.
+    //
+    // What IS worth refusing: the same artifact twice (the second silently orphaned the first — the
+    // map entry was overwritten while the first agent kept running, uncancellable and uncounted),
+    // and more agents than this machine should be running at once.
+    const live = inFlight()
+    const id = `${r.key}:${kind}`
+    const dup = live.find(x => x.id === id)
+    if (dup) {
+      return res.status(409).json({
+        error: `${META_KIND[kind]} are already being generated for ${r.key}`,
+        detail: `started ${Math.round((Date.now() - dup.startedAt) / 1000)}s ago — wait for it to finish`,
+      })
+    }
+    if (live.length >= MAX_CONCURRENT) {
+      return res.status(429).json({
+        error: `${live.length} agent runs are already in flight (${live.map(x => `${x.key} ${x.kind}`).join(', ')})`,
+        detail: 'wait for one to finish, or cancel it',
+      })
+    }
 
     const s = readState(r.ws.id, r.key)
     let d
@@ -591,10 +660,12 @@ ${d.description || '(none)'}
 ${(d.comments || []).map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}
 ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery row of your plan must cite which of these it covers.` : ''}`
 
-    const run = { key: r.key, kind: `generate:${kind}`, startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, partial: null }
-    runs.set(`${r.key}:${kind}`, run)
+    const GEN_TIMEOUT = 900_000
+    const startedAt = Date.now()
+    const run = { id, key: r.key, kind: `generate:${kind}`, startedAt, expiresAt: startedAt + GEN_TIMEOUT + 30_000, events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, partial: null }
+    runs.set(id, run)
     try {
-      const out = await runAgent({ cwd: repo.dir, prompt, model: req.body?.model, timeoutMs: 900_000 })
+      const out = await runAgent({ cwd: repo.dir, prompt, model: req.body?.model, timeoutMs: GEN_TIMEOUT })
       run.done = true
       if (out.error) { run.error = out.error; return res.status(502).json({ error: out.error }) }
       const md = (out.result || '').trim()
@@ -650,17 +721,26 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   // ---- run the design agent ----
   app.post('/api/ticket/:key/design/run', async (req, res) => {
     const r = resolve(req, res); if (!r) return
-    const live = [...runs.values()].filter(x => !x.done)
-    if (live.some(x => x.key === r.key)) return res.status(409).json({ error: 'a run is already in flight for this ticket' })
-    if (live.length >= MAX_CONCURRENT) return res.status(429).json({ error: `${live.length} design runs are already in flight (${live.map(x => x.key).join(', ')}) — wait, or cancel one` })
+    const live = inFlight()
+    if (live.some(x => x.id === r.key)) return res.status(409).json({ error: `a design is already in flight for ${r.key}` })
+    if (live.length >= MAX_CONCURRENT) {
+      return res.status(429).json({
+        error: `${live.length} agent runs are already in flight (${live.map(x => `${x.key} ${x.kind}`).join(', ')})`,
+        detail: 'wait for one to finish, or cancel it',
+      })
+    }
 
     const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
-    // §per-repo lock — the global cap alone let two tickets run agents in the SAME working tree.
-    // Both would read a tree the other might be mid-write in, and both write into the same specs
-    // directory. A repo is a single shared resource; one agent at a time in it.
-    const sameRepo = live.find(x => x.cwd === repo.dir)
-    if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is already running a design in ${repo.repo} — one agent per repository at a time` })
+    // §per-repo lock — the global cap alone let two tickets run design agents in the SAME working
+    // tree. Both write into the same specs directory, and each reads a tree the other may be
+    // mid-write in. A repo is a single shared resource for WRITERS; one design at a time in it.
+    //
+    // Scoped to writers on purpose. Applying it to every run blocked read-only AC/test generation
+    // behind an unrelated one and reported it as "already running a design", which named work the
+    // user had never started.
+    const sameRepo = live.filter(writesRepo).find(x => x.cwd === repo.dir)
+    if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is already running a design in ${repo.repo} — one design agent per repository at a time` })
 
     let d
     try { d = await ticketDetail(r.cfg, r.key) }
@@ -678,9 +758,13 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     // cold cache is a real JIRA round trip. Two clicks in that window both passed the check and
     // both spawned an agent into the same working tree, and the second runs.set orphaned the first
     // — still running, uncancellable, still writing the same file.
-    if ([...runs.values()].some(x => x.key === r.key && !x.done)) return res.status(409).json({ error: 'a run is already in flight for this ticket' })
+    // A DESIGN for this ticket, specifically: a generation of the same ticket's AC is filed under a
+    // different id, is read-only, and is not a reason to refuse.
+    if (inFlight().some(x => x.id === r.key)) return res.status(409).json({ error: `a design is already in flight for ${r.key}` })
 
-    const run = { key: r.key, kind: 'design', startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, model: req.body?.model || null, partial: null }
+    const DESIGN_TIMEOUT = 1_800_000    // matches spawnAgent's default; the run is reaped just after
+    const startedAt = Date.now()
+    const run = { id: r.key, key: r.key, kind: 'design', startedAt, expiresAt: startedAt + DESIGN_TIMEOUT + 60_000, events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, model: req.body?.model || null, partial: null }
     runs.set(r.key, run)
 
     let prompt
