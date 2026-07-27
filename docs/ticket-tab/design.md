@@ -3,10 +3,13 @@
 Date: 2026-07-27
 Status: implemented
 
-**Implementation status.** Everything in §4 is now built, including the five items that shipped
-absent in the first pass: the re-derive approval gate (§4.1), node add/delete/rename, undo/redo
-(§4.4), the design chat with an assistant op list, and the Task Board handoff (§2.4). What remains
-deliberately unbuilt is listed in §9.
+**Implementation status.** Everything in §4 is built. The five items absent from the first pass —
+the re-derive approval gate (§4.1), node add/delete/rename, undo/redo (§4.4), the design chat with
+an assistant op list, and the Task Board handoff (§2.4) — landed next, followed by the six that §8
+had listed as deliberately skipped: multi-select and marquee, drag-to-connect, keyboard pan/zoom
+with a roving tabindex and edge traversal, edge-label editing, cancel-safe staged document writes,
+and a per-repository run lock. §8 is now the interaction model; §9 lists what genuinely remains
+unbuilt, and it is a much shorter and less load-bearing list than before.
 Findings: `findings.md` · References: `references.md`
 
 ---
@@ -292,25 +295,44 @@ unversioned. Instead:
 - **The chat transcript is not stored.** `{sessionId, cwd}` only; the CLI already persists the
   transcript and `historyEvents` (`server/index.mjs:887`) reads it back.
 
-## 8. What is deliberately NOT built
+## 8. Canvas interaction model
 
-So the doc does not over-promise a second time:
+The canvas is a `listbox` of `option`s with a **roving tabindex** — one Tab stop in, one out — because
+there is no ARIA pattern for a node graph and `role="application"` would suppress browse mode
+entirely. Every mutation announces through a live region that is also **visible**, so the feedback is
+not screen-reader-only trivia.
 
-- **Multi-select and marquee on the canvas.** Single selection only. Moving a cluster needs it;
-  nothing else does.
-- **Drag-to-connect handles.** Connections are made from the inspector's `connect to…` picker,
-  which is keyboard-reachable and unambiguous. The canvas gesture is the nicer version and is not
-  there.
-- **Keyboard pan/zoom and roving tabindex on the canvas.** Nodes are individually tabbable and the
-  Outline view is the full keyboard path; arrow-key traversal of edges is not implemented, so the
-  Outline remains the accessible representation rather than a fallback.
-- **Edge label editing.** Labels come from the model or from an op; they cannot be typed over.
-- **Cancel-safe document writes.** A cancelled run can still leave a partial design document in the
-  repo. It is reported and offered, never deleted — but it is not written to a temp path and moved.
-- **A per-`cwd` run lock.** The 2-run cap is global, so two tickets in the same repository can run
-  concurrently.
+| | Mouse | Keyboard |
+|---|---|---|
+| select | click | `Space` toggles · `Enter` opens the inspector |
+| multi-select | `Shift`/`⌘` click · `Shift`+drag marquee | `Shift`+arrow extends · `⌘A` all · `Esc` clears |
+| move | drag (moves the whole selection, 8px grid) | `Alt`+arrow 8px · `Alt`+`Shift`+arrow 48px |
+| connect | drag the handle on a node's right edge | inspector `connect to…` picker |
+| traverse | — | arrows follow **edges**, announcing the connection, not just the destination |
+| spatial move | — | `g` switches arrows to nearest-node-in-that-direction |
+| pan | drag · scroll | `h` `j` `k`… (`i`) |
+| zoom | `⌘`/`Ctrl`+scroll | `+` `-` · `0` fit · `1` 100% |
+| delete | — | `Delete` / `Backspace`, one undo step for a whole selection |
+| undo/redo | toolbar, with depth | `⌘Z` / `⌘⇧Z` |
 
-## 9. Kill criterion
+Arrow keys default to **following connections** rather than moving spatially, because the
+relationship is the information a graph carries; `g` switches to geometric when position is what you
+actually mean. Focus is always revealed — moving to an off-screen node pans it into view, otherwise
+keyboard focus can leave the viewport with no way back.
+
+## 9. What is deliberately NOT built
+
+- **Edge routing around obstacles.** Arrows cross boxes. Focus mode (2-hop dimming) is the
+  substitute, and it is cheaper and more legible than routing.
+- **A minimap.** The Outline view is a better one, and it has to exist anyway.
+- **Auto-layout re-run.** Once a human moves a node, the layout is theirs. A "tidy up" button that
+  scrambles it is the fastest way to lose trust. Positions carry by slug through a re-derive.
+- **Align / distribute / snap guides.** The 8px grid covers it.
+- **Live collaboration.** The `If-Match` 409 flow is the whole multi-user story.
+- **A canvas as the default below 900px.** The Outline is forced there — shipping a bad canvas is
+  worse than not shipping one.
+
+## 10. Kill criterion
 
 Written down before launch, per `README.md:411-414`:
 

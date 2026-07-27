@@ -129,6 +129,45 @@ test('the chat persists a session pointer, not a transcript', () => {
   assert.ok(/chat: \{ sessionId: out\.sessionId, cwd \}/.test(code))
 })
 
+// ── cancel safety and the per-repo lock ──────────────────────────────────────────────────────────
+test('the agent writes to a staging path, promoted only on a clean exit', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  // child.kill() can land between two Write calls. If the agent wrote straight to the dated final
+  // path, a cancelled run would leave a half-written spec in the user's git repo, indistinguishable
+  // from a finished one.
+  assert.ok(/const stageRel = /.test(src), 'a staging path is derived')
+  assert.ok(/designPrompt\(d, repo\.repo, repo\.dir, stageRel\)/.test(src), 'the agent is told to write to the staging path, not the final one')
+  assert.ok(/const clean = !run\.cancelled && !error/.test(src), 'promotion is conditional on a clean exit')
+  const promote = src.split('\n').find(l => /renameSync\(stageAbs, abs\)/.test(l))
+  assert.ok(promote, 'staging is renamed to the final path')
+  assert.ok(/if \(clean\)/.test(promote), 'and that rename is guarded by the clean-exit check')
+  assert.ok(/else partial =/.test(src), 'anything else is reported as partial')
+  // and it is never removed on the user's behalf
+  assert.ok(!/unlinkSync\(stageAbs\)/.test(src), 'a partial document is never auto-deleted')
+})
+
+test('the partial-delete route derives its path and never accepts one', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const route = src.slice(src.indexOf("app.delete('/api/ticket/:key/design/partial'"), src.indexOf('// ---- re-extract'))
+  assert.ok(/run\.partial\.path/.test(route), 'the path comes from server-held run state')
+  assert.ok(!/req\.body|req\.query\.path/.test(route), 'no client-supplied path — this must not become an arbitrary-delete endpoint')
+})
+
+test('only one design agent may run in a given repository', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  // The global cap alone let two tickets run agents in the SAME working tree, each reading a tree
+  // the other might be mid-write in.
+  assert.ok(/const sameRepo = live\.find\(x => x\.cwd === repo\.dir\)/.test(src), 'a per-cwd lock exists')
+  assert.ok(/one agent per repository at a time/.test(src), 'and it says why')
+})
+
+test('"files read" counts reads, not writes', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  // Counting Write/Edit targets would inflate the one number the user judges the run's
+  // thoroughness by.
+  assert.ok(/!\['Write', 'Edit', 'MultiEdit', 'NotebookEdit'\]\.includes\(c\.name\)/.test(src))
+})
+
 test('the ticket state directory is gitignored — it holds per-ticket design state, not shipped config', () => {
   const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')
   assert.ok(/^\.ticket-state\/$/m.test(gi))

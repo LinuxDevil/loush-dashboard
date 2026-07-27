@@ -88,6 +88,18 @@ export function useGraphEditor({ tKey, project, graph, rev, onGraph }) {
     toast(lost ? `deleted 1 component and ${lost} connection${lost > 1 ? 's' : ''} — ⌘Z to undo` : 'deleted 1 component — ⌘Z to undo')
   }, [graph, commit])
 
+  /** Delete a multi-selection in ONE undo step — N separate steps would be N undos to get back. */
+  const removeNodes = useCallback(ids => {
+    const set = new Set(ids)
+    const lost = graph.edges.filter(e => set.has(e.source) || set.has(e.target)).length
+    commit({ nodes: graph.nodes.filter(n => !set.has(n.id)), edges: graph.edges.filter(e => !set.has(e.source) && !set.has(e.target)) })
+    toast(`deleted ${set.size} component${set.size > 1 ? 's' : ''}${lost ? ` and ${lost} connection${lost > 1 ? 's' : ''}` : ''} — ⌘Z to undo`)
+  }, [graph, commit])
+
+  const setEdgeLabel = useCallback((id, label) => {
+    commit({ ...graph, edges: graph.edges.map(e => (e.id === id ? { ...e, label, data: { ...e.data, origin: 'user' } } : e)) })
+  }, [graph, commit])
+
   const patchNode = useCallback((id, patch) => {
     commit({
       ...graph,
@@ -106,7 +118,7 @@ export function useGraphEditor({ tKey, project, graph, rev, onGraph }) {
   const removeEdge = useCallback(id => commit({ ...graph, edges: graph.edges.filter(e => e.id !== id) }), [graph, commit])
 
   return {
-    undo, redo, commit, addNode, removeNode, patchNode, addEdge, removeEdge,
+    undo, redo, commit, addNode, removeNode, removeNodes, patchNode, addEdge, removeEdge, setEdgeLabel,
     canUndo: past.length > 0, canRedo: future.length > 0, undoDepth: past.length, saving,
   }
 }

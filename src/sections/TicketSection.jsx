@@ -338,6 +338,8 @@ function DesignTab({ t, onNav }) {
   const [starting, setStarting] = useState(false)
   const [applying, setApplying] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const [multi, setMulti] = useState(() => new Set())
+  const [live, setLive] = useState('')     // aria-live text; also shown, so it is not screen-reader-only trivia
   const [now, setNow] = useState(Date.now())
   const load = useCallback(() => api.get(`/api/ticket/${t.key}/design?project=${t.project.key}`).then(x => { setD(x); setRun(x.run) }).catch(() => {}), [t.key, t.project.key])
   useEffect(() => { load() }, [load])
@@ -457,6 +459,15 @@ function DesignTab({ t, onNav }) {
           </div>
         }>
           {run?.cancelled && <Banner>Cancelled after {elapsed(run.ms)} · {run.tools} tool calls · {money(run.cost)}. This is a cancellation, not a failure.</Banner>}
+          {/* A cancelled or failed run never writes to the real path — it leaves a staging file.
+              Reported and offered, never deleted on the user's behalf. */}
+          {run?.partial && (
+            <Banner>
+              That run wrote {run.partial.bytes.toLocaleString()} bytes to <code>{run.partial.rel}</code> before it stopped.
+              It was NOT moved to the final path, so nothing half-written is sitting where a finished spec would be.
+              <button style={{ ...mini, marginLeft: 8 }} onClick={() => api.del(`/api/ticket/${t.key}/design/partial?project=${t.project.key}`).then(load).catch(e => toast(e.message, 'error'))}>discard it</button>
+            </Banner>
+          )}
           {run?.error && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 10 }}>The run failed: {run.error}</div>}
           {d?.doc?.gitignored && <Banner>The document was written to a gitignored path. Run <code>git add -f {d.doc.rel}</code> in {t.project.githubRepo} to track it — this app will not run git on your repo.</Banner>}
           {d?.diverged && <Banner>The design document changed after this diagram was built. Regenerate to re-derive it; your node positions are preserved.</Banner>}
@@ -516,8 +527,10 @@ function DesignTab({ t, onNav }) {
             <button style={mini} onClick={() => { const l = prompt('New component name:'); if (l?.trim()) setSel(ed.addNode(l.trim())) }}>＋ component</button>
             <button style={{ ...mini, ...(chatOpen ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }} onClick={() => setChatOpen(o => !o)}>◗ chat</button>
             <button style={mini} onClick={toBoard} title="create a Task Board ticket carrying the AC and the design doc">⤴ Task Board</button>
+            {multi.size > 1 && <button style={{ ...mini, color: 'var(--red)' }} onClick={() => { ed.removeNodes([...multi]); setMulti(new Set()); setSel(null) }}>delete {multi.size}</button>}
             <span style={{ font: `400 10px ${MONO}`, color: ed.saving === 'error' ? 'var(--amber)' : 'var(--text-secondary)' }}>
-              {ed.saving === 'saving' ? 'saving…' : ed.saving === 'error' ? 'unsaved' : `${nodes.length} nodes · ${(g.edges || []).length} connections`}
+              {ed.saving === 'saving' ? 'saving…' : ed.saving === 'error' ? 'unsaved'
+                : multi.size > 1 ? `${multi.size} selected` : `${nodes.length} nodes · ${(g.edges || []).length} connections`}
               {!view && nodes.length > 15 && ' — showing the outline: past ~15 a graph is usually harder to read than a list'}
             </span>
           </div>
@@ -525,8 +538,13 @@ function DesignTab({ t, onNav }) {
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               {mode === 'Canvas'
-                ? <DesignCanvas graph={g} selected={sel} onSelect={setSel} focusId={sel} onMove={move} onDelete={ed.removeNode} />
+                ? <DesignCanvas graph={g} selected={sel} selection={multi} onSelect={id => { setSel(id); setMulti(id ? new Set([id]) : new Set()) }}
+                    onSelection={s2 => { setMulti(s2); if (s2.size === 1) setSel([...s2][0]); else if (!s2.size) setSel(null) }}
+                    focusId={multi.size > 1 ? null : sel} onMove={move} onConnect={ed.addEdge}
+                    onDelete={id => (multi.size > 1 ? ed.removeNodes([...multi]) : ed.removeNode(id))}
+                    announce={setLive} />
                 : <Outline graph={g} selected={sel} onSelect={setSel} />}
+              <div aria-live="polite" style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 4, minHeight: 14 }}>{live}</div>
             </div>
             {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} ed={ed} onClose={() => setSel(null)} onSelect={setSel} />}
             {chatOpen && <DesignChat tKey={t.key} project={t.project.key} graph={g} selected={sel} rev={d.rev} onApplied={setD} />}
@@ -618,13 +636,22 @@ function Inspector({ node, graph, ed, onClose, onSelect }) {
           aria-hidden, because a labelled list of real buttons beats focusable paths. */}
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
         {[...out.map(e => ({ e, dir: 'out' })), ...inn.map(e => ({ e, dir: 'in' }))].map(({ e, dir }) => (
-          <li key={e.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', padding: '2px 0' }}>
-            <button onClick={() => onSelect(dir === 'out' ? e.target : e.source)}
-              aria-label={`${dir === 'out' ? 'Outgoing' : 'Incoming'}. ${e.label || 'unlabelled'}. ${dir === 'out' ? 'To' : 'From'} ${name(dir === 'out' ? e.target : e.source)}.${e.data?.isStatic === false ? ' Asserted by the model; no import edge backs it.' : ''}`}
-              style={{ ...mini, flex: 1, font: `400 11px ${MONO}`, textAlign: 'left', padding: '2px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {dir === 'out' ? '→' : '←'} {name(dir === 'out' ? e.target : e.source)} <i style={{ fontStyle: 'normal', color: 'var(--text-secondary)' }}>“{e.label || 'unlabelled'}”</i>{e.data?.isStatic === false ? ' ?' : ''}
-            </button>
-            <button style={{ ...mini, padding: '2px 6px', color: 'var(--red)' }} title="remove this connection" onClick={() => ed.removeEdge(e.id)}>✕</button>
+          <li key={e.id} style={{ padding: '3px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+              <button onClick={() => onSelect(dir === 'out' ? e.target : e.source)}
+                aria-label={`${dir === 'out' ? 'Outgoing' : 'Incoming'}. ${e.label || 'unlabelled'}. ${dir === 'out' ? 'To' : 'From'} ${name(dir === 'out' ? e.target : e.source)}.${e.data?.isStatic === false ? ' Asserted by the model; no import edge backs it.' : ''}`}
+                style={{ ...mini, flex: 1, font: `400 11px ${MONO}`, textAlign: 'left', padding: '2px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {dir === 'out' ? '→' : '←'} {name(dir === 'out' ? e.target : e.source)}{e.data?.isStatic === false ? ' ?' : ''}
+              </button>
+              <button style={{ ...mini, padding: '2px 6px', color: 'var(--red)' }} title="remove this connection" onClick={() => ed.removeEdge(e.id)}>✕</button>
+            </div>
+            {/* An unlabelled arrow says nothing, and the label was previously only settable by the
+                model or an op — so a wrong one could be seen but not corrected. */}
+            <input defaultValue={e.label || ''} placeholder="what moves along this connection"
+              aria-label={`label for the connection to ${name(dir === 'out' ? e.target : e.source)}`}
+              onBlur={ev => { const v = ev.target.value.trim(); if (v !== (e.label || '')) ed.setEdgeLabel(e.id, v) }}
+              onKeyDown={ev => { if (ev.key === 'Enter') ev.currentTarget.blur(); if (ev.key === 'Escape') { ev.currentTarget.value = e.label || ''; ev.currentTarget.blur() } }}
+              style={{ font: `400 10px ${MONO}`, padding: '2px 6px', marginTop: 2 }} />
           </li>
         ))}
       </ul>

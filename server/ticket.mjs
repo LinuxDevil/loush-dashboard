@@ -103,7 +103,7 @@ function repoFor(cfg) {
 // Run state lives HERE, not in the React component: src/App.jsx's refresh() resets `visited` and
 // bumps `tick`, which is in the section key, so a refresh click remounts the section and would tear
 // down a client-owned EventSource mid-run. Replay-then-live SSE means a remount reattaches.
-const runs = new Map() // key -> {key, kind, startedAt, events, listeners, child, done, error, cost, tools, files, cwd, docPath}
+const runs = new Map() // key -> {key, kind, startedAt, events, listeners, child, done, error, cost, tools, files, cwd, stageRel, docRel, partial}
 const KEEP_FINISHED = 8   // a finished run holds its whole event buffer; keep a few for the "what
                           // happened" panel and drop the rest, or a long-lived server accumulates
                           // thousands of events per ticket forever.
@@ -126,8 +126,9 @@ function emit(run, ev) {
       if (c.type !== 'tool_use') continue
       run.tools++
       const f = c.input?.file_path || c.input?.path
-      if (f) run.files.add(String(f))
-      if (c.name === 'Write' && f) run.docPath = String(f)
+      // Reads only: counting Write/Edit targets here and labelling the total "files read" would
+      // overstate the investigation, which is the number the user is judging the run by.
+      if (f && !['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(c.name)) run.files.add(String(f))
     }
   }
   if (ev.type === 'result') { run.cost = ev.total_cost_usd ?? run.cost; run.ms = ev.duration_ms ?? run.ms; run.sessionId = ev.session_id || run.sessionId }
@@ -138,7 +139,10 @@ function emit(run, ev) {
 const runView = run => run && ({
   key: run.key, kind: run.kind, startedAt: run.startedAt, done: run.done, error: run.error,
   cancelled: run.cancelled || false, tools: run.tools, filesRead: run.files.size,
-  cost: run.cost ?? null, ms: run.ms ?? null, sessionId: run.sessionId || null, docPath: run.docPath || null,
+  cost: run.cost ?? null, ms: run.ms ?? null, sessionId: run.sessionId || null,
+  // A partial document from a cancelled run is surfaced so the user can open or delete it. It is
+  // never removed on their behalf.
+  partial: run.partial || null, cwd: run.cwd || null,
   events: run.events.length,
 })
 
@@ -293,6 +297,11 @@ export default function mountTicket(app) {
 
     const repo = repoFor(r.cfg)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
+    // §per-repo lock — the global cap alone let two tickets run agents in the SAME working tree.
+    // Both would read a tree the other might be mid-write in, and both write into the same specs
+    // directory. A repo is a single shared resource; one agent at a time in it.
+    const sameRepo = live.find(x => x.cwd === repo.dir)
+    if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is already running a design in ${repo.repo} — one agent per repository at a time` })
 
     let d
     try { d = await ticketDetail(r.cfg, r.key) }
@@ -300,18 +309,26 @@ export default function mountTicket(app) {
 
     const ymd = new Date().toISOString().slice(0, 10)
     const docRel = `docs/superpowers/specs/${ymd}-${r.key.toLowerCase()}-design.md`
+    // §cancel-safe writes — the agent writes to a STAGING path and the server moves it into place
+    // only on a clean exit. `child.kill()` can land between two Write calls, and the previous
+    // behaviour let that leave a half-written design document at the real path, in the user's git
+    // repo, indistinguishable from a finished one. Now a cancelled or crashed run leaves only the
+    // staging file, which is reported as partial and never silently deleted.
+    const stageRel = `docs/superpowers/specs/.${r.key.toLowerCase()}-design.inprogress.md`
     // Re-check AFTER the await: the in-flight test above happens before `ticketDetail`, which on a
     // cold cache is a real JIRA round trip. Two clicks in that window both passed the check and
     // both spawned an agent into the same working tree, and the second runs.set orphaned the first
     // — still running, uncancellable, still writing the same file.
     if ([...runs.values()].some(x => x.key === r.key && !x.done)) return res.status(409).json({ error: 'a run is already in flight for this ticket' })
 
-    const run = { key: r.key, kind: 'design', startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, docPath: null }
+    const run = { key: r.key, kind: 'design', startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, model: req.body?.model || null, partial: null }
     runs.set(r.key, run)
 
     let prompt
-    try { prompt = designPrompt(d, repo.repo, repo.dir, docRel) }
+    try { prompt = designPrompt(d, repo.repo, repo.dir, stageRel) }
     catch (e) { runs.delete(r.key); return res.status(500).json({ error: e.message }) }
+    run.stageRel = stageRel
+    run.docRel = docRel
 
     run.child = spawnAgent({
       cwd: repo.dir,
@@ -325,14 +342,26 @@ export default function mountTicket(app) {
         // would hang open forever waiting for an end that never comes — so it is all guarded and
         // the close happens in `finally`.
         try {
-        // Persist what the run produced. The document itself was written by the agent into the repo.
-        const abs = path.join(repo.dir, docRel)
+        // Promote the staging file to the real path ONLY on a clean exit. A cancelled or failed run
+        // leaves the staging file where it is: reported, offered, never deleted — deleting the
+        // user's partial work would be worse than leaving it, and moving it into place would be
+        // worse still, because a half-written spec at the real path is indistinguishable from a
+        // finished one.
+        const stageAbs = path.join(repo.dir, run.stageRel)
+        const abs = path.join(repo.dir, run.docRel)
+        const clean = !run.cancelled && !error
+        let partial = null
+        if (fs.existsSync(stageAbs)) {
+          if (clean) { try { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.renameSync(stageAbs, abs) } catch (e) { run.error = `wrote ${run.stageRel} but could not move it into place: ${e.message}` } }
+          else partial = { rel: run.stageRel, path: stageAbs, bytes: (() => { try { return fs.statSync(stageAbs).size } catch { return 0 } })() }
+        }
         const s = readState(r.key)
         let doc = s.doc
-        if (fs.existsSync(abs)) {
+        if (fs.existsSync(abs) && clean) {
           const body = fs.readFileSync(abs, 'utf8')
-          doc = { path: abs, rel: docRel, sha: sha(body), genAt: new Date(run.startedAt).toISOString(), model: req.body?.model || 'claude', edited: false, gitignored: isIgnored(repo.dir, docRel) }
+          doc = { path: abs, rel: run.docRel, sha: sha(body), genAt: new Date(run.startedAt).toISOString(), model: run.model || 'claude', edited: false, gitignored: isIgnored(repo.dir, run.docRel) }
         }
+        run.partial = partial
         const text = run.events.filter(e => e.type === 'assistant').flatMap(e => (e.message?.content || []).filter(c => c.type === 'text').map(c => c.text)).join('\n')
         const parsed = parseGraph(text)
         const rawText = text.slice(-40_000)   // kept so a failed extraction can be retried without re-running the agent
@@ -453,6 +482,17 @@ export default function mountTicket(app) {
       writeState(r.key, { ...s, board: { id: t.id, at: new Date().toISOString(), project: repo.dir } })
       res.json({ ok: true, id: t.id, stage: t.stage })
     } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ---- discard the partial document a cancelled run left behind ----
+  // Deleting it is the USER's call, never the server's, and the path is derived here rather than
+  // accepted from the request so this cannot become an arbitrary-delete endpoint.
+  app.delete('/api/ticket/:key/design/partial', (req, res) => {
+    const r = resolve(req, res); if (!r) return
+    const run = runs.get(r.key)
+    if (!run?.partial) return res.status(404).json({ error: 'no partial document for this ticket' })
+    try { fs.unlinkSync(run.partial.path); run.partial = null; res.json({ ok: true }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   // ---- re-extract the graph from the document: the cheap retry ----
