@@ -5,7 +5,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseGraph, extractDoc, validateGraph, mergeGraph, layout, applyOps, toMermaid, NODE_TYPES } from '../../lib/design-schema.mjs'
+import { parseGraph, extractDoc, validateGraph, mergeGraph, layout, applyOps, parseOps, toMermaid, NODE_TYPES } from '../../lib/design-schema.mjs'
 
 const codes = w => w.map(x => x.code)
 
@@ -267,6 +267,58 @@ test('applyOps does not mutate the input graph', () => {
   const g = G([N('a', 'A')])
   applyOps(g, [{ op: 'remove-node', id: 'a' }])
   assert.equal(g.nodes.length, 1)
+})
+
+// ── parseOps — the chat proposal path ────────────────────────────────────────────────────────────
+test('an op list is extracted from a chat reply', () => {
+  const reply = 'You are missing a dead-letter path.\n\n```yaml\nops:\n  - op: add-node\n    id: dlq\n    label: Dead letter queue\n    type: queue\n  - op: add-edge\n    source: api\n    target: dlq\n    label: on final failure\n```'
+  const ops = parseOps(reply)
+  assert.equal(ops.length, 2)
+  assert.equal(ops[0].op, 'add-node')
+  assert.equal(ops[1].target, 'dlq')
+})
+
+test('"no changes needed" is a valid answer, not an error', () => {
+  // The common case: the user asked a question and the honest reply proposes nothing. Returning []
+  // rather than an error is what lets the chat answer questions without inventing edits.
+  assert.deepEqual(parseOps('The design already handles that — retries are bounded at the API layer.'), [])
+  assert.deepEqual(parseOps(''), [])
+  assert.deepEqual(parseOps(null), [])
+})
+
+test('unknown op verbs are filtered out rather than passed through', () => {
+  const ops = parseOps('```yaml\nops:\n  - op: add-node\n    id: a\n    label: A\n  - op: rm -rf\n    id: b\n  - op: drop-database\n```')
+  assert.equal(ops.length, 1)
+  assert.equal(ops[0].op, 'add-node')
+})
+
+test('a bare op array is accepted too', () => {
+  const ops = parseOps('```json\n[{"op":"remove-edge","id":"e:a>b"}]\n```')
+  assert.equal(ops.length, 1)
+  assert.equal(ops[0].op, 'remove-edge')
+})
+
+test('op lists are capped', () => {
+  const many = Array.from({ length: 60 }, (_, i) => `  - op: add-node\n    id: n${i}\n    label: N${i}`).join('\n')
+  assert.equal(parseOps('```yaml\nops:\n' + many + '\n```').length, 40)
+})
+
+// ── positions: rejected from a model, trusted from a hand edit ───────────────────────────────────
+test('trustPositions keeps user coordinates and emits no warning', () => {
+  const doc = { nodes: [{ id: 'a', label: 'A', position: { x: 320, y: 140 } }] }
+  const model = validateGraph(doc)
+  assert.equal(model.graph.nodes[0].position, null)
+  assert.ok(codes(model.warnings).includes('position-rejected'))
+
+  // Without this distinction, every hand edit sprayed a warning chip per node.
+  const user = validateGraph(doc, { trustPositions: true })
+  assert.deepEqual(user.graph.nodes[0].position, { x: 320, y: 140 })
+  assert.deepEqual(codes(user.warnings), [])
+})
+
+test('trustPositions still rejects a non-finite coordinate', () => {
+  const { graph } = validateGraph({ nodes: [{ id: 'a', label: 'A', position: { x: 1, y: NaN } }] }, { trustPositions: true })
+  assert.equal(graph.nodes[0].position, null)
 })
 
 // ── export ───────────────────────────────────────────────────────────────────────────────────────

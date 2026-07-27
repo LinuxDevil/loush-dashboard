@@ -1348,7 +1348,7 @@ export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, tria
 // artifacts); exporting them lets that module reuse the fetch path rather than re-implement it.
 // The dependency runs one way only: ticket.mjs may import from here, never the reverse — enforced
 // by test/server/eng-privacy.test.js, because ticket.mjs holds agent sessions and cost (plane B).
-export { ticketDetail, cfgForTicket, firstProject, artifactsFor, reqHash, jiraAuth, jira, htmlToText }
+export { ticketDetail, cfgForTicket, firstProject, artifactsFor, reqHash, readArtifacts }
 
 // ---------- routes ----------
 // Boot: seed from disk (sync, before the first request can land), then refresh in the background only what is

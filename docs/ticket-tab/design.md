@@ -1,7 +1,12 @@
 # Ticket tab — design
 
 Date: 2026-07-27
-Status: proposed
+Status: implemented
+
+**Implementation status.** Everything in §4 is now built, including the five items that shipped
+absent in the first pass: the re-derive approval gate (§4.1), node add/delete/rename, undo/redo
+(§4.4), the design chat with an assistant op list, and the Task Board handoff (§2.4). What remains
+deliberately unbuilt is listed in §9.
 Findings: `findings.md` · References: `references.md`
 
 ---
@@ -287,7 +292,25 @@ unversioned. Instead:
 - **The chat transcript is not stored.** `{sessionId, cwd}` only; the CLI already persists the
   transcript and `historyEvents` (`server/index.mjs:887`) reads it back.
 
-## 8. Kill criterion
+## 8. What is deliberately NOT built
+
+So the doc does not over-promise a second time:
+
+- **Multi-select and marquee on the canvas.** Single selection only. Moving a cluster needs it;
+  nothing else does.
+- **Drag-to-connect handles.** Connections are made from the inspector's `connect to…` picker,
+  which is keyboard-reachable and unambiguous. The canvas gesture is the nicer version and is not
+  there.
+- **Keyboard pan/zoom and roving tabindex on the canvas.** Nodes are individually tabbable and the
+  Outline view is the full keyboard path; arrow-key traversal of edges is not implemented, so the
+  Outline remains the accessible representation rather than a fallback.
+- **Edge label editing.** Labels come from the model or from an op; they cannot be typed over.
+- **Cancel-safe document writes.** A cancelled run can still leave a partial design document in the
+  repo. It is reported and offered, never deleted — but it is not written to a temp path and moved.
+- **A per-`cwd` run lock.** The 2-run cap is global, so two tickets in the same repository can run
+  concurrently.
+
+## 9. Kill criterion
 
 Written down before launch, per `README.md:411-414`:
 

@@ -83,6 +83,52 @@ test('cfgFor coerces its argument — a repeated ?project= query must not crash 
   assert.ok(!/\(key \|\| ''\)\.toUpperCase/.test(src), 'the uncoerced form must not reappear')
 })
 
+// ── the approval gate ────────────────────────────────────────────────────────────────────────────
+// This is a control-flow property of a route that needs a live agent to exercise, so it is pinned
+// at the source. The property matters: a regeneration reconciles against hand edits, and applying
+// that silently is how someone's work disappears.
+test('a regeneration over an existing graph writes `pending`, never `graph` directly', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  assert.ok(/const isFirst = !s\.graph\?\.nodes\?\.length/.test(src), 'first-generation is distinguished from a regeneration')
+  assert.ok(/next\.pending = \{/.test(src), 'a regeneration parks the merged graph in `pending`')
+  assert.ok(/\/design\/rederive/.test(src), 'an explicit apply/discard route exists')
+})
+
+test('the board handoff carries a two-way link, not a one-way paste', () => {
+  const ticket = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const index = fs.readFileSync(path.join(ROOT, 'server/index.mjs'), 'utf8')
+  // Without jiraKey on the board ticket and boardTicketId on our side, the Ticket tab can never
+  // show "this is now in code review" — which is the whole argument that it complements the board
+  // rather than duplicating it.
+  assert.ok(/jiraKey: r\.key/.test(ticket), 'the handoff sends jiraKey')
+  assert.ok(/designDoc: s\.doc\?\.rel/.test(ticket), 'the handoff sends the design doc path')
+  assert.ok(/jiraKey: typeof jiraKey === 'string'/.test(index), 'the board persists jiraKey')
+  assert.ok(/board: \{ id: t\.id/.test(ticket), 'our state records the board ticket id')
+})
+
+test('the assistant proposes ops and never writes the graph itself', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const chat = src.slice(src.indexOf("app.post('/api/ticket/:key/design/chat'"), src.indexOf("app.get('/api/ticket/:key/design/mermaid'"))
+  assert.ok(/parseOps\(out\.result\)/.test(chat), 'the chat route parses an op list out of the reply')
+  // The only writeState in the chat route must be the session pointer — applying ops is a separate,
+  // user-initiated call. An assistant with write access turns a hallucination into a silent edit.
+  const writes = chat.match(/writeState\(/g) || []
+  assert.equal(writes.length, 1, 'exactly one write, and it is the session pointer')
+  assert.ok(/chat: \{ sessionId: out\.sessionId, cwd \}/.test(chat), 'that write stores only the pointer')
+})
+
+test('the chat persists a session pointer, not a transcript', () => {
+  // Comments stripped: the prose in this file legitimately says "transcript" while explaining why
+  // one is NOT stored, and an assertion that cannot tell code from commentary is worthless.
+  const code = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+    .split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+  for (const banned of [/transcript\s*[:=]/, /messages\s*:\s*\[/, /events\s*:\s*run\.events(?!\.length)/]) {
+    assert.ok(!banned.test(code), `no transcript is persisted (${banned}) — the CLI already keeps one on disk`)
+  }
+  // …and what writeState actually receives is the pointer and nothing else.
+  assert.ok(/chat: \{ sessionId: out\.sessionId, cwd \}/.test(code))
+})
+
 test('the ticket state directory is gitignored — it holds per-ticket design state, not shipped config', () => {
   const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')
   assert.ok(/^\.ticket-state\/$/m.test(gi))

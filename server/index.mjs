@@ -4168,7 +4168,11 @@ app.get('/api/board', (req, res) => {
   res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
 })
 app.post('/api/board/tickets', (req, res) => {
-  const { project, title, desc, parent, deps, team, model, type } = req.body
+  // `jiraKey` and `designDoc` make the Ticket-section handoff BIDIRECTIONAL. Without them the
+  // handoff is a one-way paste — everything ends up stuffed into `desc`, the board has no idea the
+  // ticket came from JIRA, and the Ticket tab can never show "this is now in code review". Two
+  // optional fields are what make it an integration rather than a copy.
+  const { project, title, desc, parent, deps, team, model, type, jiraKey, designDoc } = req.body
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'valid project required' })
   if (!title?.trim()) return res.status(400).json({ error: 'title required' })
   const board = readBoard()
@@ -4178,6 +4182,8 @@ app.post('/api/board/tickets', (req, res) => {
     id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     project, title: title.trim(), desc: String(desc || '').slice(0, 20000), type: type || 'feature',
     parent: parent || null, deps: deps || [], team: team || null, model: model || null,
+    jiraKey: typeof jiraKey === 'string' && jiraKey ? jiraKey.toUpperCase() : null,
+    designDoc: typeof designDoc === 'string' && designDoc ? designDoc : null,
     stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`, // 37: in-flight tickets keep the template version they started on
     blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
     history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created' }], createdAt: Date.now(), releasedAt: null,

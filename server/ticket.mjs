@@ -17,18 +17,27 @@
 // Only the graph, positions and a chat POINTER live here.
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { ticketDetail, cfgForTicket, loadProjects, artifactsFor } from './eng.mjs'
+import { ticketDetail, cfgForTicket, loadProjects, artifactsFor, readArtifacts as readTicketArtifacts } from './eng.mjs'
 import { resolveClone } from '../lib/clone.mjs'
-import { spawnAgent } from '../lib/agent.mjs'
-import { parseGraph, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
+import { spawnAgent, runAgent } from '../lib/agent.mjs'
+import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
 import { TICKET_DIR, ticketStateFile } from '../lib/paths.mjs'
 
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
+const DASH_PORT = Number(process.env.DASH_PORT) || 5178
+const BOARD_FILE = path.join(os.homedir(), '.claude', 'taskboard.json')
+/** The board ticket this JIRA key was handed off to, if any — read fresh so the stage is live. */
+function boardTicket(id) {
+  if (!id) return null
+  try { return (JSON.parse(fs.readFileSync(BOARD_FILE, 'utf8')).tickets || []).find(t => t.id === id) || null }
+  catch { return null }
+}
 
 /**
  * Normalize whatever the user pasted into a JIRA key.
@@ -257,7 +266,14 @@ export default function mountTicket(app) {
       } catch { doc = { ...doc, exists: false } }
     }
     const diverged = !!(doc?.exists && s.graph && s.graph.derivedFromDocSha && s.graph.derivedFromDocSha !== doc.sha)
-    res.json({ ...s, doc, diverged, run: runView(runs.get(r.key)), repo: repoFor(r.cfg) })
+    const bt = boardTicket(s.board?.id)
+    res.json({
+      ...s, doc, diverged, run: runView(runs.get(r.key)), repo: repoFor(r.cfg),
+      // Read live, not from our own copy: the whole point of the handoff is that the Ticket tab can
+      // show where the work actually got to. A stale cached stage would defeat it.
+      board: s.board ? { ...s.board, stage: bt?.stage ?? null, gone: !bt, title: bt?.title ?? null } : null,
+      canRetryExtract: !!s.rawText,
+    })
   })
 
   app.get('/api/ticket/:key/design/doc', (req, res) => {
@@ -319,17 +335,31 @@ export default function mountTicket(app) {
         }
         const text = run.events.filter(e => e.type === 'assistant').flatMap(e => (e.message?.content || []).filter(c => c.type === 'text').map(c => c.text)).join('\n')
         const parsed = parseGraph(text)
-        const merged = s.graph ? mergeGraph(s.graph, parsed.graph) : { graph: parsed.graph, report: null }
-        const graph = layout(merged.graph)
-        writeState(r.key, {
-          ...s, cwd: repo.dir, doc,
-          graph: parsed.graph.nodes.length ? { ...graph, derivedFromDocSha: doc?.sha || null, genAt: new Date().toISOString() } : s.graph,
-          warnings: parsed.warnings,
+        const rawText = text.slice(-40_000)   // kept so a failed extraction can be retried without re-running the agent
+
+        // §approval gate — a REGENERATION over an existing graph is never applied silently.
+        // design.md §4.1: "graph is not replaced; banner + three-way preview, user approves". The
+        // previous behaviour merged and wrote in one step, so a user-authored label or node could
+        // be reconciled away by a background run with no chance to look at it first. A FIRST
+        // generation has nothing to destroy, so it applies directly.
+        const isFirst = !s.graph?.nodes?.length
+        const next = { ...s, cwd: repo.dir, doc, warnings: parsed.warnings, rawText,
           chat: run.sessionId ? { sessionId: run.sessionId, cwd: repo.dir } : s.chat,
           rev: (s.rev || 0) + 1,
           lastRun: { at: new Date(run.startedAt).toISOString(), cost: run.cost ?? null, ms: run.ms ?? null, tools: run.tools, filesRead: run.files.size, parsedHow: parsed.how, parseError: parsed.error },
-          mergeReport: merged.report,
-        })
+        }
+        if (parsed.graph.nodes.length && isFirst) {
+          next.graph = { ...layout(parsed.graph), derivedFromDocSha: doc?.sha || null, genAt: new Date().toISOString() }
+          next.pending = null
+        } else if (parsed.graph.nodes.length) {
+          const merged = mergeGraph(s.graph, parsed.graph)
+          next.pending = {
+            graph: { ...layout(merged.graph), derivedFromDocSha: doc?.sha || null, genAt: new Date().toISOString() },
+            report: merged.report,
+            at: new Date().toISOString(),
+          }
+        }
+        writeState(r.key, next)
         } catch (e) {
           run.error = run.error || `the run finished but its result could not be saved: ${e.message}`
         } finally {
@@ -364,12 +394,76 @@ export default function mountTicket(app) {
     res.json({ ok: true })
   })
 
+  // ---- apply or discard a pending re-derive ----
+  // The preview is the point: a regeneration reconciles against hand edits, and the user has to be
+  // able to see kept/added/dropped and keep their own nodes before it lands.
+  app.post('/api/ticket/:key/design/rederive', (req, res) => {
+    const r = resolve(req, res); if (!r) return
+    const s = readState(r.key)
+    if (!s.pending) return res.status(404).json({ error: 'nothing pending' })
+    if (req.body?.action === 'discard') return res.json(writeState(r.key, { ...s, pending: null, rev: s.rev + 1 }))
+
+    // `keep` names nodes the user chose to rescue from the dropped list. A node the model omitted
+    // is not thereby proven wrong, and silently discarding hand-work to a background regeneration
+    // is the fastest way to make someone stop editing.
+    const keep = new Set(Array.isArray(req.body?.keep) ? req.body.keep : [])
+    const graph = { ...s.pending.graph, nodes: [...s.pending.graph.nodes] }
+    const have = new Set(graph.nodes.map(n => n.id))
+    for (const id of keep) {
+      const old = (s.graph?.nodes || []).find(n => n.id === id)
+      if (old && !have.has(id)) { graph.nodes.push({ ...old, data: { ...old.data, orphaned: true } }); have.add(id) }
+    }
+    for (const e of s.graph?.edges || []) {
+      if (have.has(e.source) && have.has(e.target) && !graph.edges.some(x => x.id === e.id)) graph.edges.push(e)
+    }
+    res.json(writeState(r.key, { ...s, graph: layout(graph), pending: null, rev: s.rev + 1 }))
+  })
+
+  // ---- hand the ticket to the Task Board pipeline ----
+  // This is the answer to "doesn't this duplicate the Task Board?": it does not, because this tab
+  // PLANS and the board EXECUTES, and this route is the seam. It carries jiraKey and the design doc
+  // path so the link works in both directions rather than being a one-way paste into `desc`.
+  app.post('/api/ticket/:key/board', async (req, res) => {
+    const r = resolve(req, res); if (!r) return
+    const repo = repoFor(r.cfg)
+    if (!repo.dir) return res.status(400).json({ error: repo.reason })
+    const s = readState(r.key)
+    let d
+    try { d = await ticketDetail(r.cfg, r.key) }
+    catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
+
+    const art = readTicketArtifacts()[r.key] || {}
+    const parts = [
+      `JIRA: ${r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : r.key}`,
+      '', d.description || '(no description)',
+    ]
+    if (art.ac?.md) parts.push('', '## Acceptance criteria', art.ac.md)
+    if (s.doc?.rel) parts.push('', `## Design`, `See \`${s.doc.rel}\` in this repository.`)
+
+    try {
+      // Self-fetch rather than writing taskboard.json directly: the create route resolves the
+      // project's pipeline and stamps the pipeline version, and duplicating that here would drift.
+      // Same pattern as server/index.mjs:2633 and :3772.
+      const r2 = await fetch(`http://127.0.0.1:${DASH_PORT}/api/board/tickets`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ project: repo.dir, title: `${r.key} — ${d.summary}`, desc: parts.join('\n'), jiraKey: r.key, designDoc: s.doc?.rel || null, type: 'feature' }),
+      })
+      if (!r2.ok) throw new Error(`board ${r2.status}: ${(await r2.text()).slice(0, 200)}`)
+      const t = await r2.json()
+      writeState(r.key, { ...s, board: { id: t.id, at: new Date().toISOString(), project: repo.dir } })
+      res.json({ ok: true, id: t.id, stage: t.stage })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // ---- re-extract the graph from the document: the cheap retry ----
   app.post('/api/ticket/:key/design/extract', (req, res) => {
     const r = resolve(req, res); if (!r) return
     const s = readState(r.key)
-    const raw = typeof req.body?.raw === 'string' ? req.body.raw : null
-    if (!raw) return res.status(400).json({ error: 'raw model output required' })
+    // Falls back to the run's own stored output, so the retry button works without the client
+    // having to keep megabytes of model text it never sees. Without this the endpoint was
+    // uncallable — which is why design.md's "retry button" never existed.
+    const raw = typeof req.body?.raw === 'string' ? req.body.raw : s.rawText
+    if (!raw) return res.status(400).json({ error: 'no stored model output to re-extract from — run a design first' })
     const parsed = parseGraph(raw)
     if (!parsed.graph.nodes.length) return res.status(422).json({ error: parsed.error || 'no graph could be extracted', warnings: parsed.warnings })
     const merged = s.graph ? mergeGraph(s.graph, parsed.graph) : { graph: parsed.graph, report: null }
@@ -383,13 +477,16 @@ export default function mountTicket(app) {
     const s = readState(r.key)
     const want = Number(req.get('if-match') ?? req.body?.rev)
     if (Number.isFinite(want) && want !== s.rev) return res.status(409).json({ error: 'this design changed elsewhere', rev: s.rev, yours: want, graph: s.graph })
-    const { graph, warnings } = validateGraph(req.body?.graph || {})
-    // A hand-edited graph is authored, not generated — record that so regeneration will not silently
-    // overwrite it (lib/design-schema mergeGraph keys off exactly this).
+    // trustPositions: this is a HAND edit, so the coordinates in it are the user's, not a model's.
+    const { graph, warnings } = validateGraph(req.body?.graph || {}, { trustPositions: true })
+    const sent = new Map((req.body?.graph?.nodes || []).map(n => [n.id, n]))
+    const prevById = new Map((s.graph?.nodes || []).map(n => [n.id, n]))
     for (const n of graph.nodes) {
-      const prev = (s.graph?.nodes || []).find(x => x.id === n.id)
-      n.position = (req.body?.graph?.nodes || []).find(x => x.id === n.id)?.position ?? prev?.position ?? null
-      n.data.origin = (req.body?.graph?.nodes || []).find(x => x.id === n.id)?.data?.origin || 'user'
+      n.position = n.position ?? prevById.get(n.id)?.position ?? null
+      // Preserve the origin the client reports; only genuinely new nodes become 'user'. Marking
+      // every node in a PUT as user-authored would make the next regeneration refuse to update any
+      // of them, quietly freezing the diagram.
+      n.data.origin = sent.get(n.id)?.data?.origin || prevById.get(n.id)?.data?.origin || 'user'
     }
     res.json(writeState(r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph?.derivedFromDocSha ?? null }, warnings, rev: s.rev + 1 }))
   })
@@ -416,6 +513,61 @@ export default function mountTicket(app) {
     if (!results.some(x => x.ok)) return res.status(422).json({ error: 'no op could be applied', results })
     const out = writeState(r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph.derivedFromDocSha ?? null }, rev: s.rev + 1 })
     res.json({ ...out, results })
+  })
+
+  // ---- design chat: the assistant PROPOSES ops, the user applies them ----
+  // It never writes the graph. That is a product invariant, not a permission setting — an
+  // assistant with write access to the artifact turns every hallucination into a silent edit.
+  // Resumes the design run's own session so a turn costs a question, not the whole plan again.
+  app.post('/api/ticket/:key/design/chat', async (req, res) => {
+    const r = resolve(req, res); if (!r) return
+    const s = readState(r.key)
+    if (!s.graph) return res.status(404).json({ error: 'no design graph yet — run a design first' })
+    const question = String(req.body?.text || '').trim()
+    if (!question) return res.status(400).json({ error: 'text required' })
+    const cwd = s.chat?.cwd || s.cwd || repoFor(r.cfg).dir
+    if (!cwd) return res.status(400).json({ error: repoFor(r.cfg).reason })
+
+    const focus = (req.body?.nodeIds || []).map(id => s.graph.nodes.find(n => n.id === id)).filter(Boolean)
+    const shape = s.graph.nodes.map(n => `  - id: ${n.id}\n    label: ${n.data.label}\n    type: ${n.type}${n.data.files?.length ? `\n    files: ${n.data.files.map(f => f.rel).join(', ')}` : ''}`).join('\n')
+    const edges = s.graph.edges.map(e => `  - ${e.source} -> ${e.target}: ${e.label || '(unlabelled)'}`).join('\n')
+
+    const prompt = `You are helping refine a system-design diagram for ${r.key}. The current diagram is:
+
+nodes:
+${shape}
+edges:
+${edges}
+${focus.length ? `\nThe user is asking about: ${focus.map(n => `"${n.data.label}" (${n.id})`).join(', ')}` : ''}
+
+Their question: ${question}
+
+Answer in at most a short paragraph. THEN, only if the answer implies concrete changes to the
+diagram, append a single fenced \`\`\`yaml block with an op list:
+
+ops:
+  - op: add-node        # add-node | remove-node | rename-node | set-note | add-edge | remove-edge
+    id: some-slug
+    label: Human Readable
+    type: process
+  - op: add-edge
+    source: some-slug
+    target: other-slug
+    label: what moves
+    kind: calls
+
+Rules: ids are the semantic slugs above, never numbers. Never emit coordinates. Propose the
+smallest set of ops that answers the question — if none are needed, omit the block entirely and
+say so. You are proposing; the user decides what to apply.`
+
+    const out = await runAgent({ cwd, prompt, resume: s.chat?.sessionId, timeoutMs: 300_000 })
+    if (out.error) return res.status(502).json({ error: out.error })
+    const ops = parseOps(out.result)
+    // Persist only the session POINTER. The CLI already keeps the transcript on disk and
+    // historyEvents() reads it back; a second copy here would grow without bound and would put a
+    // plane-B artifact into a store the Ticket tab hands around.
+    if (out.sessionId) writeState(r.key, { ...readState(r.key), chat: { sessionId: out.sessionId, cwd } })
+    res.json({ text: out.result, ops, cost: out.cost ?? null, sessionId: out.sessionId || null })
   })
 
   app.get('/api/ticket/:key/design/mermaid', (req, res) => {

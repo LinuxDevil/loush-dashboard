@@ -3,6 +3,9 @@ import { marked } from 'marked'
 import { api, toast } from '../lib/api.js'
 import { Tabs } from '../ui/tabs.jsx'
 import DesignCanvas, { TYPES } from '../ticket/DesignCanvas.jsx'
+import RederivePreview from '../ticket/RederivePreview.jsx'
+import DesignChat from '../ticket/DesignChat.jsx'
+import { useGraphEditor } from '../ticket/useGraphEditor.js'
 
 // Ticket — type a JIRA key and go.
 //
@@ -333,6 +336,8 @@ function DesignTab({ t, onNav }) {
   const [view, setView] = useState(null)     // null = auto by node count
   const [doc, setDoc] = useState(null)
   const [starting, setStarting] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
   const [now, setNow] = useState(Date.now())
   const load = useCallback(() => api.get(`/api/ticket/${t.key}/design?project=${t.project.key}`).then(x => { setD(x); setRun(x.run) }).catch(() => {}), [t.key, t.project.key])
   useEffect(() => { load() }, [load])
@@ -391,6 +396,40 @@ function DesignTab({ t, onNav }) {
   const mode = view || auto
   const running = run && !run.done
 
+  const ed = useGraphEditor({ tKey: t.key, project: t.project.key, graph: g, rev: d?.rev, onGraph: setD })
+  // ⌘Z / ⌘⇧Z at the section level: the canvas nodes are buttons, so a binding on the canvas alone
+  // would only fire while one of them had focus.
+  useEffect(() => {
+    const onKey = e => {
+      const typing = /^(INPUT|TEXTAREA)$/.test(e.target?.tagName) || e.target?.isContentEditable
+      if (typing || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
+      e.preventDefault()
+      e.shiftKey ? ed.redo() : ed.undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ed])
+
+  const rederive = keep => {
+    setApplying(true)
+    api.post(`/api/ticket/${t.key}/design/rederive?project=${t.project.key}`, { action: 'apply', keep })
+      .then(setD).catch(e => toast(e.message, 'error')).finally(() => setApplying(false))
+  }
+  const discard = () => {
+    setApplying(true)
+    api.post(`/api/ticket/${t.key}/design/rederive?project=${t.project.key}`, { action: 'discard' })
+      .then(setD).catch(e => toast(e.message, 'error')).finally(() => setApplying(false))
+  }
+  const retryExtract = () => api.post(`/api/ticket/${t.key}/design/extract?project=${t.project.key}`, {})
+    .then(x => { setD(x); toast('diagram extracted', 'success') })
+    .catch(e => toast(e.message, 'error'))
+  const toBoard = () => {
+    if (!confirm(`Create a Task Board ticket for ${t.key} in ${t.project.githubRepo}?`)) return
+    api.post(`/api/ticket/${t.key}/board?project=${t.project.key}`, {})
+      .then(() => { load(); toast('handed off to the Task Board', 'success') })
+      .catch(e => toast(e.message, 'error'))
+  }
+
   return (
     <>
       {running && (
@@ -436,10 +475,24 @@ function DesignTab({ t, onNav }) {
           {/* extraction failure degrades to "document without diagram" — never a blank canvas,
               which would read as "your design has no components" */}
           {d?.doc?.exists && !nodes.length && (
-            <Banner>No diagram — the model’s graph could not be parsed{d.lastRun?.parseError ? `: ${d.lastRun.parseError}` : ''}. The document above is unaffected.</Banner>
+            <Banner>
+              No diagram — the model’s graph could not be parsed{d.lastRun?.parseError ? `: ${d.lastRun.parseError}` : ''}. The document above is unaffected.
+              {/* the cheap retry the two-run split exists for: seconds, not another full agent run */}
+              {d.canRetryExtract && <button style={{ ...mini, marginLeft: 8 }} onClick={retryExtract}>retry extraction</button>}
+            </Banner>
+          )}
+          {d?.board && (
+            <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginTop: 8 }}>
+              {d.board.gone
+                ? '⚠ the Task Board ticket for this key no longer exists'
+                : <>▤ on the Task Board as <b style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{d.board.stage || 'unknown stage'}</b> · handed off {fdt(d.board.at)}</>}
+            </div>
           )}
         </Sec>
       )}
+
+      {/* Regeneration never lands silently — it waits here. */}
+      {d?.pending && <RederivePreview pending={d.pending} current={d.graph} onApply={rederive} onDiscard={discard} busy={applying} />}
 
       {doc && <Sec title={doc.path.split('/').slice(-1)[0]}><div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(doc.md || '') }} /></Sec>}
 
@@ -456,8 +509,15 @@ function DesignTab({ t, onNav }) {
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
             <button style={{ ...mini, ...(mode === 'Outline' ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }} onClick={() => setView('Outline')}>Outline</button>
             <button style={{ ...mini, ...(mode === 'Canvas' ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }} onClick={() => setView('Canvas')}>Canvas</button>
-            <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>
-              {nodes.length} nodes · {(g.edges || []).length} connections
+            {/* the undo DEPTH is shown, not just an arrow: people edit freely once they can see a
+                safety net exists */}
+            <button style={mini} disabled={!ed.canUndo} title="undo (⌘Z)" onClick={ed.undo}>↶{ed.undoDepth ? ` ${ed.undoDepth}` : ''}</button>
+            <button style={mini} disabled={!ed.canRedo} title="redo (⌘⇧Z)" onClick={ed.redo}>↷</button>
+            <button style={mini} onClick={() => { const l = prompt('New component name:'); if (l?.trim()) setSel(ed.addNode(l.trim())) }}>＋ component</button>
+            <button style={{ ...mini, ...(chatOpen ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }} onClick={() => setChatOpen(o => !o)}>◗ chat</button>
+            <button style={mini} onClick={toBoard} title="create a Task Board ticket carrying the AC and the design doc">⤴ Task Board</button>
+            <span style={{ font: `400 10px ${MONO}`, color: ed.saving === 'error' ? 'var(--amber)' : 'var(--text-secondary)' }}>
+              {ed.saving === 'saving' ? 'saving…' : ed.saving === 'error' ? 'unsaved' : `${nodes.length} nodes · ${(g.edges || []).length} connections`}
               {!view && nodes.length > 15 && ' — showing the outline: past ~15 a graph is usually harder to read than a list'}
             </span>
           </div>
@@ -465,10 +525,11 @@ function DesignTab({ t, onNav }) {
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               {mode === 'Canvas'
-                ? <DesignCanvas graph={g} selected={sel} onSelect={setSel} focusId={null} onMove={move} />
+                ? <DesignCanvas graph={g} selected={sel} onSelect={setSel} focusId={sel} onMove={move} onDelete={ed.removeNode} />
                 : <Outline graph={g} selected={sel} onSelect={setSel} />}
             </div>
-            {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} onClose={() => setSel(null)} />}
+            {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} ed={ed} onClose={() => setSel(null)} onSelect={setSel} />}
+            {chatOpen && <DesignChat tKey={t.key} project={t.project.key} graph={g} selected={sel} rev={d.rev} onApplied={setD} />}
           </div>
         </>
       )}
@@ -502,21 +563,45 @@ function Outline({ graph, selected, onSelect }) {
   )
 }
 
-function Inspector({ node, graph, onClose }) {
+function Inspector({ node, graph, ed, onClose, onSelect }) {
+  const [label, setLabel] = useState('')
+  const [note, setNote] = useState('')
+  const [connect, setConnect] = useState('')
+  useEffect(() => { setLabel(node?.data?.label || ''); setNote(node?.data?.note || ''); setConnect('') }, [node?.id])
   if (!node) return null
   const t = TYPES[node.type] || TYPES.process
   const inn = (graph.edges || []).filter(e => e.target === node.id)
   const out = (graph.edges || []).filter(e => e.source === node.id)
   const name = id => graph.nodes.find(n => n.id === id)?.data.label || id
   const origin = { generated: 'generated by the design run', user: 'added by you', assistant: 'proposed by the assistant, applied by you' }[node.data?.origin] || '—'
+  const commitLabel = () => { const v = label.trim(); if (v && v !== node.data.label) ed.patchNode(node.id, { data: { label: v } }) }
+  const commitNote = () => { if (note !== (node.data.note || '')) ed.patchNode(node.id, { data: { note } }) }
   return (
     <div style={{ ...PANEL, width: 320, flexShrink: 0, padding: 14 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-        <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)' }}><span style={{ color: t.accent }} aria-hidden="true">{t.glyph}</span> {node.data.label}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10, gap: 8 }}>
+        <span style={{ color: t.accent, font: `600 13px ${MONO}` }} aria-hidden="true">{t.glyph}</span>
+        <input value={label} aria-label="component name"
+          onChange={e => setLabel(e.target.value)} onBlur={commitLabel}
+          onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setLabel(node.data.label); e.currentTarget.blur() } }}
+          style={{ flex: 1, font: `600 13px ${HEAD}`, padding: '3px 6px' }} />
         <button style={mini} onClick={onClose}>✕</button>
       </div>
-      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginBottom: 10 }}>{node.id} · {node.type}</div>
-      {node.data.note && <div style={{ font: `400 12px/1.6 ${BODY}`, color: 'var(--text-secondary)', marginBottom: 10 }}>{node.data.note}</div>}
+      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginBottom: 10 }}>{node.id}</div>
+
+      <Label>Type</Label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {Object.entries(TYPES).map(([k, v]) => (
+          <button key={k} title={k} onClick={() => ed.patchNode(node.id, { type: k })}
+            style={{ ...mini, font: `500 10px ${MONO}`, padding: '2px 7px', ...(node.type === k ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }}>
+            <span style={{ color: v.accent }} aria-hidden="true">{v.glyph}</span> {k}
+          </button>
+        ))}
+      </div>
+
+      <Label>Note</Label>
+      <textarea value={note} rows={2} placeholder="why this exists"
+        onChange={e => setNote(e.target.value)} onBlur={commitNote}
+        style={{ resize: 'vertical', font: `400 11px ${BODY}` }} />
 
       {node.data.files?.length > 0 && <>
         <Label>Files ({node.data.files.length})</Label>
@@ -528,17 +613,38 @@ function Inspector({ node, graph, onClose }) {
         ))}
       </>}
 
-      {(inn.length > 0 || out.length > 0) && <>
-        <Label>Connections</Label>
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {out.map(e => <li key={e.id} style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', padding: '2px 0' }}>→ {name(e.target)} <i style={{ fontStyle: 'normal', color: 'var(--text-secondary)' }}>“{e.label || 'unlabelled'}”</i>{e.data?.isStatic === false ? ' ?' : ''}</li>)}
-          {inn.map(e => <li key={e.id} style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', padding: '2px 0' }}>← {name(e.source)} <i style={{ fontStyle: 'normal' }}>“{e.label || 'unlabelled'}”</i>{e.data?.isStatic === false ? ' ?' : ''}</li>)}
-        </ul>
-        <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 4 }}>? = asserted by the model; no import edge backs it</div>
-      </>}
+      <Label>Connections</Label>
+      {/* This list is also the accessible representation of the edges — the SVG paths are
+          aria-hidden, because a labelled list of real buttons beats focusable paths. */}
+      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+        {[...out.map(e => ({ e, dir: 'out' })), ...inn.map(e => ({ e, dir: 'in' }))].map(({ e, dir }) => (
+          <li key={e.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', padding: '2px 0' }}>
+            <button onClick={() => onSelect(dir === 'out' ? e.target : e.source)}
+              aria-label={`${dir === 'out' ? 'Outgoing' : 'Incoming'}. ${e.label || 'unlabelled'}. ${dir === 'out' ? 'To' : 'From'} ${name(dir === 'out' ? e.target : e.source)}.${e.data?.isStatic === false ? ' Asserted by the model; no import edge backs it.' : ''}`}
+              style={{ ...mini, flex: 1, font: `400 11px ${MONO}`, textAlign: 'left', padding: '2px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {dir === 'out' ? '→' : '←'} {name(dir === 'out' ? e.target : e.source)} <i style={{ fontStyle: 'normal', color: 'var(--text-secondary)' }}>“{e.label || 'unlabelled'}”</i>{e.data?.isStatic === false ? ' ?' : ''}
+            </button>
+            <button style={{ ...mini, padding: '2px 6px', color: 'var(--red)' }} title="remove this connection" onClick={() => ed.removeEdge(e.id)}>✕</button>
+          </li>
+        ))}
+      </ul>
+      {(inn.length > 0 || out.length > 0) && <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 4 }}>? = asserted by the model; no import edge backs it</div>}
+
+      <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+        <select value={connect} onChange={e => setConnect(e.target.value)} style={{ flex: 1, font: `400 11px ${MONO}` }}>
+          <option value="">connect to…</option>
+          {graph.nodes.filter(n => n.id !== node.id && !out.some(e => e.target === n.id)).map(n => <option key={n.id} value={n.id}>{n.data.label}</option>)}
+        </select>
+        <button style={mini} disabled={!connect} onClick={() => { ed.addEdge(node.id, connect); setConnect('') }}>add</button>
+      </div>
 
       <Label>Origin</Label>
-      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{origin}</div>
+      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>
+        {origin}{node.data?.orphaned ? ' · kept through a re-derive that dropped it' : ''}
+      </div>
+
+      <button className="danger" style={{ marginTop: 12, width: '100%' }}
+        onClick={() => { ed.removeNode(node.id); onClose() }}>Delete component</button>
     </div>
   )
 }
