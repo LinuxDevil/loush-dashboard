@@ -105,12 +105,119 @@ const sha = s => 'sha256:' + crypto.createHash('sha256').update(String(s)).diges
 // ---------------------------------------------------------------------------------------------
 // repo resolution
 // ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+// project capabilities
+// ---------------------------------------------------------------------------------------------
+// Every design/AC/test run executes with the TARGET REPOSITORY as its cwd, which means Claude Code
+// loads that project's own skills and commands — `<repo>/.claude/skills/<name>/SKILL.md` and
+// `<repo>/.claude/commands/<name>.md` — exactly as it would in a terminal there.
+//
+// The agent will not reach for them unless it is told they exist. A codebase-QA skill the user has
+// installed in all their projects is strictly better at answering "how does this work?" than the
+// ad-hoc greps this feature's prompts would otherwise produce, so: detect what is actually present
+// and name it in the prompt. Detected, never assumed — a skill this app hardcoded and the user did
+// not have would be an instruction to invoke something that is not there.
+const CAP_TTL = 60_000
+const capCache = new Map()
+
+/** Skills and slash-commands available to an agent running in `dir` (project scope + user scope). */
+export function detectCapabilities(dir) {
+  if (!dir) return { skills: [], commands: [] }
+  const hit = capCache.get(dir)
+  if (hit && Date.now() - hit.at < CAP_TTL) return hit.v
+  const firstLine = p => {
+    try {
+      const m = /^description:\s*["']?(.+?)["']?\s*$/m.exec(fs.readFileSync(p, 'utf8').slice(0, 2000))
+      return m ? m[1].slice(0, 140) : ''
+    } catch { return '' }
+  }
+  const skills = [], commands = []
+  const seen = new Set()
+  const scanSkills = (root, scope) => {
+    try {
+      for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue
+        const p = path.join(root, e.name, 'SKILL.md')
+        if (!fs.existsSync(p) || seen.has(e.name)) continue
+        seen.add(e.name)
+        skills.push({ name: e.name, scope, desc: firstLine(p) })
+      }
+    } catch {}
+  }
+  const scanCmds = (root, scope) => {
+    try {
+      for (const f of fs.readdirSync(root)) {
+        if (!f.endsWith('.md')) continue
+        const name = f.replace(/\.md$/, '')
+        if (seen.has(name)) continue
+        seen.add(name)
+        commands.push({ name, scope, desc: firstLine(path.join(root, f)) })
+      }
+    } catch {}
+  }
+  // Project scope first — a project-local skill shadows a user-level one of the same name.
+  scanSkills(path.join(dir, '.claude', 'skills'), 'project')
+  scanCmds(path.join(dir, '.claude', 'commands'), 'project')
+  scanSkills(path.join(os.homedir(), '.claude', 'skills'), 'user')
+  scanCmds(path.join(os.homedir(), '.claude', 'commands'), 'user')
+  const v = { skills, commands }
+  capCache.set(dir, { at: Date.now(), v })
+  return v
+}
+
+/**
+ * The block of prompt text that tells an agent which of the project's own tools to prefer.
+ * Empty when the project has none — an empty labelled section measurably degrades output, so it is
+ * omitted rather than rendered blank.
+ */
+// Word-boundary matching, NOT substring. The obvious /graph|repo|arch/ regex matched "typoGRAPHy"
+// in a brand-guidelines skill and "REPOrtings" in a theming one, promoting both as codebase tools.
+// A heuristic that recommends the wrong tool is worse than none, because the agent will use it.
+const CODE_WORD = /(^|[^a-z])(graph|graphify|codebase|code|repo|repository|source|symbol|call-?graph|dependency|dependencies|architecture|explore|comprehend|navigate|index(er)?|ast|lsp)([^a-z]|$)/i
+const isCodeTool = x => CODE_WORD.test(` ${x.name} `) || CODE_WORD.test(` ${x.desc} `)
+
+// Being LISTED is cheap; being named as "start here" is a directive the agent will follow, so it
+// needs a much stricter test. A skill whose description merely mentions a repository — a
+// session-hook installer, say — is not a codebase-comprehension tool, and recommending it would
+// send the run somewhere useless before it ever read any code. Match the NAME, or a description
+// that states comprehension as its purpose.
+const COMPREHENSION = /ask (questions? )?about|question.{0,20}(codebase|repo|project)|understand(ing)?\s+(the\s+)?(code|codebase|repo|project|system)|(call|dependency|code|knowledge)[- ]graph|code(base)?[- ]index|map (the|your) (code|repo)|explore the (code|repo)/i
+const isEntryPoint = x => CODE_WORD.test(` ${x.name} `) || COMPREHENSION.test(x.desc || '')
+
+/**
+ * The block of prompt text that tells an agent which of the project's own tools to prefer.
+ * Empty when there is nothing relevant — an empty labelled section measurably degrades output.
+ */
+export function capabilityPrompt(dir) {
+  const { skills, commands } = detectCapabilities(dir)
+  // PROJECT-scope entries are listed in full: someone put them in this repository, so they are
+  // about this repository. USER-scope entries are generic (docx, pptx, xlsx, theme-factory…) and
+  // Claude Code already surfaces them on its own, so only the code-relevant ones are named — the
+  // rest is pure token cost in a prompt whose job is to understand a codebase.
+  const relevant = [...skills, ...commands].filter(x => x.scope === 'project' || isCodeTool(x))
+  if (!relevant.length) return ''
+  // Project-scope entry points first — someone put them in THIS repository on purpose.
+  const qa = relevant.filter(isEntryPoint).sort((a, b) => (a.scope === 'project' ? -1 : 1) - (b.scope === 'project' ? -1 : 1))
+  const line = x => `  - ${x.name}${x.desc ? ` — ${x.desc}` : ''}`
+  const sk = relevant.filter(x => skills.includes(x)), cm = relevant.filter(x => commands.includes(x))
+  return `
+# Tools available in this project — PREFER THEM OVER GREPPING
+
+These are installed in this repository or scoped to code work. They were written for this codebase
+and know it better than a cold search does. Use them before falling back to manual exploration.
+${sk.length ? `\nSkills:\n${sk.map(line).join('\n')}` : ''}
+${cm.length ? `\nCommands:\n${cm.map(line).join('\n')}` : ''}
+${qa.length ? `\n**Start with ${qa.slice(0, 3).map(x => `\`${x.name}\``).join(' or ')}** to understand the code before you answer. That is what it is for — do not re-derive by hand what it can tell you directly.` : ''}
+`
+}
+
 /** Where a design run for this project would execute, and why it can or cannot. */
 function repoFor(cfg) {
   if (!cfg?.githubRepo) return { dir: null, how: null, reason: `project ${cfg?.key || '?'} has no githubRepo in projects.json — a design run needs a repository to read` }
   const r = resolveClone(cfg.githubRepo)
   if (!r) return { dir: null, how: null, repo: cfg.githubRepo, reason: `no local checkout resolved for ${cfg.githubRepo} — open it once in Claude Code so it is registered, or clone it locally` }
-  return { dir: r.dir, how: r.how, repo: cfg.githubRepo, reason: null }
+  const caps = detectCapabilities(r.dir)
+  return { dir: r.dir, how: r.how, repo: cfg.githubRepo, reason: null, skills: caps.skills.map(s => s.name), commands: caps.commands.map(c => c.name) }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -197,6 +304,7 @@ ${d.comments.map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}
 
 You are in the repository \`${repo}\`, checked out at \`${repoDir}\` — READ IT. Investigate before you
 write anything. Then write the design document to \`${docRel}\` using the Write tool.
+${capabilityPrompt(repoDir)}
 
 Finish your reply with the component graph in a single fenced \`\`\`yaml block, in exactly this shape:
 
@@ -321,6 +429,7 @@ export default function mountTicket(app) {
 # The repository
 
 You are in \`${repo.repo}\`, checked out at \`${repo.dir}\`. READ IT before you write.
+${capabilityPrompt(repo.dir)}
 
 # ${r.key} — ${d.summary}
 Type: ${d.type} · Status: ${d.status}
@@ -681,6 +790,7 @@ ${edges}
 ${focus.length ? `\nThe user is asking about: ${focus.map(n => `"${n.data.label}" (${n.id})`).join(', ')}` : ''}
 
 Their question: ${question}
+${capabilityPrompt(cwd)}
 
 Answer in at most a short paragraph. THEN, only if the answer implies concrete changes to the
 diagram, append a single fenced \`\`\`yaml block with an op list:

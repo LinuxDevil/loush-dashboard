@@ -217,6 +217,16 @@ const TicketRail = ({ t, busy, onRefresh, onClose }) => (
     </div>
     <div style={{ font: `600 15px ${HEAD}`, color: 'var(--text-primary)', marginTop: 6, lineHeight: 1.35 }}>{t.summary}</div>
     {t.refreshError && <div style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', marginTop: 4 }}>{t.refreshError}</div>}
+    {/* Which of YOUR project's skills the agent will be told to use. Detected from the checkout, so
+        this is evidence rather than a promise — if it is empty, nothing was found and nothing will
+        be invoked. */}
+    {t.repo?.skills?.length > 0 && (
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 5, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span>agents here will use this repo’s own skills:</span>
+        {t.repo.skills.slice(0, 8).map(s => <span key={s} className="chip" style={{ color: 'var(--green)' }}>/{s}</span>)}
+        {t.repo.skills.length > 8 && <span>+{t.repo.skills.length - 8}</span>}
+      </div>
+    )}
   </div>
 )
 

@@ -9,7 +9,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { normalizeKey } from '../../server/ticket.mjs'
+import os from 'node:os'
+import { normalizeKey, detectCapabilities, capabilityPrompt } from '../../server/ticket.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -166,6 +167,55 @@ test('"files read" counts reads, not writes', () => {
   // Counting Write/Edit targets would inflate the one number the user judges the run's
   // thoroughness by.
   assert.ok(/!\['Write', 'Edit', 'MultiEdit', 'NotebookEdit'\]\.includes\(c\.name\)/.test(src))
+})
+
+// ── the project's own skills ─────────────────────────────────────────────────────────────────────
+// Every agent run uses the target repository as its cwd, so that project's skills are loaded — but
+// the agent will not reach for them unless the prompt says they exist. These pin the two bugs found
+// by actually running the detector, both of which would have sent a run to the wrong tool.
+test('a project-scope skill is detected and named as the entry point', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caps-'))
+  fs.mkdirSync(path.join(dir, '.claude/skills/graphify'), { recursive: true })
+  fs.writeFileSync(path.join(dir, '.claude/skills/graphify/SKILL.md'), '---\nname: graphify\ndescription: Ask questions about this codebase using a pre-built graph index\n---\n')
+  const { skills } = detectCapabilities(dir)
+  assert.ok(skills.some(s => s.name === 'graphify' && s.scope === 'project'))
+  const p = capabilityPrompt(dir)
+  assert.ok(/Start with `graphify`/.test(p), 'it is promoted as the place to start')
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('word-boundary matching — "typography" must not make a branding skill a code tool', () => {
+  // The obvious /graph|repo|arch/ substring regex matched "typoGRAPHy" and "REPOrtings", promoting
+  // a brand-guidelines skill and a theming skill as codebase tools. A heuristic that recommends the
+  // wrong tool is worse than no heuristic, because the agent will actually go and use it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caps2-'))
+  const add = (name, desc) => {
+    fs.mkdirSync(path.join(dir, '.claude/skills', name), { recursive: true })
+    fs.writeFileSync(path.join(dir, '.claude/skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${desc}\n---\n`)
+  }
+  add('brand-guidelines', "Applies official brand colors and typography to any artifact")
+  add('theme-factory', 'Toolkit for styling artifacts: slides, docs, reportings, landing pages')
+  const p = capabilityPrompt(dir)
+  assert.ok(!/Start with `brand-guidelines`/.test(p), 'typography is not a call graph')
+  assert.ok(!/Start with `theme-factory`/.test(p), 'reportings is not a repository')
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('a description that merely mentions a repository is listed but never promoted', () => {
+  // A session-hook installer says "set up a repository" — a true word match, and still not a
+  // comprehension tool. Being listed is cheap; being named "start here" is a directive.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'caps3-'))
+  fs.mkdirSync(path.join(dir, '.claude/skills/session-start-hook'), { recursive: true })
+  fs.writeFileSync(path.join(dir, '.claude/skills/session-start-hook/SKILL.md'), '---\nname: session-start-hook\ndescription: Use when the user wants to set up a repository for Claude Code on the web\n---\n')
+  assert.ok(!/Start with `session-start-hook`/.test(capabilityPrompt(dir)))
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('the capability block is injected into every prompt that reads the repo', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  // design run, AC/tests generation, and the design chat — all three run with the repo as cwd, so
+  // all three should be told what the project provides.
+  assert.equal((src.match(/capabilityPrompt\(/g) || []).length >= 4, true, 'used by design, generate and chat (plus its definition)')
 })
 
 test('the ticket state directory is gitignored — it holds per-ticket design state, not shipped config', () => {
