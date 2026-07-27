@@ -22,3 +22,6 @@ docs/
 .serena/
 .claude/
 
+
+# Ticket section design state — one file per JIRA key, written by server/ticket.mjs
+.ticket-state/

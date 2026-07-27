@@ -6,6 +6,7 @@ import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import YAML from 'yaml'
 import { toggleOffFile } from '../lib/customize-toggle.mjs'
 import mountEng from './eng.mjs'
+import mountTicket from './ticket.mjs'
 import mountMemory, { retrieveContext } from './memory.mjs'
 import mountFe from './fe.mjs'
 import mountSetup from './setup.mjs'
@@ -19,6 +20,8 @@ import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPA
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from '../lib/scheduler.mjs'
 import { verdictFrom } from '../lib/run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from '../lib/harness-health.mjs'
+import { localCloneOf } from '../lib/clone.mjs'
+import { runAgent } from '../lib/agent.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
@@ -48,6 +51,7 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
+mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
@@ -3205,23 +3209,8 @@ function driftVs(bundle, project) {
   for (const k of new Set([...Object.keys(bundle.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, bundle.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
   return drifts
 }
-// map a team repo (owner/name) to a local clone: any registered project dir whose origin remote matches
-const remoteCache = new Map()
-function originOf(dir) {
-  const hit = remoteCache.get(dir)
-  if (hit && Date.now() - hit.t < 600_000) return hit.v
-  let v = ''
-  try { v = (spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { timeout: 3000 }).stdout || '').toString().trim() } catch {}
-  remoteCache.set(dir, { t: Date.now(), v })
-  return v
-}
-function localCloneOf(repo) {
-  const [owner, name] = repo.split('/')
-  let dirs = []
-  try { dirs = Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)) } catch {}
-  for (const d of dirs) { const o = originOf(d); if (o && o.replace(/\.git$/, '').endsWith(`${owner}/${name}`)) return d }
-  return dirs.find(d => path.basename(d) === name) || null
-}
+// map a team repo (owner/name) to a local clone — moved to lib/clone.mjs so server modules can use it
+// without importing this file (which mounts them, so the dependency would be a cycle).
 app.get('/api/gov/team', async (req, res) => {
   const meta = readMeta()
   const file = req.query.file || meta.teamHarness || null
@@ -4106,27 +4095,8 @@ const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { co
 
 // one-shot headless agent run — same claude -p pattern as evals/team-plan; BLOCKED: marker = feature 34
 const boardRuns = new Map() // ticketId -> {kind, startedAt}
-function runAgent({ cwd, prompt, model, timeoutMs = 1800_000, resume }) {
-  return new Promise(resolve => {
-    const args = ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions']
-    if (model) args.push('--model', model)
-    if (resume) args.push('--resume', resume)
-    const child = spawn('claude', args, { cwd, env: process.env, shell: WIN })
-    let out = '', err = ''
-    const timer = setTimeout(() => { try { child.kill() } catch {}; resolve({ error: 'timeout after ' + timeoutMs / 60000 + 'min' }) }, timeoutMs)
-    child.stdout.on('data', d => out += d)
-    child.stderr.on('data', d => err += d)
-    child.on('error', e => { clearTimeout(timer); resolve({ error: e.message }) })
-    child.on('exit', () => {
-      clearTimeout(timer)
-      try {
-        const j = JSON.parse(out)
-        const blocked = /^BLOCKED:\s*(.+)/m.exec(j.result || '')
-        resolve({ result: j.result || '', blocked: blocked?.[1] || null, cost: j.total_cost_usd || 0, turns: j.num_turns || 0, sessionId: j.session_id || null, ms: j.duration_ms || 0 })
-      } catch { resolve({ error: (err || out).slice(0, 1200) || 'no output from claude' }) }
-    })
-  })
-}
+// runAgent moved to lib/agent.mjs (with a streaming sibling, spawnAgent) — same reason as
+// localCloneOf above: server/ticket.mjs needs it and cannot import this file.
 // Unify board runs into the Loush Runs model: each ticket becomes a .loush/<id>/ run in its repo.
 function loushRunEmit(project, ticket, type, data) {
   if (!project || !fs.existsSync(project)) return

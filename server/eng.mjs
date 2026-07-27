@@ -41,6 +41,7 @@ import {
   weekKeyWith, describeWork, invalidateEngConfig,
 } from '../lib/eng-config.mjs'
 import { estAccuracy, escapeRateSeries, busFactor } from '../lib/eng-metrics.mjs'
+import { adfToText, isAdf, markdownToAdf } from '../lib/adf.mjs'
 // Anchored centrally: this module writes four state files and reads the credentials, and every one
 // of those reads degrades to a plausible default rather than throwing if the path is wrong — so a
 // path this file derived from its own location would fail as "unconfigured", not as an error.
@@ -474,7 +475,7 @@ async function whoAmI() {
   if (meMemo) return meMemo
   let email = creds().email || null, accountId = null
   try {
-    const me = await jira(await jiraAuth(cfgFor(null)), '/myself')
+    const me = await jira(await jiraAuth(firstProject()), '/myself')
     accountId = me.accountId || null
     email = me.emailAddress || email
   } catch {} // no JIRA creds → login still resolves
@@ -1191,7 +1192,16 @@ const ARTIFACTS_FILE = ENG_STATE.artifacts
 function readArtifacts() { try { return JSON.parse(fs.readFileSync(ARTIFACTS_FILE, 'utf8')) } catch { return {} } }
 function writeArtifacts(o) { fs.writeFileSync(ARTIFACTS_FILE, JSON.stringify(o, null, 2)) }
 const hashOf = s => crypto.createHash('sha256').update(s).digest('hex')
-const cfgFor = key => { const projs = loadProjects(); return projs.find(p => p.key === (key || '').toUpperCase()) || projs[0] }
+// `|| projs[0]` used to be the fallback here. For the Sprint board that was harmless — the project
+// came from a row that already knew it. For a key-first entry point, where the KEY is the only input,
+// it silently resolves e.g. `XYZ-12` against the first configured project: wrong JIRA host, wrong
+// repo, no error. So an explicit project id still wins, then the key's own prefix, and an unknown
+// project is `null` — callers report "unknown project" rather than guessing (README.md §Honesty).
+const cfgFor = key => { const projs = loadProjects(); return projs.find(p => p.key === (key || '').toUpperCase()) || null }
+/** Resolve the project that owns a ticket key: explicit id first, else the key's prefix. */
+const cfgForTicket = (key, project) => cfgFor(project) || cfgFor(String(key || '').split('-')[0])
+/** Legacy call sites that genuinely mean "the only/first project" say so out loud. */
+const firstProject = () => loadProjects()[0] || null
 
 const decodeEnt = s => String(s).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
 // JIRA renderedFields give HTML — turn it into readable text, keeping block/list line breaks.
@@ -1216,19 +1226,61 @@ function prCommits(cfg, num) {
   } catch { return [] }
 }
 
+// A field can arrive as rendered HTML (`renderedFields`) or as raw ADF (`fields`), and which one you
+// get is NOT uniform: `expand=renderedFields` renders the DESCRIPTION but leaves COMMENT bodies as
+// ADF. Passing ADF to htmlToText() yields the literal string "[object Object]" — see lib/adf.mjs for
+// why that mattered far more than a display glitch. Select on shape, never on provenance.
+function richText(v) {
+  if (isAdf(v)) return adfToText(v).text
+  return htmlToText(v)
+}
+
+// The snapshot ONLY if one is already in memory. `snapshot()` blocks on a COLD cache — the module's
+// own comment at §snapshotAll calls that "~65s of live JIRA + GitHub" — and it was being awaited here
+// purely to attach linked-PR context. That made every ticket read pay a minute on a cold start, which
+// is precisely the cost a key-first entry point exists to avoid. Warm or stale: serve it. Cold: kick
+// off a background refresh and report `loaded:false`, so the UI can say "PR context not loaded"
+// instead of the false "no PRs" (README.md "Honesty rules" §1).
+function snapWarm(cfg) {
+  const hit = snaps.get(cfg.key)
+  if (!hit) { try { refresh(cfg) } catch {} ; return null }
+  if (Date.now() - hit.at >= SNAP_TTL) { try { refresh(cfg) } catch {} }
+  return hit.data
+}
+
 const ticketCache = new Map() // key -> {at, data}
 const TICKET_TTL = 10 * 60_000
-async function ticketDetail(cfg, key) {
+/**
+ * @param {boolean} waitForPrs  true = the old behaviour (block until the snapshot exists). The
+ *   Sprint-analytics drawer already has a warm snapshot by construction, so it costs nothing there;
+ *   the key-first Ticket tab passes false and never blocks.
+ */
+async function ticketDetail(cfg, key, { waitForPrs = false, withCommits = false } = {}) {
   const hit = ticketCache.get(key)
-  if (hit && Date.now() - hit.at < TICKET_TTL) return hit.data
+  if (hit && Date.now() - hit.at < TICKET_TTL && (!waitForPrs || hit.data.prContext.loaded) && (!withCommits || hit.data.prContext.commits)) return hit.data
   const a = await jiraAuth(cfg)
   const iss = await jira(a, `/issue/${encodeURIComponent(key)}?expand=renderedFields,changelog&fields=summary,description,comment,status,issuetype,assignee,created,updated`)
   const rf = iss.renderedFields || {}
-  const comments = (rf.comment?.comments || iss.fields.comment?.comments || []).map(c => ({ author: c.author?.displayName || '', at: c.created, body: htmlToText(c.body) }))
-  const snap = await snapshot(cfg).catch(() => null)
+  const comments = (rf.comment?.comments || iss.fields.comment?.comments || []).map(c => ({ author: c.author?.displayName || '', at: c.created, body: richText(c.body) }))
+  const snap = waitForPrs ? await snapshot(cfg).catch(() => null) : snapWarm(cfg)
   const prsRaw = (snap?.prs || []).filter(p => p.ticket === key)
-  const prs = prsRaw.map(p => ({ num: p.num, repo: p.repo, title: p.title, state: p.state, branch: p.branch, changedFiles: p.changedFiles, files: (p.files || []).map(f => f.path).slice(0, 40), commits: prCommits(cfg, p.num) }))
-  const data = { key, summary: iss.fields.summary, type: iss.fields.issuetype?.name || '', status: iss.fields.status?.name || '', description: htmlToText(rf.description), comments, history: historyOf(iss.changelog), prs }
+  // §commits — prCommits() shells out via gh(), which is spawnSync with a 20s timeout, called
+  // SERIALLY inside this map. Three linked PRs is up to a minute of blocked event loop on a
+  // single-process server, and it was paid on every ticket read whether or not anyone looked at the
+  // commit subjects. That is a larger and more reliable cost than the cold-snapshot path, because
+  // warmBoot() usually leaves the snapshot warm. Off by default; the generation path opts in.
+  const prs = prsRaw.map(p => ({
+    num: p.num, repo: p.repo, title: p.title, state: p.state, branch: p.branch, changedFiles: p.changedFiles,
+    files: (p.files || []).map(f => f.path).slice(0, 40),
+    commits: withCommits ? prCommits(cfg, p.num) : [],
+  }))
+  const data = {
+    key, summary: iss.fields.summary, type: iss.fields.issuetype?.name || '', status: iss.fields.status?.name || '',
+    description: richText(rf.description ?? iss.fields.description), comments, history: historyOf(iss.changelog), prs,
+    // `loaded:false` is not the same fact as `prs:[]`, and the UI must be able to tell them apart
+    // (README.md "Honesty rules" §1). `commits` says whether the subjects were fetched at all.
+    prContext: { loaded: !!snap, prs: prs.length, commits: withCommits },
+  }
   ticketCache.set(key, { at: Date.now(), data })
   return data
 }
@@ -1240,6 +1292,35 @@ const GEN = {
 function genPrompt(kind, d) {
   const prs = d.prs.map(p => `PR #${p.num} (${p.state}) ${p.title}\nfiles: ${p.files.join(', ')}\ncommits: ${p.commits.join(' | ')}`).join('\n\n')
   return `${GEN[kind]}\n\n# ${d.key} — ${d.summary}\nType: ${d.type} · Status: ${d.status}\n\n## Description\n${d.description || '(none)'}\n\n## Comments\n${d.comments.map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}\n\n## Linked PR / commit context\n${prs || '(none)'}`
+}
+
+// §staleness — hash the REQUIREMENT, not the prompt.
+// Staleness used to be `inputHash !== hashOf(genPrompt(kind, d))`, and genPrompt interpolates the
+// ticket STATUS, every comment body, and per-PR commit subjects fetched live from `gh pr view`. So a
+// To-Do -> In Progress transition, a teammate's "+1", or one new commit flipped a perfectly current
+// artifact to "⚠ ticket changed since this was generated". High-frequency false positives train the
+// user to ignore the badge, which destroys the signal for the case that actually matters.
+// What makes acceptance criteria wrong is a change to what is being ASKED FOR.
+const reqHash = d => hashOf(JSON.stringify([d.summary || '', d.description || '', d.type || '']))
+
+/** Attach staleness to the saved artifacts for a ticket. `edited` is displayed, never a suppressor. */
+function artifactsFor(d) {
+  const art = readArtifacts()[d.key] || {}
+  const h = reqHash(d)
+  const one = kind => {
+    const a = art[kind]
+    if (!a) return null
+    // Artifacts written before this change carry `inputHash` (over the whole prompt) and no
+    // `reqHash`. Their staleness is genuinely unknown — say so rather than claiming "current".
+    if (a.reqHash === undefined) return { ...a, stale: null, staleReason: 'generated before staleness tracked the requirement — regenerate to start tracking' }
+    const stale = a.reqHash !== h
+    // A requirement-only hash cannot see that the PR half of the input was missing when this ran,
+    // so that fact is carried on the artifact and reported separately rather than folded into
+    // `stale` — "generated from partial input" and "the requirement changed" are different facts.
+    const thin = a.prContextLoaded === false && d.prContext.loaded
+    return { ...a, stale, ...(thin && !stale ? { partialInput: 'generated before linked-PR context was available — regenerate to include it' } : {}) }
+  }
+  return { ac: one('ac'), tests: one('tests') }
 }
 function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — fine for a local single-user dashboard, same as career-analyze
   const r = spawnSync('claude', ['-p', prompt, '--output-format', 'json'], { timeout: 180_000, maxBuffer: 16 * 1024 * 1024 })
@@ -1253,6 +1334,11 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
 // Named exports for the other data-plane-A consumers (server.mjs inbox, scheduler).
 // Nothing here reads a transcript, a token count or a session — and nothing that does may import from it.
 export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
+// For server/ticket.mjs — the key-first Ticket section. These are PLANE A reads (JIRA work
+// artifacts); exporting them lets that module reuse the fetch path rather than re-implement it.
+// The dependency runs one way only: ticket.mjs may import from here, never the reverse — enforced
+// by test/server/eng-privacy.test.js, because ticket.mjs holds agent sessions and cost (plane B).
+export { ticketDetail, cfgForTicket, firstProject, artifactsFor, reqHash, jiraAuth, jira, htmlToText }
 
 // ---------- routes ----------
 // Boot: seed from disk (sync, before the first request can land), then refresh in the background only what is
@@ -1382,7 +1468,8 @@ export default function mountEng(app) {
   // ---- writes (§writes) — gated on projects.json "writes": true, operator's own credentials, one call each.
   // The DEFAULT everywhere in the UI is copy-to-clipboard. These exist so an opt-in team can act in one click.
   app.post('/api/eng/pr/:num/comment', (req, res) => {
-    const cfg = cfgFor(req.query.project || req.body?.project)
+    const cfg = cfgFor(req.query.project || req.body?.project) || firstProject()
+    if (!cfg) return res.status(400).json({ error: 'no project configured — add one in Setup' })
     if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
     const body = (req.body?.body || '').trim()
     if (!body) return res.status(400).json({ error: 'body required' })
@@ -1390,7 +1477,8 @@ export default function mountEng(app) {
     catch (e) { res.status(500).json({ error: e.message }) }
   })
   app.post('/api/eng/pr/:num/request-review', (req, res) => {
-    const cfg = cfgFor(req.query.project || req.body?.project)
+    const cfg = cfgFor(req.query.project || req.body?.project) || firstProject()
+    if (!cfg) return res.status(400).json({ error: 'no project configured — add one in Setup' })
     if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
     const login = (req.body?.login || '').trim()
     if (!login) return res.status(400).json({ error: 'login required' })
@@ -1398,7 +1486,8 @@ export default function mountEng(app) {
     catch (e) { res.status(500).json({ error: e.message }) }
   })
   app.post('/api/eng/ticket/:key/transition', async (req, res) => {
-    const cfg = cfgFor(req.query.project || req.body?.project)
+    const cfg = cfgForTicket(req.params.key, req.query.project || req.body?.project)
+    if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
     if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json' })
     const to = (req.body?.to || '').trim()
     if (!to) return res.status(400).json({ error: 'to (status name) required' })
@@ -1417,36 +1506,84 @@ export default function mountEng(app) {
 
   // ticket detail — content, comments, history, linked-PR context + any saved AC/test-case artifacts
   app.get('/api/eng/ticket/:key', async (req, res) => {
+    const cfg = cfgForTicket(req.params.key, req.query.project)
+    if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
     try {
-      const d = await ticketDetail(cfgFor(req.query.project), req.params.key.toUpperCase())
-      const art = readArtifacts()[d.key] || {}
-      const withStale = kind => art[kind] ? { ...art[kind], stale: !art[kind].edited && art[kind].inputHash !== hashOf(genPrompt(kind, d)) } : null
-      res.json({ ...d, artifacts: { ac: withStale('ac'), tests: withStale('tests') } })
+      // The Sprint drawer keeps the old blocking snapshot behaviour: it is only reachable once a
+      // snapshot exists, so awaiting one costs nothing there. It does NOT render commit subjects,
+      // so it no longer pays for them either.
+      const d = await ticketDetail(cfg, req.params.key.toUpperCase(), { waitForPrs: true })
+      res.json({ ...d, artifacts: artifactsFor(d) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
   // generate acceptance criteria / test cases via `claude -p`, persist keyed by JIRA key
   app.post('/api/eng/ticket/:key/generate', async (req, res) => {
+    const cfg = cfgForTicket(req.params.key, req.query.project || req.body?.project)
+    if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
     try {
       const kind = req.body?.kind
       if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
       const key = req.params.key.toUpperCase()
-      const d = await ticketDetail(cfgFor(req.query.project || req.body.project), key)
+      // Generation is the one path that genuinely reads commit subjects (genPrompt interpolates
+      // them), so it is the one path that pays for them.
+      const d = await ticketDetail(cfg, key, { waitForPrs: true, withCommits: true })
       const prompt = genPrompt(kind, d)
       const { md, model } = claudeMarkdown(prompt)
       const store = readArtifacts()
-      store[key] = { ...(store[key] || {}), [kind]: { md, at: new Date().toISOString(), model, inputHash: hashOf(prompt), edited: false } }
+      store[key] = {
+        ...(store[key] || {}),
+        // `prContextLoaded` records whether the PR half of the input was actually present. Without
+        // it, an artifact generated while the snapshot was cold was built from
+        // "## Linked PR / commit context\n(none)" and — since staleness now keys only off the
+        // requirement — would never be flagged once the snapshot warmed. That is the same shape as
+        // the [object Object] bug: silently degraded input, confident output.
+        [kind]: { md, at: new Date().toISOString(), model, reqHash: reqHash(d), prContextLoaded: d.prContext.loaded, edited: false },
+      }
       writeArtifacts(store)
       res.json({ ...store[key][kind], stale: false })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
   // save a hand-edited artifact
-  app.put('/api/eng/ticket/:key/artifact', (req, res) => {
+  app.put('/api/eng/ticket/:key/artifact', async (req, res) => {
     const { kind, md } = req.body || {}
     if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
     const key = req.params.key.toUpperCase()
     const store = readArtifacts()
-    store[key] = { ...(store[key] || {}), [kind]: { ...(store[key]?.[kind] || {}), md, at: new Date().toISOString(), edited: true } }
+    // §staleness — the hash is refreshed on a hand-edit too. It used to be left untouched while
+    // `edited:true` was ALSO used to suppress the staleness check, so the first hand-edit disabled
+    // staleness for that artifact permanently: the better the artifact got, the less it was
+    // monitored. `edited` is now presentation only.
+    const prev = store[key]?.[kind] || {}
+    let hash = prev.reqHash
+    try {
+      const cfg = cfgForTicket(key, req.query.project || req.body?.project)
+      if (cfg) hash = reqHash(await ticketDetail(cfg, key))
+    } catch { /* offline / no creds: keep the previous hash rather than inventing one */ }
+    store[key] = { ...(store[key] || {}), [kind]: { ...prev, md, at: new Date().toISOString(), reqHash: hash, edited: true } }
     writeArtifacts(store)
     res.json({ ...store[key][kind], stale: false })
+  })
+
+  // ---- write generated content back to the ticket (§writes) ----
+  // An artifact that cannot leave this app is a private note, not a deliverable. v3 comment bodies
+  // accept neither HTML nor markdown — the body MUST be an ADF document — hence markdownToAdf.
+  app.post('/api/eng/ticket/:key/comment', async (req, res) => {
+    const cfg = cfgForTicket(req.params.key, req.query.project || req.body?.project)
+    if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
+    if (!cfg.writes) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json (copy/download still work)' })
+    const md = (req.body?.md || '').trim()
+    if (!md) return res.status(400).json({ error: 'md required' })
+    try {
+      const a = await jiraAuth(cfg)
+      const key = req.params.key.toUpperCase()
+      const r = await fetch(`${a.base}/issue/${encodeURIComponent(key)}/comment`, {
+        method: 'POST', headers: { ...a.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: markdownToAdf(md) }),
+      })
+      if (!r.ok) throw new Error(`jira ${r.status}: ${(await r.text()).slice(0, 180)}`)
+      const j = await r.json()
+      ticketCache.delete(key) // the comment we just posted is part of the ticket now
+      res.json({ ok: true, id: j.id, url: `https://${cfg.jiraHost}/browse/${key}?focusedCommentId=${j.id}` })
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 }

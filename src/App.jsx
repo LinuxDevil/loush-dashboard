@@ -26,6 +26,7 @@ import QuickActions from './sections/QuickActions.jsx'
 import DeliverySection from './sections/DeliverySection.jsx'
 import WorkingSet from './sections/WorkingSet.jsx'
 import SetupSection from './sections/SetupSection.jsx'
+import TicketSection from './sections/TicketSection.jsx'
 import ConstitutionSection from './almosafer/ConstitutionSection.jsx'
 import FigmaCaptureSection from './almosafer/FigmaCaptureSection.jsx'
 import CapabilityLedger, { Inventory } from './sections/CapabilityLedger.jsx'
@@ -53,6 +54,10 @@ const BASE_SECTIONS = [
   { id: 'workingset', label: 'Working Set', icon: '◈', kicker: 'Dashboard', title: 'Working Set — what the agent did to your code', el: <WorkingSet /> },
   { id: 'inbox', label: 'Inbox', icon: '◎', kicker: 'Dashboard', title: 'Attention inbox — work + harness', el: <InboxSection /> },
   { id: 'delivery', label: 'Delivery', icon: '▤', kicker: 'Delivery', title: 'Delivery — JIRA, GitHub, CI', el: <DeliverySection /> },
+  // Delivery answers "how is the board doing"; this answers "I have a key, what do I do with it".
+  // The distinction is load-bearing: everything in Delivery needs a ~65s snapshot, and this needs
+  // nothing but the key. Sits directly after Delivery because it is the same subject, one level in.
+  { id: 'ticket', label: 'Ticket', icon: '◨', kicker: 'Delivery', title: 'Ticket — open a key, plan the work', el: <TicketSection /> },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
   { id: 'chat', label: 'Chat', icon: '⌨', kicker: 'Live', title: 'Talk to Claude Code', el: (
     <Hub items={[{ label: 'Chat', el: <ChatSection /> }, { label: 'Insights', el: <InsightsSection /> }]} />
