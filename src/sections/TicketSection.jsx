@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { api, toast } from '../lib/api.js'
 import { Tabs } from '../ui/tabs.jsx'
@@ -89,8 +89,10 @@ export default function TicketSection({ onNav }) {
   const open = useCallback((k, fresh) => {
     const norm = normalizeKey(k)
     if (!norm) { setErr({ reason: `"${k}" is not a JIRA key — expected something like ABC-1234` }); return }
-    setBusy(true); setErr(null); setKey(norm); setTab(tab => tab)
-    if (!fresh) setT(null)
+    setBusy(true); setErr(null); setKey(norm)
+    // A refresh keeps you where you are; opening a DIFFERENT ticket must not leave you on the
+    // Design tab looking at the previous ticket's diagram.
+    if (!fresh) { setT(null); setTab('Ticket') }
     api.get(`/api/ticket/${norm}${fresh ? '?fresh=1' : ''}`)
       .then(d => { setT(d); api.get('/api/ticket/index').then(setIdx).catch(() => {}) })
       .catch(e => setErr({ reason: e.message, detail: e.detail }))
@@ -202,9 +204,19 @@ const TicketRail = ({ t, busy, onRefresh, onClose }) => (
           {t.project.githubRepo} {t.repo?.how === 'remote' ? '✓' : t.repo?.dir ? '≈ matched by folder name, not by git remote' : '— not resolved'}
         </span>
       )}
-      <button style={{ ...mini, marginLeft: 'auto' }} onClick={onClose}>✕</button>
+      {/* Cached content is labelled with its age and refresh is one click — otherwise "served from
+          disk" quietly becomes "served yesterday's ticket as though it were live". */}
+      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ font: `400 10px ${MONO}`, color: t.refreshError ? 'var(--amber)' : 'var(--text-secondary)' }}>
+          {t.refreshError ? `refresh failed — showing the copy from ${age(t.fetchedAt)}`
+            : t.cached ? `cached ${age(t.fetchedAt)} · no JIRA call` : `fetched ${age(t.fetchedAt) || 'just now'}`}
+        </span>
+        <button style={mini} disabled={busy} onClick={onRefresh} title="re-fetch this ticket from JIRA">{busy ? '…' : '↻'}</button>
+        <button style={mini} onClick={onClose}>✕</button>
+      </span>
     </div>
     <div style={{ font: `600 15px ${HEAD}`, color: 'var(--text-primary)', marginTop: 6, lineHeight: 1.35 }}>{t.summary}</div>
+    {t.refreshError && <div style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', marginTop: 4 }}>{t.refreshError}</div>}
   </div>
 )
 
@@ -588,7 +600,8 @@ function DesignTab({ t, onNav }) {
                     focusId={multi.size > 1 ? null : sel} onMove={move} onConnect={ed.addEdge}
                     onDelete={id => (multi.size > 1 ? ed.removeNodes([...multi]) : ed.removeNode(id))}
                     announce={setLive} />
-                : <Outline graph={g} selected={sel} onSelect={setSel} />}
+                : <Outline graph={g} selected={sel} selection={multi} onSelect={setSel}
+                    onSelection={s2 => { setMulti(s2); if (s2.size === 1) setSel([...s2][0]); else if (!s2.size) setSel(null) }} />}
               <div aria-live="polite" style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 4, minHeight: 14 }}>{live}</div>
             </div>
             {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} ed={ed} onClose={() => setSel(null)} onSelect={setSel} />}
@@ -602,17 +615,26 @@ function DesignTab({ t, onNav }) {
 
 // The outline is the fallback for big graphs, the jump list, AND the accessible representation of
 // the same model — one implementation, three jobs.
-function Outline({ graph, selected, onSelect }) {
+function Outline({ graph, selected, selection, onSelect, onSelection }) {
   const edges = graph.edges || []
+  const sel = selection instanceof Set ? selection : new Set(selected ? [selected] : [])
+  // The Outline is the DEFAULT above ~15 nodes and the forced view on narrow screens, so it needs
+  // the same multi-select the canvas has — otherwise selecting a cluster is impossible on exactly
+  // the graphs where it matters most. Shift/⌘-click toggles, matching the canvas.
   return (
-    <div style={{ ...PANEL, padding: 8 }} role="tree" aria-label="Design components">
+    <div style={{ ...PANEL, padding: 8 }} role="listbox" aria-multiselectable="true" aria-label={`Design components — ${graph.nodes.length}`}>
       {graph.nodes.map(n => {
         const t = TYPES[n.type] || TYPES.process
         const out = edges.filter(e => e.source === n.id)
+        const isSel = sel.has(n.id)
         return (
-          <button key={n.id} role="treeitem" aria-selected={selected === n.id}
-            onClick={() => onSelect(selected === n.id ? null : n.id)}
-            style={{ display: 'flex', gap: 8, alignItems: 'baseline', width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderRadius: 6, background: selected === n.id ? 'var(--bg-surface-active)' : 'transparent' }}>
+          <button key={n.id} role="option" aria-selected={isSel}
+            aria-label={`${n.data.label}. ${n.type}. ${out.length} outgoing connections.`}
+            onClick={ev => {
+              if (ev.shiftKey || ev.metaKey || ev.ctrlKey) { const s2 = new Set(sel); s2.has(n.id) ? s2.delete(n.id) : s2.add(n.id); onSelection?.(s2) }
+              else onSelect(selected === n.id ? null : n.id)
+            }}
+            style={{ display: 'flex', gap: 8, alignItems: 'baseline', width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderRadius: 6, background: isSel ? 'var(--bg-surface-active)' : 'transparent', boxShadow: selected === n.id ? 'inset 0 0 0 1px var(--text-primary)' : isSel ? 'inset 0 0 0 1px var(--accent)' : 'none' }}>
             <span style={{ color: t.accent, font: `600 11px ${MONO}`, width: 14 }} aria-hidden="true">{t.glyph}</span>
             <span style={{ font: `500 12px ${BODY}`, color: 'var(--text-primary)', minWidth: 150 }}>{n.data.label}</span>
             <span style={{ font: `600 9px ${MONO}`, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>{n.type}</span>
