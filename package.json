@@ -1,10 +1,10 @@
 {
-  "name": "ai-dashboard",
+  "name": "loush-dashboard",
   "private": true,
   "description": "A local web UI for the real files and real history behind your Claude Code setup, joining transcripts and repos on your own disk.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LinuxDevil/AI-Dashboard.git"
+    "url": "git+https://github.com/LinuxDevil/loush-dashboard.git"
   },
   "license": "MIT",
   "type": "module",
