@@ -50,7 +50,7 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(express.json({ limit: '10mb' }))
-mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
+mountEng(app) // /api/eng/* — the delivery snapshot (JIRA changelog + GitHub PRs)
 mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
