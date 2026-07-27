@@ -710,6 +710,10 @@ function DesignTab({ t, onNav }) {
             <button style={mini} disabled={!ed.canUndo} title="undo (⌘Z)" onClick={ed.undo}>↶{ed.undoDepth ? ` ${ed.undoDepth}` : ''}</button>
             <button style={mini} disabled={!ed.canRedo} title="redo (⌘⇧Z)" onClick={ed.redo}>↷</button>
             <button style={mini} onClick={() => { const l = prompt('New component name:'); if (l?.trim()) setSel(ed.addNode(l.trim())) }}>＋ component</button>
+            {/* Only offered on the Canvas: in the Outline the positions it rewrites are not visible,
+                so the button would appear to do nothing. It is undoable like any other edit. */}
+            {mode === 'Canvas' && <button style={mini} disabled={!nodes.length} onClick={ed.tidy}
+              title="lay the graph out left-to-right by dependency (⌘Z to undo)">⇥ tidy</button>}
             <button style={{ ...mini, ...(chatOpen ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }} onClick={() => setChatOpen(o => !o)}>◗ chat</button>
             <button style={mini} onClick={toBoard} title="create a Task Board ticket carrying the AC and the design doc">⤴ Task Board</button>
             {multi.size > 1 && <button style={{ ...mini, color: 'var(--red)' }} onClick={() => { ed.removeNodes([...multi]); setMulti(new Set()); setSel(null) }}>delete {multi.size}</button>}

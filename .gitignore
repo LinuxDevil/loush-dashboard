@@ -18,7 +18,11 @@ eng-artifacts.json
 
 # build output — regenerate with `npx vite build`
 dist/
-docs/
+showcase/
+docs/*
+!docs/screenshots/
+docs/screenshots/*
+!docs/screenshots/*.png
 .serena/
 .claude/
 

@@ -20,7 +20,10 @@ import { select, zoom, zoomIdentity, drag } from 'd3'
 // and a geometric mode for when spatial movement is what you actually want.
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)'
-const W = 176, H = 64
+// Node geometry is owned by tidy.js — the auto-layout cannot avoid overlaps without it, and two
+// copies of these numbers would drift the first time a card grew a line.
+export { W, H } from './tidy.js'
+import { W, H, LABEL_MAX_W, LABEL_H, placeEdgeLabels } from './tidy.js'
 const GRID = 8
 
 export const TYPES = {
@@ -84,6 +87,25 @@ export default function DesignCanvas({
   const sel = selection instanceof Set ? selection : new Set(selected ? [selected] : [])
   const byId = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const posOf = useCallback(n => (dragPos && dragPos[n.id]) || n.position || { x: 0, y: 0 }, [dragPos])
+
+  // Every label's spot, resolved together so they avoid the cards AND each other. Recomputed while
+  // dragging, so labels get out of the way as you move a node under them, not after you drop it.
+  const labelSpots = useMemo(() => placeEdgeLabels(
+    edges.map(e => {
+      const s = byId.get(e.source), t = byId.get(e.target)
+      if (!s || !t || !e.label) return null
+      const sp = posOf(s), tp = posOf(t)
+      // Anchor to the SAME endpoints the path is drawn between. The old formula assumed
+      // left-to-right, so any right-to-left edge had its label floating off the line.
+      const dx = tp.x - sp.x
+      return {
+        id: e.id, label: e.label,
+        a: { x: sp.x + (dx >= 0 ? W : 0), y: sp.y + H / 2 },
+        b: { x: tp.x + (dx >= 0 ? 0 : W), y: tp.y + H / 2 },
+      }
+    }).filter(Boolean),
+    nodes.map(posOf),
+  ), [edges, nodes, byId, posOf])
 
   useEffect(() => { if (!focusNode && nodes.length) setFocusNode(nodes[0].id) }, [nodes, focusNode])
 
@@ -353,13 +375,21 @@ export default function DesignCanvas({
         {edges.map(e => {
           const s = byId.get(e.source), t = byId.get(e.target)
           if (!s || !t || !e.label) return null
-          const sp = posOf(s), tp = posOf(t)
           const dim = near && !(near.has(e.source) && near.has(e.target))
+          const spot = labelSpots.get(e.id)
+          if (!spot) return null
           return (
+            // Centred by transform, NOT by a fixed-width box: the label is the deliverable of this
+            // view, so it sizes to its text. It was previously in a 100px-wide div, which silently
+            // ellipsised every label past ~13 characters ("buffer minutes" -> "buffer minu…") no
+            // matter how much empty canvas sat either side of it.
             <div key={e.id + ':l'} aria-hidden="true"
-              style={{ position: 'absolute', left: (sp.x + tp.x) / 2 + W / 2 - 50, top: (sp.y + tp.y) / 2 + H / 2 - 9, width: 100, textAlign: 'center', pointerEvents: 'none', opacity: dim ? 0.25 : 1 }}>
-              <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%' }}>
-                {e.data?.isStatic === false ? '? ' : ''}{e.label}
+              style={{ position: 'absolute', left: spot.x, top: spot.y - LABEL_H / 2, transform: 'translateX(-50%)', textAlign: 'center', pointerEvents: 'none', opacity: dim ? 0.25 : 1 }}>
+              {/* An inferred edge is already drawn in a lighter stroke above; italic echoes that on
+                  the label. It used to be prefixed with a literal "? ", which read as "this label is
+                  unknown" rather than "this connection is asserted, not backed by an import". */}
+              <span style={{ font: `400 10px ${MONO}`, fontStyle: e.data?.isStatic === false ? 'italic' : 'normal', color: 'var(--text-secondary)', background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: LABEL_MAX_W }}>
+                {e.label}
               </span>
             </div>
           )

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, toast } from '../lib/api.js'
+import { tidyPositions } from './tidy.js'
 
 // Undo/redo + structural editing for the design graph.
 //
@@ -117,8 +118,15 @@ export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
 
   const removeEdge = useCallback(id => commit({ ...graph, edges: graph.edges.filter(e => e.id !== id) }), [graph, commit])
 
+  // Re-layout every node. Goes through commit() like any other edit, so it is one ⌘Z away — which is
+  // the whole reason it is safe to offer on a graph the user may have hand-arranged.
+  const tidy = useCallback(() => {
+    if (!graph?.nodes?.length) return
+    commit({ ...graph, nodes: tidyPositions(graph) })
+  }, [graph, commit])
+
   return {
-    undo, redo, commit, addNode, removeNode, removeNodes, patchNode, addEdge, removeEdge, setEdgeLabel,
+    undo, redo, commit, addNode, removeNode, removeNodes, patchNode, addEdge, removeEdge, setEdgeLabel, tidy,
     canUndo: past.length > 0, canRedo: future.length > 0, undoDepth: past.length, saving,
   }
 }
