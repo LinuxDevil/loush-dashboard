@@ -696,3 +696,6 @@ off-canvas behind a hamburger under 768px. Lists over ~10 items paginate.
 Note that SVG `fill`/`stroke` are set through inline `style`, not presentation attributes: `var()` in a
 presentation attribute is not something to bet a chart's legibility on. Same reason the d3 charts use
 `.style('fill', …)` rather than `.attr('fill', …)`.
+
+
+With Loooooove <3 
