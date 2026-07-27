@@ -198,6 +198,33 @@ export default function TicketSection({ onNav }) {
                   : '— no local checkout: design, files and grounded generation are unavailable'}
               </span>
               {p.skills?.length > 0 && <span style={{ color: 'var(--green)' }}>{p.skills.length} project skill{p.skills.length > 1 ? 's' : ''} available to agents</span>}
+              {p.repoDir && <span style={{ color: 'var(--text-secondary)' }}>{p.repoDir}</span>}
+            </div>
+          )
+        })()}
+
+        {/* Bind a folder yourself. Remote-matching is right when it works and silent when it does
+            not — a fork, a monorepo, a differently-named remote, or no githubRepo at all all end as
+            "no local checkout" with nothing to do about it. These are the folders you have actually
+            opened a session in, the same set the Projects tab lists. */}
+        {proj && !key && (() => {
+          const p = (idx?.projects || []).find(x => x.key === proj)
+          const locals = idx?.localProjects || []
+          if (!p) return null
+          const bound = idx?.bindings?.[proj] || null
+          return (
+            <div style={{ marginTop: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Work in</span>
+              <select value={bound || ''} style={{ font: `400 11px ${MONO}`, maxWidth: 420 }}
+                onChange={e => api.post(`/api/ticket/project/${proj}/repo`, { dir: e.target.value || null })
+                  .then(() => loadIdx(proj)).catch(err => toast(err.message, 'error'))}>
+                <option value="">{p.repoHow === 'bound' ? '(clear — match by git remote)' : p.repoDir ? `auto: ${p.repoDir}` : 'auto: nothing matched'}</option>
+                {locals.map(l => (
+                  <option key={l.dir} value={l.dir}>{l.name}{l.slug ? ` — ${l.slug}` : l.isGit ? '' : ' (not a git repo)'}</option>
+                ))}
+              </select>
+              {p.repoHow === 'bound' && <span style={{ font: `400 10px ${MONO}`, color: 'var(--green)' }}>✓ folder chosen by you</span>}
+              {!locals.length && <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>no projects registered — open one in Claude Code first</span>}
             </div>
           )
         })()}

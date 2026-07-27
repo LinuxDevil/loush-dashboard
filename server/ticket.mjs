@@ -23,11 +23,11 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { ticketDetail, cfgFor, loadProjects, artifactsFor, reqHash, readArtifacts as readTicketArtifacts, writeArtifacts as writeTicketArtifacts } from './eng.mjs'
-import { resolveClone } from '../lib/clone.mjs'
+import { resolveClone, listLocalProjects } from '../lib/clone.mjs'
 import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
-import { ticketStateFile, ticketProjectDir, legacyTicketStateFile } from '../lib/paths.mjs'
+import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile } from '../lib/paths.mjs'
 
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
 const DASH_PORT = Number(process.env.DASH_PORT) || 5178
@@ -220,13 +220,41 @@ ${qa.length ? `\n**Start with ${qa.slice(0, 3).map(x => `\`${x.name}\``).join(' 
 `
 }
 
+// An explicit binding beats any amount of inference. `resolveClone` matches the git origin remote,
+// which is right when it works and silent when it does not — a fork, a monorepo, a checkout with a
+// different remote name, or a project with no `githubRepo` configured at all all end up as "no
+// local checkout" with nothing the user can do about it from here. So: let them point at one of the
+// projects they have actually opened a session in, and remember it.
+const BINDINGS = () => path.join(TICKET_DIR, 'repo-bindings.json')
+const readBindings = () => { try { return JSON.parse(fs.readFileSync(BINDINGS(), 'utf8')) } catch { return {} } }
+function writeBinding(project, dir) {
+  const b = readBindings()
+  if (dir) b[project] = dir; else delete b[project]
+  fs.mkdirSync(TICKET_DIR, { recursive: true })
+  fs.writeFileSync(BINDINGS(), JSON.stringify(b, null, 2))
+  return b
+}
+
 /** Where a design run for this project would execute, and why it can or cannot. */
 function repoFor(cfg) {
-  if (!cfg?.githubRepo) return { dir: null, how: null, reason: `project ${cfg?.key || '?'} has no githubRepo in projects.json — a design run needs a repository to read` }
-  const r = resolveClone(cfg.githubRepo)
-  if (!r) return { dir: null, how: null, repo: cfg.githubRepo, reason: `no local checkout resolved for ${cfg.githubRepo} — open it once in Claude Code so it is registered, or clone it locally` }
-  const caps = detectCapabilities(r.dir)
-  return { dir: r.dir, how: r.how, repo: cfg.githubRepo, reason: null, skills: caps.skills.map(s => s.name), commands: caps.commands.map(c => c.name) }
+  const withCaps = (dir, how, repo, reason) => {
+    if (!dir) return { dir: null, how: null, repo: repo || null, reason }
+    const caps = detectCapabilities(dir)
+    return { dir, how, repo: repo || null, reason: null, skills: caps.skills.map(s => s.name), commands: caps.commands.map(c => c.name) }
+  }
+  // 1. an explicit binding, if the directory is still there
+  const bound = readBindings()[cfg?.key]
+  if (bound && fs.existsSync(bound)) return withCaps(bound, 'bound', cfg?.githubRepo)
+  // 2. the git-remote match
+  if (cfg?.githubRepo) {
+    const r = resolveClone(cfg.githubRepo)
+    if (r) return withCaps(r.dir, r.how, cfg.githubRepo)
+    return withCaps(null, null, cfg.githubRepo,
+      `no local checkout matched ${cfg.githubRepo} by git remote — pick the folder yourself below, or open it once in Claude Code so it is registered`)
+  }
+  // 3. nothing configured and nothing bound — still fixable from here, so say how
+  return withCaps(null, null, null,
+    `project ${cfg?.key || '?'} has no githubRepo in projects.json — pick the folder to work in below, or add the repo in Setup`)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -388,8 +416,30 @@ export default function mountTicket(app) {
       projects,
       project: sel?.key || null,
       recent: sel ? listKeys(sel.key).slice(0, 20) : [],
+      // The folders you have opened a session in — the same set the Projects tab lists. Offered so
+      // a project whose remote does not match is something you can fix here rather than a dead end.
+      localProjects: listLocalProjects(),
+      bindings: readBindings(),
       runs: [...runs.values()].filter(r => !r.done).map(runView),
     })
+  })
+
+  /** Bind a JIRA project to a folder on disk (or clear the binding and fall back to remote matching). */
+  app.post('/api/ticket/project/:project/repo', (req, res) => {
+    const cfg = cfgFor(req.params.project)
+    if (!cfg) return res.status(404).json({ error: `no project called "${req.params.project}" is configured` })
+    const dir = req.body?.dir ? String(req.body.dir) : null
+    if (dir) {
+      // Only a directory the user has actually opened a session in. This endpoint must not become a
+      // way to point an agent with --dangerously-skip-permissions at an arbitrary path.
+      if (!listLocalProjects().some(p => p.dir === dir)) {
+        return res.status(400).json({ error: 'that folder is not one of your registered projects — open it once in Claude Code first' })
+      }
+      if (!fs.existsSync(dir)) return res.status(400).json({ error: `${dir} no longer exists` })
+    }
+    writeBinding(cfg.key, dir)
+    capCache.delete(dir || '')
+    res.json({ ok: true, repo: repoFor(cfg) })
   })
 
   /** Forget a saved ticket — the cache is the user's, so removing an entry has to be possible. */

@@ -204,6 +204,33 @@ test('pre-partition state is still readable, so nothing is orphaned', () => {
   assert.ok(/legacyTicketStateFile\(key\)/.test(src), 'readState falls back to the flat layout')
 })
 
+// ── binding a project to a folder on disk ────────────────────────────────────────────────────────
+test('an explicit folder binding beats git-remote inference', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const fn = src.slice(src.indexOf('function repoFor(cfg)'), src.indexOf('// ------', src.indexOf('function repoFor(cfg)')))
+  // Order matters: the binding is checked before resolveClone. Remote matching is right when it
+  // works and silent when it does not, and the user's explicit choice is not a fallback.
+  assert.ok(fn.indexOf('readBindings()') < fn.indexOf('resolveClone('), 'the binding is consulted first')
+  assert.ok(/fs\.existsSync\(bound\)/.test(fn), 'a binding to a folder that has gone away is ignored')
+})
+
+test('binding only accepts a folder you have already opened a session in', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const route = src.slice(src.indexOf("app.post('/api/ticket/project/:project/repo'"), src.indexOf('// ---- key-first fetch'))
+  // This endpoint decides the cwd of an agent that runs with --dangerously-skip-permissions, so it
+  // must never accept an arbitrary path from the request body.
+  assert.ok(/listLocalProjects\(\)\.some\(p => p\.dir === dir\)/.test(route), 'the path is checked against the registered set')
+  assert.ok(/not one of your registered projects/.test(route), 'and the refusal says why')
+})
+
+test('a project with no githubRepo is still fixable, not a dead end', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  // The old message told the user to edit projects.json and stopped. Every unresolved case now
+  // names the action available on this screen.
+  assert.ok(/pick the folder to work in below/.test(src))
+  assert.ok(/pick the folder yourself below/.test(src))
+})
+
 // ── the project's own skills ─────────────────────────────────────────────────────────────────────
 // Every agent run uses the target repository as its cwd, so that project's skills are loaded — but
 // the agent will not reach for them unless the prompt says they exist. These pin the two bugs found
