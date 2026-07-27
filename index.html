@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <title>Claude Code Dashboard</title>
+    <title>Loush Dashboard</title>
     <!-- The design system is system-font only: no webfont round trip, no FOUT, no layout shift. -->
     <script>
       // Runs before first paint so the shell never flashes the wrong theme.
@@ -13,13 +13,13 @@
           // Dark is the product default, not the OS default — this is a terminal-adjacent tool and
           // the palette was designed dark-first. The OS preference only decides for a first-time
           // visitor who has explicitly asked their OS for light.
-          var t = localStorage.getItem('theme')
-          if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
-          document.documentElement.setAttribute('data-theme', t)
+          var t = localStorage.getItem('theme');
+          if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          document.documentElement.setAttribute('data-theme', t);
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark')
+          document.documentElement.setAttribute('data-theme', 'dark');
         }
-      })()
+      })();
     </script>
   </head>
   <body>

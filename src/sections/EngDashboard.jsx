@@ -60,18 +60,17 @@ const stageBudget = (status, pts) => {
 const WAITING = ['In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'QA Blocked', 'Ready for Release']
 
 // ---------- identity: "mine" is a real filter, not a dropdown of colleagues ----------
-// The atlassian email comes from /api/eng/creds; the JIRA accountId from ~/.claude/career.json. The GitHub
-// login has no endpoint on this server (see the report) — it is set once here and kept in localStorage.
+// All three come from /api/eng/me, which asks JIRA `/myself` behind the configured token and the `gh`
+// CLI for the GitHub login — so identity is DERIVED from the credentials you already set in Setup and
+// never stored in this repo. Any field may be null; the endpoint never 500s.
+// (This previously read ~/.claude/career.json via /api/career/config — a route this server does not
+//  serve, so `accountId` was always '' and "mine" silently degraded to an email-only match.)
 function useMe(members) {
   const [me, setMe] = useState(null)
   const [gh, setGh] = useState(() => localStorage.getItem('eng.me.gh') || '')
   useEffect(() => {
-    Promise.all([
-      fetch('/api/eng/creds').then(r => r.json()).catch(() => ({})),
-      fetch('/api/career/config').then(r => r.json()).catch(() => ({})),
-    ]).then(([c, career]) => {
-      const id = career?.identity || {}
-      setMe({ email: c.email || (id.gitEmails || [])[0] || '', accountId: id.jiraAccountId || '', gh: gh || id.githubHandle || '' })
+    fetch('/api/eng/me').then(r => r.json()).catch(() => ({})).then(m => {
+      setMe({ email: m.email || '', accountId: m.accountId || '', gh: gh || m.login || '' })
     })
   }, [gh])
   const resolved = useMemo(() => {

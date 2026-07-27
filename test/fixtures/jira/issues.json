@@ -1,71 +1,71 @@
 [
   {
-    "key": "TRN-183",
+    "key": "ABC-183",
     "fields": {
       "summary": "title-1",
       "created": "2026-06-17T19:20:33.500+0400",
       "status": { "name": "In QA", "statusCategory": { "key": "indeterminate" } },
       "reporter": { "accountId": "acct-coworker-1", "displayName": "user-1" },
-      "assignee": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" }
+      "assignee": { "accountId": "acct-me-1", "displayName": "user-me" }
     },
     "changelog": {
       "histories": [
-        { "created": "2026-07-08T13:15:17.541+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "Story Points", "from": null, "fromString": null, "to": null, "toString": "36" } ] },
-        { "created": "2026-07-07T01:54:36.805+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10521", "toString": "In QA" } ] },
-        { "created": "2026-06-21T12:12:50.655+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "10005", "fromString": "Ready for QA", "to": "3", "toString": "In Progress" } ] },
-        { "created": "2026-06-21T12:12:46.946+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "10005", "toString": "Ready for QA" } ] },
-        { "created": "2026-06-18T15:22:36.219+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "assignee", "from": null, "fromString": null, "to": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "toString": "Ali Mohammad" } ] }
+        { "created": "2026-07-08T13:15:17.541+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "Story Points", "from": null, "fromString": null, "to": null, "toString": "36" } ] },
+        { "created": "2026-07-07T01:54:36.805+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10521", "toString": "In QA" } ] },
+        { "created": "2026-06-21T12:12:50.655+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "10005", "fromString": "Ready for QA", "to": "3", "toString": "In Progress" } ] },
+        { "created": "2026-06-21T12:12:46.946+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "10005", "toString": "Ready for QA" } ] },
+        { "created": "2026-06-18T15:22:36.219+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "assignee", "from": null, "fromString": null, "to": "acct-me-1", "toString": "user-me" } ] }
       ]
     }
   },
   {
-    "key": "AIR-10474",
+    "key": "DEF-10474",
     "fields": {
       "summary": "title-2",
       "created": "2026-02-26T15:30:26.854+0400",
       "status": { "name": "On Hold", "statusCategory": { "key": "indeterminate" } },
-      "reporter": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" },
-      "assignee": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" }
+      "reporter": { "accountId": "acct-me-1", "displayName": "user-me" },
+      "assignee": { "accountId": "acct-me-1", "displayName": "user-me" }
     },
     "changelog": {
       "histories": [
-        { "created": "2026-03-01T14:37:42.856+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10156", "toString": "On Hold" } ] },
-        { "created": "2026-02-26T15:30:45.574+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10000", "toString": "To Do" } ] },
-        { "created": "2026-02-26T15:30:42.851+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "1", "fromString": "PM Backlog", "to": "3", "toString": "In Progress" } ] },
-        { "created": "2026-02-26T15:30:34.879+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "assignee", "from": null, "fromString": null, "to": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "toString": "Ali Mohammad" } ] }
+        { "created": "2026-03-01T14:37:42.856+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10156", "toString": "On Hold" } ] },
+        { "created": "2026-02-26T15:30:45.574+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10000", "toString": "To Do" } ] },
+        { "created": "2026-02-26T15:30:42.851+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "1", "fromString": "PM Backlog", "to": "3", "toString": "In Progress" } ] },
+        { "created": "2026-02-26T15:30:34.879+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "assignee", "from": null, "fromString": null, "to": "acct-me-1", "toString": "user-me" } ] }
       ]
     }
   },
   {
-    "key": "TRN-229",
+    "key": "ABC-229",
     "fields": {
       "summary": "title-3",
       "created": "2026-06-23T08:20:27.801+0400",
       "status": { "name": "In QA", "statusCategory": { "key": "indeterminate" } },
-      "reporter": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" },
-      "assignee": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" }
+      "reporter": { "accountId": "acct-me-1", "displayName": "user-me" },
+      "assignee": { "accountId": "acct-me-1", "displayName": "user-me" }
     },
     "changelog": {
       "histories": [
-        { "created": "2026-07-09T02:08:39.545+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "Story Points", "from": null, "fromString": "2", "to": null, "toString": "5" } ] },
-        { "created": "2026-06-25T09:00:00.000+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "10521", "toString": "In QA" } ] }
+        { "created": "2026-07-09T02:08:39.545+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "Story Points", "from": null, "fromString": "2", "to": null, "toString": "5" } ] },
+        { "created": "2026-06-25T09:00:00.000+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "10521", "toString": "In QA" } ] }
       ]
     }
   },
   {
-    "key": "TRN-260",
+    "key": "ABC-260",
     "fields": {
       "summary": "title-4",
       "created": "2026-05-01T10:00:00.000+0400",
       "status": { "name": "In Progress", "statusCategory": { "key": "indeterminate" } },
       "reporter": { "accountId": "acct-coworker-2", "displayName": "user-2" },
-      "assignee": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4", "displayName": "Ali Mohammad" }
+      "assignee": { "accountId": "acct-me-1", "displayName": "user-me" }
     },
     "changelog": {
       "histories": [
-        { "created": "2026-06-01T12:00:00.000+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "10001", "fromString": "Done", "to": "3", "toString": "In Progress" } ] },
-        { "created": "2026-05-20T09:00:00.000+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10001", "toString": "Done" } ] },
-        { "created": "2026-05-02T09:00:00.000+0400", "author": { "accountId": "712020:44f60018-c4ed-45bf-ba4e-2633d697e6d4" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "3", "toString": "In Progress" } ] }
+        { "created": "2026-06-01T12:00:00.000+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "10001", "fromString": "Done", "to": "3", "toString": "In Progress" } ] },
+        { "created": "2026-05-20T09:00:00.000+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "3", "fromString": "In Progress", "to": "10001", "toString": "Done" } ] },
+        { "created": "2026-05-02T09:00:00.000+0400", "author": { "accountId": "acct-me-1" }, "items": [ { "field": "status", "from": "10000", "fromString": "To Do", "to": "3", "toString": "In Progress" } ] }
       ]
     }
   }

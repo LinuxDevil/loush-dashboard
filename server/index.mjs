@@ -6,6 +6,7 @@ import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import YAML from 'yaml'
 import { toggleOffFile } from '../lib/customize-toggle.mjs'
 import mountEng from './eng.mjs'
+import mountTicket from './ticket.mjs'
 import mountMemory, { retrieveContext } from './memory.mjs'
 import mountFe from './fe.mjs'
 import mountSetup from './setup.mjs'
@@ -19,6 +20,8 @@ import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPA
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from '../lib/scheduler.mjs'
 import { verdictFrom } from '../lib/run-verdict.mjs'
 import { computeUsageHealth, computeRegression } from '../lib/harness-health.mjs'
+import { localCloneOf } from '../lib/clone.mjs'
+import { runAgent } from '../lib/agent.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
@@ -48,6 +51,7 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 const app = express()
 app.use(express.json({ limit: '10mb' }))
 mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
+mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
@@ -56,13 +60,13 @@ mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...
 // are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
 
-// ---------- org-specific tool bundle: Almosafer tools ----------
-// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture ships
-// against a specific design-system catalog, so these are useless — and were previously misleading —
-// outside the org that has that layout. They are now behind a flag in projects.json rather than
-// deleted or unconditional. Gated HERE, at mount time: when the flag is off the routes do not exist
-// at all, so a stale client cannot reach them.
-function almosaferToolsEnabled() {
+// ---------- org-specific tool bundle: Company tools ----------
+// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture needs a
+// design-system catalog, so these are useless — and were previously misleading — outside an org that
+// has that layout. They are now behind a flag in projects.json rather than deleted or unconditional.
+// Gated HERE, at mount time: when the flag is off the routes do not exist at all, so a stale client
+// cannot reach them.
+function companyToolsEnabled() {
   // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
   // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
   // into a confident `false`, silently disabling the feature with the config plainly set to true.
@@ -72,25 +76,25 @@ function almosaferToolsEnabled() {
   try {
     const cfg = loadEngCfg(PROJECTS_FILE)
     const email = process.env.JIRA_EMAIL || readLocal(SECRETS_FILE).jiraEmail || null
-    return toolFlagAllows(cfg.almosaferTools, email)
+    return toolFlagAllows(cfg.companyTools, email)
   } catch (e) {
-    console.error('[claude-dashboard] could not evaluate almosaferTools flag — leaving it OFF:', e.message)
+    console.error('[claude-dashboard] could not evaluate companyTools flag — leaving it OFF:', e.message)
     return false
   }
 }
-const ALMOSAFER_TOOLS = almosaferToolsEnabled()
-if (ALMOSAFER_TOOLS) {
+const COMPANY_TOOLS = companyToolsEnabled()
+if (COMPANY_TOOLS) {
   mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
   mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
   mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
-  console.log('[claude-dashboard] Almosafer tools enabled (projects.json -> Almosafer_Tools)')
+  console.log('[claude-dashboard] Company tools enabled (projects.json -> Company_Tools)')
 }
 // Feature flags the client needs before it can decide which nav entries exist.
-app.get('/api/features', (req, res) => res.json({ almosaferTools: ALMOSAFER_TOOLS }))
+app.get('/api/features', (req, res) => res.json({ companyTools: COMPANY_TOOLS }))
 
 mountPromptCheck(app) // /api/promptcheck — cached `claude -p` rating of how the user prompts (claude|cursor)
 // (from main: mountMindwalk / mountGame are not mounted — Labs and the gamification layer are deleted;
-//  mountFigmaCapture is mounted above, inside the Almosafer_Tools gate.)
+//  mountFigmaCapture is mounted above, inside the Company_Tools gate.)
 
 // ---------- response cache for heavy aggregate GETs ----------
 // Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
@@ -3205,23 +3209,8 @@ function driftVs(bundle, project) {
   for (const k of new Set([...Object.keys(bundle.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, bundle.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
   return drifts
 }
-// map a team repo (owner/name) to a local clone: any registered project dir whose origin remote matches
-const remoteCache = new Map()
-function originOf(dir) {
-  const hit = remoteCache.get(dir)
-  if (hit && Date.now() - hit.t < 600_000) return hit.v
-  let v = ''
-  try { v = (spawnSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], { timeout: 3000 }).stdout || '').toString().trim() } catch {}
-  remoteCache.set(dir, { t: Date.now(), v })
-  return v
-}
-function localCloneOf(repo) {
-  const [owner, name] = repo.split('/')
-  let dirs = []
-  try { dirs = Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)) } catch {}
-  for (const d of dirs) { const o = originOf(d); if (o && o.replace(/\.git$/, '').endsWith(`${owner}/${name}`)) return d }
-  return dirs.find(d => path.basename(d) === name) || null
-}
+// map a team repo (owner/name) to a local clone — moved to lib/clone.mjs so server modules can use it
+// without importing this file (which mounts them, so the dependency would be a cycle).
 app.get('/api/gov/team', async (req, res) => {
   const meta = readMeta()
   const file = req.query.file || meta.teamHarness || null
@@ -4106,27 +4095,8 @@ const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { co
 
 // one-shot headless agent run — same claude -p pattern as evals/team-plan; BLOCKED: marker = feature 34
 const boardRuns = new Map() // ticketId -> {kind, startedAt}
-function runAgent({ cwd, prompt, model, timeoutMs = 1800_000, resume }) {
-  return new Promise(resolve => {
-    const args = ['-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions']
-    if (model) args.push('--model', model)
-    if (resume) args.push('--resume', resume)
-    const child = spawn('claude', args, { cwd, env: process.env, shell: WIN })
-    let out = '', err = ''
-    const timer = setTimeout(() => { try { child.kill() } catch {}; resolve({ error: 'timeout after ' + timeoutMs / 60000 + 'min' }) }, timeoutMs)
-    child.stdout.on('data', d => out += d)
-    child.stderr.on('data', d => err += d)
-    child.on('error', e => { clearTimeout(timer); resolve({ error: e.message }) })
-    child.on('exit', () => {
-      clearTimeout(timer)
-      try {
-        const j = JSON.parse(out)
-        const blocked = /^BLOCKED:\s*(.+)/m.exec(j.result || '')
-        resolve({ result: j.result || '', blocked: blocked?.[1] || null, cost: j.total_cost_usd || 0, turns: j.num_turns || 0, sessionId: j.session_id || null, ms: j.duration_ms || 0 })
-      } catch { resolve({ error: (err || out).slice(0, 1200) || 'no output from claude' }) }
-    })
-  })
-}
+// runAgent moved to lib/agent.mjs (with a streaming sibling, spawnAgent) — same reason as
+// localCloneOf above: server/ticket.mjs needs it and cannot import this file.
 // Unify board runs into the Loush Runs model: each ticket becomes a .loush/<id>/ run in its repo.
 function loushRunEmit(project, ticket, type, data) {
   if (!project || !fs.existsSync(project)) return
@@ -4198,7 +4168,11 @@ app.get('/api/board', (req, res) => {
   res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
 })
 app.post('/api/board/tickets', (req, res) => {
-  const { project, title, desc, parent, deps, team, model, type } = req.body
+  // `jiraKey` and `designDoc` make the Ticket-section handoff BIDIRECTIONAL. Without them the
+  // handoff is a one-way paste — everything ends up stuffed into `desc`, the board has no idea the
+  // ticket came from JIRA, and the Ticket tab can never show "this is now in code review". Two
+  // optional fields are what make it an integration rather than a copy.
+  const { project, title, desc, parent, deps, team, model, type, jiraKey, designDoc } = req.body
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'valid project required' })
   if (!title?.trim()) return res.status(400).json({ error: 'title required' })
   const board = readBoard()
@@ -4208,6 +4182,8 @@ app.post('/api/board/tickets', (req, res) => {
     id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     project, title: title.trim(), desc: String(desc || '').slice(0, 20000), type: type || 'feature',
     parent: parent || null, deps: deps || [], team: team || null, model: model || null,
+    jiraKey: typeof jiraKey === 'string' && jiraKey ? jiraKey.toUpperCase() : null,
+    designDoc: typeof designDoc === 'string' && designDoc ? designDoc : null,
     stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`, // 37: in-flight tickets keep the template version they started on
     blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
     history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created' }], createdAt: Date.now(), releasedAt: null,

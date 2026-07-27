@@ -294,6 +294,14 @@ select option { background: var(--bg-elevated); }
 .md blockquote { border-left: 3px solid var(--border-default); padding-left: 10px; color: var(--text-tertiary); }
 .md a { color: var(--text-link); text-decoration: none; }
 .md a:hover { color: var(--text-link-hover); text-decoration: underline; }
+/* GitHub-style task lists. `- [ ] item` is how acceptance criteria are actually written, and marked
+   renders it as `<li><input type="checkbox">…`. The global `input {width: 100%}` above then made
+   every checkbox a full-width box that pushed its own text onto the next line — a wall of grey
+   rectangles with orphaned sentences under them. Scope the width back and lay the item out as a
+   row so the box sits beside its text. */
+.md input[type='checkbox'] { width: auto; margin: 0 7px 0 0; vertical-align: middle; accent-color: var(--green-solid); flex-shrink: 0; }
+.md li:has(> input[type='checkbox']) { list-style: none; display: flex; align-items: baseline; margin-left: -18px; }
+.md ul:has(> li > input[type='checkbox']) { padding-left: 18px; }
 
 /* ---------- tables ---------- */
 .table-wrap { overflow: auto; padding: 8px; }

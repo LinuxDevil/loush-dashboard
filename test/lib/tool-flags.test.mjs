@@ -1,4 +1,4 @@
-// Tests for the org-specific tool-bundle flag (projects.json -> Almosafer_Tools).
+// Tests for the org-specific tool-bundle flag (projects.json -> Company_Tools).
 //
 // The Constitution reader and Figma Capture were deleted wholesale because they are useless outside
 // the org whose repo layout they assume. That was half right: for that org they are load-bearing.
@@ -7,13 +7,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeToolFlag, toolFlagAllows, parseEngConfig } from '../../lib/eng-config.mjs'
+import { normalizeToolFlag, toolFlagAllows, parseEngConfig, normalizeDesignSystem } from '../../lib/eng-config.mjs'
 
 test('an absent flag is OFF — org-specific tools must never be the default', () => {
   assert.deepEqual(normalizeToolFlag(undefined), { enabled: false, emails: [] })
   assert.deepEqual(normalizeToolFlag(null), { enabled: false, emails: [] })
-  assert.equal(parseEngConfig({}).almosaferTools.enabled, false)
-  assert.equal(parseEngConfig(null).almosaferTools.enabled, false)
+  assert.equal(parseEngConfig({}).companyTools.enabled, false)
+  assert.equal(parseEngConfig(null).companyTools.enabled, false)
 })
 
 test('the shorthand `true` enables it for anyone running the dashboard', () => {
@@ -59,17 +59,38 @@ test('garbage in the config does not throw and does not enable anything', () => 
 })
 
 test('parseEngConfig carries the flag through both accepted shapes', () => {
-  assert.equal(parseEngConfig({ Almosafer_Tools: true }).almosaferTools.enabled, true)
-  const withList = parseEngConfig({ Almosafer_Tools: { enabled: true, emails: ['A@b.com'] } }).almosaferTools
+  assert.equal(parseEngConfig({ Company_Tools: true }).companyTools.enabled, true)
+  const withList = parseEngConfig({ Company_Tools: { enabled: true, emails: ['A@b.com'] } }).companyTools
   assert.equal(withList.enabled, true)
   assert.deepEqual(withList.emails, ['a@b.com'])
 })
 
-test('Almosafer_Tools is the canonical key, with camelCase spellings tolerated', () => {
+test('Company_Tools is the canonical key, with camelCase spellings tolerated', () => {
   // A hand-edited config file that silently ignores a key is indistinguishable from a broken feature.
-  assert.equal(parseEngConfig({ Almosafer_Tools: true }).almosaferTools.enabled, true)
-  assert.equal(parseEngConfig({ almosaferTools: true }).almosaferTools.enabled, true)
-  assert.equal(parseEngConfig({ almosafer_tools: true }).almosaferTools.enabled, true)
+  assert.equal(parseEngConfig({ Company_Tools: true }).companyTools.enabled, true)
+  assert.equal(parseEngConfig({ companyTools: true }).companyTools.enabled, true)
+  assert.equal(parseEngConfig({ company_tools: true }).companyTools.enabled, true)
   // and the canonical key wins if somehow both are present
-  assert.equal(parseEngConfig({ Almosafer_Tools: false, almosaferTools: true }).almosaferTools.enabled, false)
+  assert.equal(parseEngConfig({ Company_Tools: false, companyTools: true }).companyTools.enabled, false)
+})
+
+test('the pre-rename Almosafer_Tools key still works, but Company_Tools wins', () => {
+  // Renaming the key must not silently disable the bundle for anyone who already had it on: an
+  // existing config would otherwise parse clean and just stop mounting the routes.
+  assert.equal(parseEngConfig({ Almosafer_Tools: true }).companyTools.enabled, true)
+  assert.equal(parseEngConfig({ almosaferTools: true }).companyTools.enabled, true)
+  assert.equal(parseEngConfig({ almosafer_tools: true }).companyTools.enabled, true)
+  // the new name is authoritative when both are on disk, so a stale key cannot override a fresh save
+  assert.equal(parseEngConfig({ Company_Tools: false, Almosafer_Tools: true }).companyTools.enabled, false)
+})
+
+test('designSystem accepts a package, a storybook URL, or a bare string', () => {
+  assert.equal(parseEngConfig({}).designSystem, null)
+  assert.deepEqual(normalizeDesignSystem('@org/ds'), { package: '@org/ds', storybook: null })
+  assert.deepEqual(normalizeDesignSystem({ package: '@org/ds' }), { package: '@org/ds', storybook: null })
+  assert.deepEqual(normalizeDesignSystem({ storybook: 'https://x.io/ds/' }), { package: null, storybook: 'https://x.io/ds/' })
+  // blank-but-present is "unset", not a source that will fail at extraction time
+  for (const junk of [null, undefined, '', '   ', {}, { package: '' }, 42, []]) {
+    assert.equal(normalizeDesignSystem(junk), null, `normalizeDesignSystem(${JSON.stringify(junk)})`)
+  }
 })

@@ -1,6 +1,12 @@
 {
-  "name": "claude-dashboard",
+  "name": "ai-dashboard",
   "private": true,
+  "description": "A local web UI for the real files and real history behind your Claude Code setup, joining transcripts and repos on your own disk.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LinuxDevil/AI-Dashboard.git"
+  },
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node --watch server/index.mjs\" \"vite --open\"",
@@ -23,6 +29,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^8.2.2",
+    "playwright": "^1.62.0",
     "vite": "^5.3.1"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@tajawal/ct-web-design-system",
+  "name": "@your-org/design-system",
   "version": "0.28.0-rc.0",
   "main": "dist/index.js"
 }
