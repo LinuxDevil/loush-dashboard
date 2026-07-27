@@ -30,8 +30,15 @@ test('isAdf distinguishes an ADF doc from rendered HTML', () => {
   assert.equal(isAdf(doc(para('x'))), true)
   assert.equal(isAdf('<p>x</p>'), false)
   assert.equal(isAdf(null), false)
-  assert.equal(isAdf({ type: 'doc' }), false)     // no content array
   assert.equal(isAdf([para('x')]), false)
+})
+
+test('a content-less ADF doc is still claimed by the walker, not leaked to htmlToText', () => {
+  // If isAdf required Array.isArray(content), this shape would fall through to htmlToText and
+  // stringify to "[object Object]" — the precise bug this module exists to prevent. Claiming it
+  // costs nothing (adfToText returns '') and closes the hole.
+  assert.equal(isAdf({ type: 'doc', version: 1 }), true)
+  assert.equal(adfToText({ type: 'doc', version: 1 }).text, '')
 })
 
 test('a string passes through untouched — rendered HTML is not this module job', () => {

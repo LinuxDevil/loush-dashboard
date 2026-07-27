@@ -69,6 +69,20 @@ test('the design prompt demands cited findings — the property that separates a
   assert.ok(/Never invent a file path/i.test(p), 'forbids invented paths')
 })
 
+// A runtime test here would pass vacuously: loadProjects() reads projects.json, which is absent in
+// CI, so Array.prototype.find never invokes the predicate and nothing can throw. The source
+// assertion is the honest guard.
+test('cfgFor coerces its argument — a repeated ?project= query must not crash the process', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/eng.mjs'), 'utf8')
+  const line = src.split('\n').find(l => /^const cfgFor =/.test(l))
+  assert.ok(line, 'cfgFor is defined')
+  // Express turns ?project[]=x and ?project=a&project=b into an object/array, neither of which has
+  // .toUpperCase. The route handlers resolve the project OUTSIDE their try block, so the TypeError
+  // becomes an unhandled rejection and Node 22 exits — one malformed URL kills the dashboard.
+  assert.ok(/String\(key \?\? ''\)/.test(line), 'cfgFor must String()-coerce before .toUpperCase()')
+  assert.ok(!/\(key \|\| ''\)\.toUpperCase/.test(src), 'the uncoerced form must not reappear')
+})
+
 test('the ticket state directory is gitignored — it holds per-ticket design state, not shipped config', () => {
   const gi = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8')
   assert.ok(/^\.ticket-state\/$/m.test(gi))

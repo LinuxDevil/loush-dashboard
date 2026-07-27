@@ -19,6 +19,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { ticketDetail, cfgForTicket, loadProjects, artifactsFor } from './eng.mjs'
 import { resolveClone } from '../lib/clone.mjs'
@@ -135,10 +136,22 @@ const runView = run => run && ({
 // ---------------------------------------------------------------------------------------------
 // prompts
 // ---------------------------------------------------------------------------------------------
-const promptFile = n => { try { return fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'prompts', n), 'utf8') } catch { return '' } }
+// fileURLToPath, NOT `new URL(...).pathname` — pathname is percent-encoded, so any install under a
+// directory with a space ("~/My Code/…") resolves to a path that does not exist, and on Windows it
+// carries a leading slash ("/C:/…"). The catch would then swallow it and designPrompt() would ship
+// a six-minute agent run with NO investigate-first instructions, no file:line requirement and no
+// "never invent a path" rule — silently degraded input, confident output, which is the exact shape
+// of the bug lib/adf.mjs exists to fix. So it is loaded once at module load and failure is loud.
+const PROMPT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'prompts')
+function promptFile(n) {
+  try { return fs.readFileSync(path.join(PROMPT_DIR, n), 'utf8') }
+  catch (e) { console.error(`[ticket] cannot read prompt ${n} from ${PROMPT_DIR}: ${e.message}`); return null }
+}
 
-function designPrompt(d, repo, docRel) {
-  return `${promptFile('design-plan.md')}
+function designPrompt(d, repo, repoDir, docRel) {
+  const preamble = promptFile('design-plan.md')
+  if (!preamble) throw new Error('the design prompt (server/prompts/design-plan.md) could not be read — refusing to run a degraded design')
+  return `${preamble}
 
 # The ticket
 
@@ -153,7 +166,7 @@ ${d.comments.map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}
 
 # Your task
 
-You are in the repository \`${repo}\` at \`${process.cwd ? '' : ''}\` — READ IT. Investigate before you
+You are in the repository \`${repo}\`, checked out at \`${repoDir}\` — READ IT. Investigate before you
 write anything. Then write the design document to \`${docRel}\` using the Write tool.
 
 Finish your reply with the component graph in a single fenced \`\`\`yaml block, in exactly this shape:
@@ -271,12 +284,22 @@ export default function mountTicket(app) {
 
     const ymd = new Date().toISOString().slice(0, 10)
     const docRel = `docs/superpowers/specs/${ymd}-${r.key.toLowerCase()}-design.md`
+    // Re-check AFTER the await: the in-flight test above happens before `ticketDetail`, which on a
+    // cold cache is a real JIRA round trip. Two clicks in that window both passed the check and
+    // both spawned an agent into the same working tree, and the second runs.set orphaned the first
+    // — still running, uncancellable, still writing the same file.
+    if ([...runs.values()].some(x => x.key === r.key && !x.done)) return res.status(409).json({ error: 'a run is already in flight for this ticket' })
+
     const run = { key: r.key, kind: 'design', startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, docPath: null }
     runs.set(r.key, run)
 
+    let prompt
+    try { prompt = designPrompt(d, repo.repo, repo.dir, docRel) }
+    catch (e) { runs.delete(r.key); return res.status(500).json({ error: e.message }) }
+
     run.child = spawnAgent({
       cwd: repo.dir,
-      prompt: designPrompt(d, repo.repo, docRel),
+      prompt,
       model: req.body?.model,
       onEvent: ev => emit(run, ev),
       onExit: ({ error }) => {
@@ -453,7 +476,11 @@ export default function mountTicket(app) {
 
     res.json({
       available: true, repo: { dir: repo.dir, how: repo.how },
-      verified: verified.slice(0, 80), plannedEdit, plannedNew, warnings,
+      // `verifiedTotal` before the slice: rendering `verified.length` after capping presents 80 as
+      // a fact when the real number is 214. Silent truncation shown as a total is the same class of
+      // error this whole tab is built to avoid.
+      verified: verified.slice(0, 80), verifiedTotal: verified.length,
+      plannedEdit, plannedNew, warnings,
       stats: { walked: idx.fileSet.size, truncated: idx.truncated },
       // Stated in the payload, not just the UI: there is no source to parse between two files that
       // do not exist, so no edge between them is drawn anywhere.

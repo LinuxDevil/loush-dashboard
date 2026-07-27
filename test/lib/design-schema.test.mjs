@@ -198,12 +198,29 @@ test('layout never moves a node that already has a position', () => {
   assert.ok(g.nodes[1].position)
 })
 
-test('layout terminates on a cyclic graph', () => {
+test('layout terminates on a cyclic graph AND produces finite coordinates', () => {
   const g = layout(G([N('a', 'A'), N('b', 'B')], [
     { id: 'e1', source: 'a', target: 'b', data: {} },
     { id: 'e2', source: 'b', target: 'a', data: {} },
   ]))
-  assert.ok(g.nodes.every(n => n.position), 'every node placed despite the cycle')
+  // `assert.ok(n.position)` alone passed while y was NaN — {x:504, y:NaN} is truthy. NaN serializes
+  // to null, and the "already placed" guard then refuses to repair it, so this must assert finite.
+  for (const n of g.nodes) {
+    assert.ok(Number.isFinite(n.position.x), `${n.id} x is finite`)
+    assert.ok(Number.isFinite(n.position.y), `${n.id} y is finite`)
+  }
+})
+
+test('layout is finite when EVERY node has a predecessor — the sparse-layer case', () => {
+  // a 3-cycle: no node has depth 0, so the depth-indexed array has a hole at index 0.
+  const g = layout(G([N('a', 'A'), N('b', 'B'), N('c', 'C')], [
+    { id: 'e1', source: 'a', target: 'b', data: {} },
+    { id: 'e2', source: 'b', target: 'c', data: {} },
+    { id: 'e3', source: 'c', target: 'a', data: {} },
+  ]))
+  for (const n of g.nodes) assert.ok(Number.isFinite(n.position.y), `${n.id} y is finite`)
+  // and the columns start at the left edge rather than leaving an empty first column
+  assert.equal(Math.min(...g.nodes.map(n => n.position.x)), 24)
 })
 
 test('layout of an empty graph is a no-op, not a crash', () => {

@@ -1148,7 +1148,11 @@ async function snapshotAll() {
 async function snapFor(key) {
   if (key === 'all') return snapshotAll()
   const projs = loadProjects()
-  return snapshot(projs.find(p => p.key === (key || '').toUpperCase()) || projs[0])
+  // String()-coerced for the same reason as cfgFor: `?project[]=x` arrives as an array, which has
+  // no .toUpperCase. Here it is caught by the routes' try blocks and surfaces as a 500 with a
+  // TypeError message rather than killing the process — still wrong, same one-line fix.
+  const k = String(key ?? '').toUpperCase()
+  return snapshot(projs.find(p => p.key === k) || projs[0])
 }
 
 // ---------- OKRs (§4) — every measure is AUTO, computed by the UI from live aggregates ----------
@@ -1197,9 +1201,15 @@ const hashOf = s => crypto.createHash('sha256').update(s).digest('hex')
 // it silently resolves e.g. `XYZ-12` against the first configured project: wrong JIRA host, wrong
 // repo, no error. So an explicit project id still wins, then the key's own prefix, and an unknown
 // project is `null` — callers report "unknown project" rather than guessing (README.md §Honesty).
-const cfgFor = key => { const projs = loadProjects(); return projs.find(p => p.key === (key || '').toUpperCase()) || null }
+// String() rather than `key || ''`: Express's query parser turns `?project[]=x` or a repeated
+// `?project=a&project=b` into an ARRAY, and `?project[x]=y` into an OBJECT, neither of which has
+// .toUpperCase. With at least one project configured the predicate runs and throws a TypeError —
+// and because the route handlers resolve the project before entering their try block, that becomes
+// an unhandled rejection, which Node 22 turns into a process exit. One malformed URL would take
+// the whole dashboard down.
+const cfgFor = key => { const k = String(key ?? '').toUpperCase(); return loadProjects().find(p => p.key === k) || null }
 /** Resolve the project that owns a ticket key: explicit id first, else the key's prefix. */
-const cfgForTicket = (key, project) => cfgFor(project) || cfgFor(String(key || '').split('-')[0])
+const cfgForTicket = (key, project) => cfgFor(Array.isArray(project) ? project[0] : project) || cfgFor(String(key ?? '').split('-')[0])
 /** Legacy call sites that genuinely mean "the only/first project" say so out loud. */
 const firstProject = () => loadProjects()[0] || null
 
@@ -1412,7 +1422,7 @@ export default function mountEng(app) {
     const key = req.query.project
     try {
       if (key === 'all' || !key) { snaps.clear(); ciCache.clear() }
-      else { snaps.delete((key || '').toUpperCase()); ciCache.delete((key || '').toUpperCase()) }
+      else { const k = String(key ?? '').toUpperCase(); snaps.delete(k); ciCache.delete(k) }
       res.json(await snapFor(key))
     } catch (e) { res.status(500).json({ error: e.message }) }
   })

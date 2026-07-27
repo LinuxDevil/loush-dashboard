@@ -37,7 +37,12 @@ const anchor = (n, dx) => ({ x: (n.position?.x ?? 0) + (dx > 0 ? W : 0), y: (n.p
 function Shape({ type, selected }) {
   const t = TYPES[type] || TYPES.process
   const stroke = selected ? 'var(--text-primary)' : 'var(--border-default)'
-  const common = { fill: 'var(--bg-surface)', stroke, strokeWidth: 1 }
+  // --bg-elevated, not --bg-surface: in the LIGHT theme --bg-surface and --bg-inset are both
+  // #f6f8fa, so a node filled with --bg-surface on an --bg-inset canvas is 1.00:1 — the cylinder
+  // and diamond silhouettes collapse to line art, losing the shape channel that carries type for a
+  // colourblind reader. --bg-elevated is #ffffff light / #1c2128 dark, so a card reads as raised
+  // in both themes.
+  const common = { fill: 'var(--bg-elevated)', stroke, strokeWidth: 1.5 }
   if (type === 'store') {
     return (
       <svg width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden="true">
@@ -56,7 +61,7 @@ function Shape({ type, selected }) {
   return (
     <svg width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden="true">
       <rect x="0.5" y="0.5" width={W - 1} height={H - 1} rx="6"
-        fill="var(--bg-surface)" stroke={stroke} strokeWidth="1" strokeDasharray={type === 'external' ? '4 3' : undefined} />
+        fill="var(--bg-elevated)" stroke={stroke} strokeWidth="1.5" strokeDasharray={type === 'external' ? '4 3' : undefined} />
       {type === 'service' && <rect x="0.5" y="0.5" width="3" height={H - 1} fill={t.accent} />}
       {type === 'ui' && <rect x="0.5" y="0.5" width={W - 1} height="3" fill={t.accent} />}
       {type === 'queue' && [10, 18, 26].map(y => <rect key={y} x="4" y={y} width="2" height="12" fill={t.accent} />)}
@@ -165,7 +170,11 @@ export default function DesignCanvas({ graph, selected, onSelect, onMove, onDele
                 <path d={`M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`}
                   fill="none" markerEnd="url(#dc-arrow)" strokeWidth={lit ? 2 : 1.3}
                   strokeDasharray={e.data?.kind === 'publishes' ? '5 3' : undefined}
-                  style={{ stroke: lit ? 'var(--text-primary)' : inferred ? 'var(--text-tertiary)' : 'var(--bg-surface-active)' }} />
+                  // --bg-surface-active on --bg-inset is 1.10:1 in light and 1.27:1 in dark: the
+                  // lines vanish and you are left with a field of floating arrowheads, in the one
+                  // view whose entire deliverable IS the connections. --text-secondary matches the
+                  // arrowhead marker already in use; inferred edges stay weaker on purpose.
+                  style={{ stroke: lit ? 'var(--text-primary)' : inferred ? 'var(--text-tertiary)' : 'var(--text-secondary)' }} />
               </g>
             )
           })}

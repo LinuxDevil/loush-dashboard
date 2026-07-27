@@ -10,7 +10,11 @@ async function req(url, opts) {
     const cachedAt = Number(r.headers.get('x-cached-at'))
     if (cachedAt) window.dispatchEvent(new CustomEvent('api-cache', { detail: { url, at: cachedAt } }))
     const j = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(j.error || r.statusText)
+    // `reason` as well as `error`: endpoints that report "this is not configured, and here is why"
+    // use `{available:false, reason}` rather than `{error}`, and reading only `error` turned four
+    // hand-written, actionable messages into the word "Bad Request". `detail` rides along on the
+    // Error so callers can render the second line (e.g. "known prefixes: ABC, DEF").
+    if (!r.ok) throw Object.assign(new Error(j.error || j.reason || r.statusText), { detail: j.detail, body: j })
     return j
   } catch (e) {
     // Most GET callers swallow errors (.catch(()=>{})) and get stuck on a skeleton. Surface one

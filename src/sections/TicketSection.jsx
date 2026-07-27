@@ -32,6 +32,25 @@ function normalizeKey(input) {
   return m ? `${m[1].toUpperCase()}-${m[2]}` : null
 }
 
+// Announce "copied" only when something was actually copied. `navigator.clipboard?.writeText(x)`
+// followed by an unconditional success toast reports success on a non-secure origin (where the API
+// is absent) and on a permission denial (where the promise rejects), which is a green tick over an
+// action that did not happen.
+function copyText(text) {
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      toast(ok ? 'copied' : 'could not copy — select the text and copy manually', ok ? 'success' : 'error')
+    } catch { toast('could not copy — select the text and copy manually', 'error') }
+  }
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => toast('copied', 'success'), fallback)
+  else fallback()
+}
+
 const Empty = ({ text }) => <div style={{ padding: 18, textAlign: 'center', font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>{text}</div>
 const Sec = ({ title, right, children }) => (
   <div style={{ ...PANEL, padding: '13px 15px', marginBottom: 12 }}>
@@ -70,7 +89,7 @@ export default function TicketSection({ onNav }) {
     setBusy(true); setErr(null); setT(null); setKey(norm); setTab('Ticket')
     api.get(`/api/ticket/${norm}`)
       .then(d => { setT(d); try { const r = JSON.parse(localStorage.getItem('ticket.recent') || '[]'); localStorage.setItem('ticket.recent', JSON.stringify([norm, ...r.filter(x => x !== norm)].slice(0, 8))) } catch {} })
-      .catch(e => setErr({ reason: e.message }))
+      .catch(e => setErr({ reason: e.message, detail: e.detail }))
       .finally(() => setBusy(false))
   }, [])
 
@@ -152,8 +171,12 @@ const TicketRail = ({ t, onClose }) => (
       <span style={{ font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{t.status || '—'}</span>
       <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{t.type || '—'}</span>
       {t.project?.githubRepo && (
-        <span style={{ font: `400 11px ${MONO}`, color: t.repo?.dir ? 'var(--green)' : 'var(--text-secondary)' }}>
-          {t.project.githubRepo} {t.repo?.dir ? '✓' : '— not resolved'}
+        // A basename match is a GUESS — a directory that merely shares a name. Showing it with the
+        // same green tick as a matched git origin is a green tick over an absent source, and the
+        // cost is an agent running with --dangerously-skip-permissions in the wrong checkout.
+        <span title={t.repo?.dir || t.repo?.reason || ''}
+          style={{ font: `400 11px ${MONO}`, color: t.repo?.how === 'remote' ? 'var(--green)' : t.repo?.dir ? 'var(--amber)' : 'var(--text-secondary)' }}>
+          {t.project.githubRepo} {t.repo?.how === 'remote' ? '✓' : t.repo?.dir ? '≈ matched by folder name, not by git remote' : '— not resolved'}
         </span>
       )}
       <button style={{ ...mini, marginLeft: 'auto' }} onClick={onClose}>✕</button>
@@ -197,7 +220,10 @@ function TicketTab({ t }) {
           : t.prs?.length
             ? t.prs.map(p => (
                 <div key={p.num} style={{ padding: '6px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                  <div style={{ font: `500 12px ${MONO}`, color: 'var(--text-link)' }}>#{p.num} <span style={{ color: 'var(--text-secondary)' }}>{p.state} · {p.changedFiles || 0} files</span></div>
+                  {/* `?? '—'`, not `|| 0`: "not measured" and "zero files" are different facts and
+                      the `(n || 0)` idiom is named in README.md's honesty rules as the thing that
+                      erased that distinction everywhere it appeared. */}
+                  <div style={{ font: `500 12px ${MONO}`, color: 'var(--text-link)' }}>#{p.num} <span style={{ color: 'var(--text-secondary)' }}>{p.state} · {p.changedFiles ?? '—'} files</span></div>
                   <div style={{ font: `400 11px ${BODY}`, color: 'var(--text-secondary)' }}>{p.title}</div>
                 </div>
               ))
@@ -258,7 +284,7 @@ function CriteriaTab({ t, onUpdate }) {
           <Sec key={kind} title={META[kind].title} right={
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {a && !editing && <button style={mini} onClick={() => setEdit({ kind, md: a.md })}>edit</button>}
-              {a && <button style={mini} onClick={() => { navigator.clipboard?.writeText(a.md); toast('copied', 'success') }}>copy</button>}
+              {a && <button style={mini} onClick={() => copyText(a.md)}>copy</button>}
               {a && <button style={mini} onClick={() => download(kind, a.md)}>.md</button>}
               {a && (t.project?.writes
                 ? <button style={mini} onClick={() => post(kind, a.md)}>post to JIRA</button>
@@ -306,6 +332,7 @@ function DesignTab({ t, onNav }) {
   const [sel, setSel] = useState(null)
   const [view, setView] = useState(null)     // null = auto by node count
   const [doc, setDoc] = useState(null)
+  const [starting, setStarting] = useState(false)
   const [now, setNow] = useState(Date.now())
   const load = useCallback(() => api.get(`/api/ticket/${t.key}/design?project=${t.project.key}`).then(x => { setD(x); setRun(x.run) }).catch(() => {}), [t.key, t.project.key])
   useEffect(() => { load() }, [load])
@@ -325,19 +352,31 @@ function DesignTab({ t, onNav }) {
         if (ev.type === 'closed') { es.close(); load() }
       } catch {}
     }
-    es.onerror = () => es.close()
+    // A dropped stream (proxy timeout, laptop sleep, server restart) must not strand the panel on
+    // "running" forever with a frozen log and a counter still ticking up. Close, then re-read the
+    // run's real state — which is server-side, so it is authoritative.
+    es.onerror = () => { es.close(); setTimeout(load, 2000) }
     const tick = setInterval(() => setNow(Date.now()), 1000)
     return () => { es.close(); clearInterval(tick) }
   }, [run?.done, run?.startedAt, t.key, load])
 
   // Stable across renders on purpose: DesignCanvas re-binds its d3 drag handlers whenever this
   // identity changes, and an inline arrow here would re-bind them on every parent render.
-  const move = useCallback(
-    pos => api.patch(`/api/ticket/${t.key}/design/layout?project=${t.project.key}`, { positions: pos }).catch(() => {}),
-    [t.key, t.project.key],
-  )
-  const start = () => api.post(`/api/ticket/${t.key}/design/run?project=${t.project.key}`, {})
-    .then(r => { setRun(r.run); setTail([]) }).catch(e => toast(e.message, 'error'))
+  // Apply the new position locally FIRST. DesignCanvas clears its drag state on release and falls
+  // back to `node.position`, which lives here — so without this the card snaps back to where it
+  // started even though the server saved it correctly, and the canvas reads as broken.
+  const move = useCallback(pos => {
+    setD(prev => (prev?.graph ? { ...prev, graph: { ...prev.graph, nodes: prev.graph.nodes.map(n => (pos[n.id] ? { ...n, position: pos[n.id] } : n)) } } : prev))
+    api.patch(`/api/ticket/${t.key}/design/layout?project=${t.project.key}`, { positions: pos })
+      .catch(() => toast('could not save the new layout', 'error'))
+  }, [t.key, t.project.key])
+  const start = () => {
+    setStarting(true)
+    api.post(`/api/ticket/${t.key}/design/run?project=${t.project.key}`, {})
+      .then(r => { setRun(r.run); setTail([]) })
+      .catch(e => toast(e.message, 'error'))
+      .finally(() => setStarting(false))
+  }
   const cancel = () => api.post(`/api/ticket/${t.key}/design/cancel`, {}).then(load).catch(() => {})
 
   if (!t.repo?.dir) return (
@@ -373,7 +412,9 @@ function DesignTab({ t, onNav }) {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {d?.doc?.exists && <button style={mini} onClick={() => api.get(`/api/ticket/${t.key}/design/doc?project=${t.project.key}`).then(r => setDoc(doc ? null : r)).catch(e => toast(e.message, 'error'))}>{doc ? 'hide document' : 'view document'}</button>}
             {nodes.length > 0 && <button style={mini} onClick={() => fetch(`/api/ticket/${t.key}/design/mermaid?project=${t.project.key}`).then(r => r.text()).then(x => { navigator.clipboard?.writeText(x); toast('mermaid copied', 'success') })}>copy mermaid</button>}
-            <button style={mini} onClick={start}>{d?.doc ? 'regenerate' : 'run design'}</button>
+            {/* disabled while starting: `running` only flips after the round trip, so an
+                undebounced double-click spawned two agents into the same working tree */}
+            <button style={mini} disabled={starting} onClick={start}>{starting ? 'starting…' : d?.doc ? 'regenerate' : 'run design'}</button>
           </div>
         }>
           {run?.cancelled && <Banner>Cancelled after {elapsed(run.ms)} · {run.tools} tool calls · {money(run.cost)}. This is a cancellation, not a failure.</Banner>}
@@ -381,7 +422,11 @@ function DesignTab({ t, onNav }) {
           {d?.doc?.gitignored && <Banner>The document was written to a gitignored path. Run <code>git add -f {d.doc.rel}</code> in {t.project.githubRepo} to track it — this app will not run git on your repo.</Banner>}
           {d?.diverged && <Banner>The design document changed after this diagram was built. Regenerate to re-derive it; your node positions are preserved.</Banner>}
 
-          {!d?.doc && !nodes.length && <Empty text="No design yet — run one to have an agent read the repository and write a spec." />}
+          {/* `d &&` guards the pre-load flash: `d` starts null and load() is async, so without it
+              the user is told there is no design BEFORE the request returns — a negative asserted
+              over a source that has not been read. */}
+          {!d && <Empty text="Loading…" />}
+          {d && !d.doc && !nodes.length && <Empty text="No design yet — run one to have an agent read the repository and write a spec." />}
           {d?.doc && !d.doc.exists && <Banner>The design document is gone from disk ({d.doc.rel}). The diagram below is preserved.</Banner>}
           {d?.doc?.exists && (
             <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>
@@ -528,7 +573,8 @@ function FilesTab({ t }) {
       <Sec title={`Planned edits · ${f.plannedEdit.length}`} right={<span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>exists · this design changes it · importer counts are real</span>}>
         {f.plannedEdit.length ? f.plannedEdit.map(x => <Row key={x.rel} x={x} glyph="✎" colour="var(--amber)" />) : <Empty text="The design does not name any existing file." />}
       </Sec>
-      <Sec title={`Verified neighbours · ${f.verified.length}`} right={<span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>parsed from real imports</span>}>
+      <Sec title={`Verified neighbours · ${f.verifiedTotal > f.verified.length ? `${f.verified.length} of ${f.verifiedTotal}` : f.verified.length}`}
+        right={<span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>parsed from real imports</span>}>
         {f.verified.length ? f.verified.map(x => <Row key={x.rel} x={x} glyph="▤" colour="var(--blue)" />) : <Empty text="No imports resolved from the planned files." />}
       </Sec>
       {/* five redundant signals that these do not exist: dashed container, transparent background,
