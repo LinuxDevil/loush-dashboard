@@ -31,12 +31,10 @@ and they say so plainly rather than rendering empty charts.
 ![Loush — every section, real data](docs/screenshots/tour.webp)
 
 Twenty seconds sampled from the [full three-minute tour](docs/screenshots/showcase.mp4), which walks
-all 15 sections and all 46 panels in order. The numbers are real — real transcripts, real token
+all 15 sections and all 45 panels in order. The numbers are real — real transcripts, real token
 volumes, real failure signatures — but this was filmed on an install with **no JIRA credentials and
 no `gh`**, which is why Delivery, Ticket and the delivery half of Overview show their "not
-configured" cards instead of charts. Engineering has fourteen routes of its own; with no snapshot to
-draw they all render the same empty card, so the tour films one and says so rather than padding
-itself with thirteen more.
+configured" cards instead of charts.
 
 Re-record after a UI change with `node scripts/showcase.mjs`, and re-shoot the stills with
 `node scripts/shots.mjs` — both need a dev server already running, and both take a `URL=` if you
@@ -289,21 +287,17 @@ rendering a green zero. That is the rule the whole app is held to.
 **The problem.** Cycle time, review latency and escaped defects live in three systems, and nobody
 computes them the same way twice.
 
-**What it does.** Tabs, in order: **Engineering**, **Idea → prod funnel** (median working-days per
+**What it does.** Tabs, in order: **Idea → prod funnel** (median working-days per
 stage, headlined by _lead time − cycle time = "time it sat waiting on us"_), **AI ROI** (cohort only,
 paired with a rework-rate guardrail), **DORA** (deployment frequency + lead time against Google
 Cloud's elite/high/medium/low bands — change-failure-rate and MTTR render as honest "no data source"
 cards rather than a fabricated proxy), and **1:1 prep**.
 
-**Engineering** is a dashboard in its own right, with fourteen views of its own: Attention Queue,
-Team Overview, Review flow (PR pickup-time and PR-size distributions), Quality, Investment,
-Predictability, Epics, CI, Projects, Load, Board, Members, OKRs, Export. Each one is a real route —
-`?dash=eng&route=members` is bookmarkable and pasteable into Slack, and it is the only part of the
-app whose state lives in the URL rather than in React.
-
-CI failures now have a **re-run failed** button. (`POST /api/ci/rerun` shells `gh run rerun`, was
-documented, and had zero callers anywhere in the UI — the panel that showed you the red run could not
-re-run it.)
+The **Engineering Metrics** sub-dashboard that used to lead this section is removed — its fourteen
+per-metric views (Attention Queue, Team Overview, Review flow, Quality, Investment, Predictability,
+Epics, CI, Projects, Load, Board, Members, OKRs, Export) and the `?dash=eng&route=…` URL routing are
+deleted along with `src/eng/`. The `/api/eng/*` server routes stay: they still back the tabs above,
+the Overview delivery tiles and the Ticket section.
 
 **Requires configuration:** JIRA credentials + an authenticated `gh`. Without them the section reports
 `available: false` and explains why.
@@ -653,7 +647,7 @@ src/sections/             the routable sections
   SetupSection.jsx          projects, credentials, work week, story points, org tools, notifications
   Overview.jsx              delivery tiles + CI strip + harness KPIs
   InboxSection.jsx          plane chips · nudge (copies, never sends) · snooze 24h
-  DeliverySection.jsx       mounts EngDashboard + funnel + AI ROI + 1:1 prep
+  DeliverySection.jsx       funnel + AI ROI + DORA + 1:1 prep
   TicketSection.jsx         key-first ticket: AC/tests, design run, canvas, files
   CapabilityLedger.jsx      the ROI ledger (+ the demoted Inventory linter)
   SessionsSection.jsx       session ledger, real $, keyboard layer, in-app resume
@@ -669,7 +663,6 @@ src/ui/                   reusable presentation, imported across sections
   viewers.jsx               per-type artifact renderers
   charts.jsx, Hub.jsx, Drawer.jsx, Pager.jsx, Skeleton.jsx, planWidgets.jsx
 src/lib/                  api.js, hooks.js, plan.js, runMetrics.js
-src/eng/                  the Delivery dashboard's own panels
 
 test/lib/, test/server/, test/src/, test/scripts/   mirror the above
 test/fixtures/            redacted JIRA / GitHub / usage samples
