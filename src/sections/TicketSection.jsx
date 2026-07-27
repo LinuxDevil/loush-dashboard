@@ -86,17 +86,20 @@ export default function TicketSection({ onNav }) {
   useEffect(() => { api.get('/api/ticket/index').then(setIdx).catch(() => setIdx({ available: false, projects: [] })) }, [])
   useEffect(() => { if (!key && inputRef.current) inputRef.current.focus() }, [key])
 
-  const open = useCallback(k => {
+  const open = useCallback((k, fresh) => {
     const norm = normalizeKey(k)
     if (!norm) { setErr({ reason: `"${k}" is not a JIRA key — expected something like ABC-1234` }); return }
-    setBusy(true); setErr(null); setT(null); setKey(norm); setTab('Ticket')
-    api.get(`/api/ticket/${norm}`)
-      .then(d => { setT(d); try { const r = JSON.parse(localStorage.getItem('ticket.recent') || '[]'); localStorage.setItem('ticket.recent', JSON.stringify([norm, ...r.filter(x => x !== norm)].slice(0, 8))) } catch {} })
+    setBusy(true); setErr(null); setKey(norm); setTab(tab => tab)
+    if (!fresh) setT(null)
+    api.get(`/api/ticket/${norm}${fresh ? '?fresh=1' : ''}`)
+      .then(d => { setT(d); api.get('/api/ticket/index').then(setIdx).catch(() => {}) })
       .catch(e => setErr({ reason: e.message, detail: e.detail }))
       .finally(() => setBusy(false))
   }, [])
 
-  const recent = useMemo(() => { try { return JSON.parse(localStorage.getItem('ticket.recent') || '[]') } catch { return [] } }, [key])
+  // Recents come from the SERVER's state files, not localStorage: they survive a different browser,
+  // a cleared profile and a machine move, and they can carry the summary so the list is readable.
+  const recent = idx?.recent || []
   const ghost = normalizeKey(raw)
 
   if (idx && !idx.available) return <NotReady onNav={onNav} reason="No projects are configured. This tab needs at least one project with a JIRA host and a project key." />
@@ -126,9 +129,17 @@ export default function TicketSection({ onNav }) {
           {err.reason}{err.detail ? <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{err.detail}</div> : null}
         </div>}
         {recent.length > 0 && !key && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
-            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recent</span>
-            {recent.map(k => <button key={k} style={{ ...mini, font: `500 11px ${MONO}` }} onClick={() => { setRaw(k); open(k) }}>{k}</button>)}
+          <div style={{ marginTop: 12 }}>
+            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recent · opens from cache, no JIRA call</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 5 }}>
+              {recent.map(x => (
+                <button key={x.key} style={{ ...mini, display: 'flex', gap: 8, alignItems: 'baseline', textAlign: 'left', width: '100%' }} onClick={() => { setRaw(x.key); open(x.key) }}>
+                  <b style={{ font: `600 11px ${MONO}`, color: 'var(--text-link)' }}>{x.key}</b>
+                  <span style={{ font: `400 11px ${BODY}`, color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.summary || ''}</span>
+                  {x.nodes > 0 && <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>◈ {x.nodes}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {idx && !key && (
@@ -150,7 +161,7 @@ export default function TicketSection({ onNav }) {
 
       {t?.available && (
         <>
-          <TicketRail t={t} onClose={() => { setKey(null); setT(null); setRaw('') }} />
+          <TicketRail t={t} busy={busy} onRefresh={() => open(t.key, true)} onClose={() => { setKey(null); setT(null); setRaw('') }} />
           <Tabs tabs={['Ticket', 'Criteria', 'Design', 'Files']} tab={tab} setTab={setTab} />
           <div style={{ marginTop: 12 }}>
             {tab === 'Ticket' && <TicketTab t={t} />}
@@ -165,7 +176,16 @@ export default function TicketSection({ onNav }) {
 }
 
 // ---- rail -------------------------------------------------------------------------------------
-const TicketRail = ({ t, onClose }) => (
+// How old is a cached ticket, in words. Cached content is always labelled — the point of the cache
+// is to avoid paying twice, not to pass yesterday's ticket off as live.
+const age = iso => {
+  if (!iso) return null
+  const m = Math.floor((Date.now() - Date.parse(iso)) / 60000)
+  if (!Number.isFinite(m)) return null
+  return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.floor(m / 60)}h ago` : `${Math.floor(m / 1440)}d ago`
+}
+
+const TicketRail = ({ t, busy, onRefresh, onClose }) => (
   <div style={{ ...PANEL, padding: '10px 14px', marginBottom: 10 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       {t.url ? <a href={t.url} target="_blank" rel="noreferrer" style={{ font: `600 12px ${MONO}`, color: 'var(--text-link)', textDecoration: 'none' }}>{t.key} ↗</a>
@@ -259,9 +279,17 @@ function CriteriaTab({ t, onUpdate }) {
   const arts = t.artifacts || {}
 
   const setArt = (kind, a) => onUpdate({ ...t, artifacts: { ...(t.artifacts || {}), [kind]: a } })
+  // With a resolved checkout, generate through the repo-aware route so the model can grep the
+  // component and read the existing tests. Without one, fall back to the prose-only generator and
+  // SAY so — an artifact written from ticket text alone is a different thing and should not look
+  // like the grounded one.
+  const grounded = !!t.repo?.dir
   const gen = kind => {
     setBusy(kind); setErr(null)
-    api.post(`/api/eng/ticket/${t.key}/generate?project=${t.project.key}`, { kind })
+    const url = grounded
+      ? `/api/ticket/${t.key}/generate?project=${t.project.key}`
+      : `/api/eng/ticket/${t.key}/generate?project=${t.project.key}`
+    api.post(url, { kind })
       .then(a => setArt(kind, a)).catch(e => setErr(e.message)).finally(() => setBusy(''))
   }
   const save = (kind, md) => api.put(`/api/eng/ticket/${t.key}/artifact?project=${t.project.key}`, { kind, md })
@@ -295,7 +323,19 @@ function CriteriaTab({ t, onUpdate }) {
               <button style={mini} disabled={busy === kind} onClick={() => gen(kind)}>{busy === kind ? 'generating…' : a ? 'regenerate' : 'generate'}</button>
             </div>
           }>
-            {busy === kind && <div style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>Asking claude — this blocks until it returns.</div>}
+            {busy === kind && (
+              <div style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>
+                {grounded
+                  ? `Reading ${t.project.githubRepo} and writing ${META[kind].noun} — this takes a few minutes because it greps the code first.`
+                  : 'Generating from the ticket text alone — no local checkout resolved, so nothing can be checked against the code.'}
+              </div>
+            )}
+            {!grounded && !busy && (
+              <Banner>
+                No local checkout resolved for {t.project?.githubRepo || 'this project'}, so anything generated here is written from the
+                ticket text alone and cannot cite a real file. Open the repository once in Claude Code so it is registered.
+              </Banner>
+            )}
             {!a && busy !== kind && !editing && <Empty text={`No ${META[kind].noun} yet — generate them from the ticket.`} />}
             {editing ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -312,7 +352,12 @@ function CriteriaTab({ t, onUpdate }) {
                 {a.partialInput && <Banner tone="amber">{a.partialInput}</Banner>}
                 <div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(a.md || '') }} />
                 <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 10, borderTop: '1px solid var(--border-subtle)', paddingTop: 8 }}>
-                  {a.edited ? '✎ hand-edited by you' : `◇ generated by ${a.model || 'claude'}`} · {fdt(a.at)} · not verified against the repo
+                  {a.edited ? '✎ hand-edited by you' : `◇ generated by ${a.model || 'claude'}`} · {fdt(a.at)}
+                  {/* "read the repo" and "read the ticket" produce artifacts that look identical and
+                      are not, so which one you have is stated. */}
+                  {a.groundedIn
+                    ? <> · <span style={{ color: 'var(--green)' }}>read {a.groundedIn}</span>{a.cost != null ? ` · ${money(a.cost)}` : ''}</>
+                    : ' · from the ticket text only — not checked against any code'}
                 </div>
               </>
             )}

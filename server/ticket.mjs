@@ -22,7 +22,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { ticketDetail, cfgForTicket, loadProjects, artifactsFor, readArtifacts as readTicketArtifacts } from './eng.mjs'
+import { ticketDetail, cfgForTicket, loadProjects, artifactsFor, reqHash, readArtifacts as readTicketArtifacts, writeArtifacts as writeTicketArtifacts } from './eng.mjs'
 import { resolveClone } from '../lib/clone.mjs'
 import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
@@ -60,7 +60,17 @@ export function normalizeKey(input) {
 // ---------------------------------------------------------------------------------------------
 // state — one file per key
 // ---------------------------------------------------------------------------------------------
-const EMPTY = key => ({ v: 1, key, rev: 0, cwd: null, doc: null, graph: null, chat: null, warnings: [], run: null })
+// The state file is the DURABLE cache for everything about a ticket, not just its design.
+//
+// `ticketDetail`'s cache is an in-memory Map with a 10-minute TTL, so every server restart — and
+// `npm run dev` restarts on every file save — re-fetched the issue, its comments and its changelog
+// from JIRA. Re-opening a ticket you looked at yesterday cost a round trip for content that had not
+// changed. Generated artifacts were already durable (eng-artifacts.json, and the graph here), so
+// the ticket body was the one thing being paid for twice.
+//
+// Serving from disk is only honest if the UI can see the age, so `fetchedAt` rides along and a
+// refresh is always one explicit click away. Nothing here silently serves stale data as fresh.
+const EMPTY = key => ({ v: 1, key, rev: 0, cwd: null, doc: null, graph: null, chat: null, warnings: [], run: null, ticket: null, fetchedAt: null, files: null, filesAt: null })
 
 function readState(key) {
   try { return { ...EMPTY(key), ...JSON.parse(fs.readFileSync(ticketStateFile(key), 'utf8')) } }
@@ -77,9 +87,15 @@ function listKeys() {
   try {
     return fs.readdirSync(TICKET_DIR).filter(f => f.endsWith('.json')).map(f => {
       const key = f.replace(/\.json$/, '')
-      let at = 0, nodes = 0
-      try { const st = JSON.parse(fs.readFileSync(path.join(TICKET_DIR, f), 'utf8')); at = Date.parse(st.doc?.genAt || 0) || 0; nodes = st.graph?.nodes?.length || 0 } catch {}
-      return { key, at, nodes }
+      let at = 0, nodes = 0, summary = null
+      try {
+        const st = JSON.parse(fs.readFileSync(path.join(TICKET_DIR, f), 'utf8'))
+        // Sort by last LOOKED AT, not last generated — recents are about where you were.
+        at = Math.max(Date.parse(st.fetchedAt || 0) || 0, Date.parse(st.doc?.genAt || 0) || 0)
+        nodes = st.graph?.nodes?.length || 0
+        summary = st.ticket?.summary || null
+      } catch {}
+      return { key, at, nodes, summary }
     }).sort((a, b) => b.at - a.at)
   } catch { return [] }
 }
@@ -233,20 +249,36 @@ export default function mountTicket(app) {
     res.json({ available: projects.length > 0, projects, recent: listKeys().slice(0, 12), runs: [...runs.values()].filter(r => !r.done).map(runView) })
   })
 
-  // ---- key-first fetch. Never blocks on a snapshot. ----
+  // ---- key-first fetch. Never blocks on a snapshot, and never re-fetches what is already on disk. ----
   app.get('/api/ticket/:key', async (req, res) => {
     const r = resolve(req, res); if (!r) return
+    const s = readState(r.key)
+    const repo = repoFor(r.cfg)
+    const envelope = (d, cached, fetchedAt) => ({
+      available: true, ...d,
+      artifacts: artifactsFor(d),
+      project: { key: r.cfg.key, jiraHost: r.cfg.jiraHost, githubRepo: r.cfg.githubRepo, writes: r.cfg.writes === true },
+      repo: { dir: repo.dir, how: repo.how, reason: repo.reason },
+      url: r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : null,
+      // Cached content is LABELLED as cached, with its age. Serving yesterday's ticket as though it
+      // were live would be the same class of dishonesty as rendering null as 0.
+      cached, fetchedAt: fetchedAt || null,
+      design: { hasDoc: !!s.doc, nodes: s.graph?.nodes?.length || 0, rev: s.rev || 0 },
+    })
+
+    // Disk first unless the caller explicitly asked for fresh. This is the whole point: re-opening a
+    // ticket costs nothing, and the JIRA round trip happens when you ask for it.
+    if (s.ticket && req.query.fresh !== '1') return res.json(envelope(s.ticket, true, s.fetchedAt))
+
     try {
       const d = await ticketDetail(r.cfg, r.key)     // waitForPrs:false, withCommits:false — the fast path
-      const repo = repoFor(r.cfg)
-      res.json({
-        available: true, ...d,
-        artifacts: artifactsFor(d),
-        project: { key: r.cfg.key, jiraHost: r.cfg.jiraHost, githubRepo: r.cfg.githubRepo, writes: r.cfg.writes === true },
-        repo: { dir: repo.dir, how: repo.how, reason: repo.reason },
-        url: r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : null,
-      })
+      const fetchedAt = new Date().toISOString()
+      writeState(r.key, { ...s, ticket: d, fetchedAt })
+      res.json(envelope(d, false, fetchedAt))
     } catch (e) {
+      // A failed refresh must not lose what we already had — serving the cached copy with the
+      // reason attached beats an error page over content that is sitting right there.
+      if (s.ticket) return res.json({ ...envelope(s.ticket, true, s.fetchedAt), refreshError: String(e.message || e) })
       const msg = String(e.message || e)
       // Distinguish the three failures that look identical to a user but need different actions.
       if (/no-jira-creds/.test(msg)) return res.status(400).json({ available: false, reason: 'JIRA credentials are not configured — add an email and API token in Setup' })
@@ -254,6 +286,74 @@ export default function mountTicket(app) {
       if (/jira 40[13]/.test(msg)) return res.status(403).json({ available: false, reason: `JIRA rejected the request — the token may be expired or lack access to ${r.cfg.key}` })
       res.status(500).json({ available: false, reason: msg })
     }
+  })
+
+  // ---- generate AC / test cases WITH THE REPOSITORY OPEN ----
+  // The existing /api/eng/ generator runs `claude -p` with no cwd and no permission flag, so it is a
+  // text-in/text-out box: it can only see the ticket prose. That is why generated test cases could
+  // reference files that do not exist — there was no repository in which to check. This route runs
+  // the same job with `cwd` set to the resolved checkout, so the model can grep the component, read
+  // the existing tests, and cite real paths. Results land in the same store, so the Sprint drawer
+  // sees them too.
+  app.post('/api/ticket/:key/generate', async (req, res) => {
+    const r = resolve(req, res); if (!r) return
+    const kind = req.body?.kind
+    if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
+    const repo = repoFor(r.cfg)
+    if (!repo.dir) return res.status(400).json({ error: repo.reason })
+
+    const live = [...runs.values()].filter(x => !x.done)
+    const sameRepo = live.find(x => x.cwd === repo.dir)
+    if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is running a design in ${repo.repo} — one agent per repository at a time` })
+
+    const s = readState(r.key)
+    let d
+    try { d = s.ticket || await ticketDetail(r.cfg, r.key) }
+    catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
+
+    const preamble = promptFile(kind === 'ac' ? 'ac.md' : 'tests.md')
+    if (!preamble) return res.status(500).json({ error: `the ${kind} prompt could not be read — refusing to run a degraded generation` })
+
+    const store = readTicketArtifacts()
+    const ac = kind === 'tests' ? store[r.key]?.ac?.md : null
+    const prompt = `${preamble}
+
+# The repository
+
+You are in \`${repo.repo}\`, checked out at \`${repo.dir}\`. READ IT before you write.
+
+# ${r.key} — ${d.summary}
+Type: ${d.type} · Status: ${d.status}
+
+## Description
+${d.description || '(none)'}
+
+## Comments
+${(d.comments || []).map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}
+${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery row of your plan must cite which of these it covers.` : ''}`
+
+    const run = { key: r.key, kind: `generate:${kind}`, startedAt: Date.now(), events: [], listeners: new Set(), done: false, error: null, tools: 0, files: new Set(), cost: null, ms: null, cwd: repo.dir, partial: null }
+    runs.set(`${r.key}:${kind}`, run)
+    try {
+      const out = await runAgent({ cwd: repo.dir, prompt, model: req.body?.model, timeoutMs: 900_000 })
+      run.done = true
+      if (out.error) { run.error = out.error; return res.status(502).json({ error: out.error }) }
+      const md = (out.result || '').trim()
+      if (!md) return res.status(502).json({ error: 'the model returned nothing' })
+      const next = readTicketArtifacts()
+      next[r.key] = {
+        ...(next[r.key] || {}),
+        [kind]: {
+          md, at: new Date().toISOString(), model: req.body?.model || 'claude',
+          reqHash: reqHash(d), prContextLoaded: d.prContext?.loaded ?? false, edited: false,
+          // Records that this was produced with the repository open — the difference between a
+          // grounded artifact and prose, and the user should be able to see which they have.
+          groundedIn: repo.repo, cost: out.cost ?? null, turns: out.turns ?? null,
+        },
+      }
+      writeTicketArtifacts(next)
+      res.json({ ...next[r.key][kind], stale: false })
+    } finally { run.done = true; pruneRuns() }
   })
 
   // ---- design state ----
@@ -633,6 +733,13 @@ say so. You are proposing; the user decides what to apply.`
     if (!s.graph) return res.json({ available: false, reason: 'no design graph yet — run a design first' })
     if (!repo.dir) return res.json({ available: false, reason: repo.reason })
 
+    // Persisted, because this is the expensive one: it walks the repository and parses every source
+    // file to build the import graph. Recomputing that on every mount of the Files tab is seconds of
+    // blocked event loop for an answer that only changes when the repo or the design changes — so it
+    // is keyed on both, and a mismatch recomputes without being asked.
+    const stamp = `${s.rev}:${repo.dir}`
+    if (s.files && s.files.stamp === stamp && req.query.fresh !== '1') return res.json({ ...s.files.payload, cached: true, computedAt: s.filesAt })
+
     const planned = new Map()
     for (const n of s.graph.nodes) for (const f of n.data?.files || []) {
       const cur = planned.get(f.rel) || { rel: f.rel, change: f.change, nodes: [] }
@@ -666,7 +773,7 @@ say so. You are proposing; the user decides what to apply.`
       verified.push({ rel: dep, exists: true, importers: imp.length, importedBy: imp.slice(0, 25), viaNodes: p.nodes })
     }
 
-    res.json({
+    const payload = {
       available: true, repo: { dir: repo.dir, how: repo.how },
       // `verifiedTotal` before the slice: rendering `verified.length` after capping presents 80 as
       // a fact when the real number is 214. Silent truncation shown as a total is the same class of
@@ -677,7 +784,10 @@ say so. You are proposing; the user decides what to apply.`
       // Stated in the payload, not just the UI: there is no source to parse between two files that
       // do not exist, so no edge between them is drawn anywhere.
       note: 'no data-flow edges are drawn between planned-new files — there is no source to parse',
-    })
+    }
+    const computedAt = new Date().toISOString()
+    writeState(r.key, { ...readState(r.key), files: { stamp, payload }, filesAt: computedAt })
+    res.json({ ...payload, cached: false, computedAt })
   })
 }
 
