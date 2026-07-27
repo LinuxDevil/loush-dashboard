@@ -22,15 +22,18 @@ than rendering empty charts.
 
 ---
 
-## The three-minute tour
+## The tour
 
-<video src="docs/screenshots/showcase.mp4" poster="docs/screenshots/showcase-poster.png" controls muted playsinline width="100%">
-  <a href="https://github.com/LinuxDevil/AI-Dashboard/raw/main/docs/screenshots/showcase.mp4">Watch the tour — 3 min, no audio</a>
-</video>
+<!-- This is an animated WebP, not a video, and that is deliberate: github.com's CSP allows media
+     only from its upload-attachment hosts, so an .mp4 committed to a repo will never play inline
+     in a README no matter how it is embedded. An image will. The full recording is the link. -->
 
-Every section and every sub-tab, in order, against a real install: 15 sections, 40 panels, live
-transcripts and a live JIRA board. Nothing in it is a mock — the CI is genuinely red and the ROI
-ledger genuinely says 128 of your 183 capabilities have never fired.
+![Loush — every section, real data](docs/screenshots/tour.webp)
+
+Twenty seconds sampled from the [full three-minute tour](docs/screenshots/showcase.mp4) — 15
+sections and 40 panels, in order, against a real install: live transcripts, a live JIRA board, and
+nothing mocked. The CI really is red and the ROI ledger really does say 128 of 183 capabilities
+have never fired.
 
 Re-record it after a UI change with `node scripts/showcase.mjs` (needs `npm run dev` already
 running). The tour is not scripted: it reads the sidebar, the breadcrumb and the tablists out of the
@@ -40,7 +43,7 @@ DOM, so a new section films itself with no edit to the script.
 
 ## Contents
 
-- [The three-minute tour](#the-three-minute-tour) — video, every section, real data
+- [The tour](#the-tour) — the whole app moving, every section, real data
 - [Working Set](#working-set--what-the-agent-did-to-your-code) — the flagship, zero config
 - [Setup](#setup--every-config-and-credential-visually) — projects, credentials, work week
 - [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger

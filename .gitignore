@@ -24,6 +24,7 @@ docs/*
 docs/screenshots/*
 !docs/screenshots/*.png
 !docs/screenshots/*.mp4
+!docs/screenshots/*.webp
 .serena/
 .claude/
 
