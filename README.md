@@ -22,8 +22,25 @@ than rendering empty charts.
 
 ---
 
+## The three-minute tour
+
+<video src="docs/screenshots/showcase.mp4" poster="docs/screenshots/showcase-poster.png" controls muted playsinline width="100%">
+  <a href="https://github.com/LinuxDevil/AI-Dashboard/raw/main/docs/screenshots/showcase.mp4">Watch the tour — 3 min, no audio</a>
+</video>
+
+Every section and every sub-tab, in order, against a real install: 15 sections, 40 panels, live
+transcripts and a live JIRA board. Nothing in it is a mock — the CI is genuinely red and the ROI
+ledger genuinely says 128 of your 183 capabilities have never fired.
+
+Re-record it after a UI change with `node scripts/showcase.mjs` (needs `npm run dev` already
+running). The tour is not scripted: it reads the sidebar, the breadcrumb and the tablists out of the
+DOM, so a new section films itself with no edit to the script.
+
+---
+
 ## Contents
 
+- [The three-minute tour](#the-three-minute-tour) — video, every section, real data
 - [Working Set](#working-set--what-the-agent-did-to-your-code) — the flagship, zero config
 - [Setup](#setup--every-config-and-credential-visually) — projects, credentials, work week
 - [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger
@@ -621,7 +638,8 @@ src/lib/                  api.js, hooks.js, plan.js, runMetrics.js
 src/eng/                  the Delivery dashboard's own panels
 
 test/lib/, test/server/, test/src/    mirror the above
-docs/screenshots/         the images in this README
+docs/screenshots/         the images and the tour video in this README
+scripts/showcase.mjs      records the tour video against a running dev server
 atoms/                    stays at the repo root — .gitignore anchors two files inside it
 ```
 

@@ -235,10 +235,10 @@ async function main() {
   await sleep(DWELL)
   const themeBtn = page.locator('.topbar .icon-btn').last()
   await click(page, themeBtn)
-  await sleep(DWELL * 1.5)
+  await sleep(DWELL * 3) // Overview fits on a 1080p screen, so tour() is a no-op here — this dwell IS the beat
   await tour(page, SCROLL_MS)
   await click(page, themeBtn)
-  await sleep(DWELL * 1.5)
+  await sleep(DWELL * 3) // Overview fits on a 1080p screen, so tour() is a no-op here — this dwell IS the beat
   await page.evaluate(() => window.__cap(null))
 
   await sleep(500)
