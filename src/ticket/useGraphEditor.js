@@ -15,7 +15,7 @@ import { api, toast } from '../lib/api.js'
 
 const LIMIT = 100
 
-export function useGraphEditor({ tKey, project, graph, rev, onGraph }) {
+export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
   const [past, setPast] = useState([])
   const [future, setFuture] = useState([])
   const [saving, setSaving] = useState(null)     // null | 'saving' | 'error'
@@ -29,7 +29,7 @@ export function useGraphEditor({ tKey, project, graph, rev, onGraph }) {
   const persist = useCallback(async next => {
     setSaving('saving')
     try {
-      const out = await api.put(`/api/ticket/${tKey}/design/graph?project=${project}`, { graph: next, rev: revRef.current })
+      const out = await api.put(`/api/ticket/${tKey}/design/graph?workspace=${workspace}`, { graph: next, rev: revRef.current })
       revRef.current = out.rev
       onGraph(out)
       setSaving(null)
@@ -41,7 +41,7 @@ export function useGraphEditor({ tKey, project, graph, rev, onGraph }) {
       toast(/changed elsewhere/i.test(e.message) ? 'this design changed elsewhere — your edit was not saved' : `could not save: ${e.message}`, 'error')
       return false
     }
-  }, [tKey, project, onGraph])
+  }, [tKey, workspace, onGraph])
 
   /** Replace the graph, remembering the previous value. */
   const commit = useCallback(next => {

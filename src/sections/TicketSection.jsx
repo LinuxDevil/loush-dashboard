@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
-import { api, toast } from '../lib/api.js'
+import { api, toast, tildify } from '../lib/api.js'
 import { Tabs } from '../ui/tabs.jsx'
 import DesignCanvas, { TYPES } from '../ticket/DesignCanvas.jsx'
 import RederivePreview from '../ticket/RederivePreview.jsx'
@@ -75,10 +75,11 @@ const NotReady = ({ reason, detail, onNav, to = 'setup', cta = 'Open Setup →' 
 
 export default function TicketSection({ onNav }) {
   const [idx, setIdx] = useState(null)
-  // The PROJECT is chosen before a key is typed: it decides the JIRA host, the repository the design
-  // agent reads, and which saved tickets are listed. Remembered, because you work in one for a
-  // stretch — but never guessed on first run, because guessing resolves a key against the wrong host.
-  const [proj, setProj] = useState(() => { try { return localStorage.getItem('ticket.project') } catch { return null } })
+  // The WORKSPACE — the FOLDER you opened a session in — is chosen before a key is typed. It is what
+  // agents run inside, which saved tickets are listed, and (through its board link) the JIRA host the
+  // key is fetched from. Remembered, because you work in one for a stretch; never guessed on first
+  // run, because guessing runs an agent in the wrong checkout and resolves a key against the wrong host.
+  const [ws, setWs] = useState(() => { try { return localStorage.getItem('ticket.workspace') } catch { return null } })
   const [raw, setRaw] = useState('')
   const [key, setKey] = useState(null)
   const [t, setT] = useState(null)          // ticket payload
@@ -87,148 +88,136 @@ export default function TicketSection({ onNav }) {
   const [tab, setTab] = useState('Ticket')
   const inputRef = useRef(null)
 
-  const loadIdx = useCallback(p => api.get(`/api/ticket/index${p ? `?project=${encodeURIComponent(p)}` : ''}`)
-    .then(setIdx).catch(() => setIdx({ available: false, projects: [] })), [])
-  useEffect(() => { loadIdx(proj) }, [proj, loadIdx])
+  const loadIdx = useCallback(w => api.get(`/api/ticket/index${w ? `?workspace=${encodeURIComponent(w)}` : ''}`)
+    .then(setIdx).catch(() => setIdx({ available: false, workspaces: [], boards: [], saved: [] })), [])
+  useEffect(() => { loadIdx(ws) }, [ws, loadIdx])
   // Focus the key field only once a project is chosen — before that there is nothing useful to type.
-  useEffect(() => { if (proj && !key && inputRef.current) inputRef.current.focus() }, [proj, key])
-  const pickProject = p => { setProj(p); setKey(null); setT(null); setRaw(''); setErr(null); try { localStorage.setItem('ticket.project', p) } catch {} }
+  useEffect(() => { if (ws && !key && inputRef.current) inputRef.current.focus() }, [ws, key])
+  const pickWorkspace = w => { setWs(w); setKey(null); setT(null); setRaw(''); setErr(null); try { localStorage.setItem('ticket.workspace', w) } catch {} }
 
   const open = useCallback((k, fresh) => {
     const norm = normalizeKey(k)
     if (!norm) { setErr({ reason: `"${k}" is not a JIRA key — expected something like ABC-1234` }); return }
-    if (!proj) { setErr({ reason: 'select a project first — it decides the JIRA host and the repository' }); return }
+    if (!ws) { setErr({ reason: 'select a project first — it decides the folder agents read and the JIRA host' }); return }
     setBusy(true); setErr(null); setKey(norm)
     // A refresh keeps you where you are; opening a DIFFERENT ticket must not leave you on the
     // Design tab looking at the previous ticket's diagram.
     if (!fresh) { setT(null); setTab('Ticket') }
-    api.get(`/api/ticket/${norm}?project=${encodeURIComponent(proj)}${fresh ? '&fresh=1' : ''}`)
-      .then(d => { setT(d); loadIdx(proj) })
+    api.get(`/api/ticket/${norm}?workspace=${encodeURIComponent(ws)}${fresh ? '&fresh=1' : ''}`)
+      .then(d => { setT(d); loadIdx(ws) })
       .catch(e => setErr({ reason: e.message, detail: e.detail }))
       .finally(() => setBusy(false))
-  }, [proj, loadIdx])
+  }, [ws, loadIdx])
 
-  // Recents come from the SERVER's state files, not localStorage: they survive a different browser,
-  // a cleared profile and a machine move, and they can carry the summary so the list is readable.
-  const recent = idx?.recent || []
+  // Saved tickets come from the SERVER's state files, not localStorage: they survive a different
+  // browser, a cleared profile and a machine move, and they carry enough to render a readable card.
+  const saved = idx?.saved || []
+  const cur = (idx?.workspaces || []).find(w => w.id === ws) || null
   const ghost = normalizeKey(raw)
 
-  if (idx && !idx.available) return <NotReady onNav={onNav} reason="No projects are configured. This tab needs at least one project with a JIRA host and a project key." />
+  const forget = k => api.del(`/api/ticket/${k}/saved?workspace=${encodeURIComponent(ws)}`)
+    .then(() => loadIdx(ws)).catch(e => toast(e.message, 'error'))
+
+  if (idx && !idx.available) return <NotReady onNav={onNav} to="projects" cta="Open Projects →"
+    reason="No projects are open on this machine. This tab works inside a folder you have started a Claude Code session in — that is the folder its agents read." />
 
   return (
     <div>
-      {/* ---- 1. pick the project, 2. open a ticket in it ---- */}
+      {/* ---- 1. pick the project (a folder), 2. open a ticket in it ---- */}
       <div style={{ ...PANEL, padding: '14px 16px', marginBottom: 12 }}>
         <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>
           1 · Project
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
-          {(idx?.projects || []).map(p => {
-            const on = proj === p.key
+          {(idx?.workspaces || []).map(w => {
+            const on = ws === w.id
             return (
-              <button key={p.key} onClick={() => pickProject(p.key)} aria-pressed={on}
-                title={[p.jiraHost, p.githubRepo, p.repoDir || p.repoReason].filter(Boolean).join('\n')}
+              <button key={w.id} onClick={() => pickWorkspace(w.id)} aria-pressed={on}
+                title={[w.dir, w.slug, w.jira ? `JIRA: ${w.jira.key}` : 'not linked to a JIRA board'].filter(Boolean).join('\n')}
                 style={{ ...mini, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '7px 11px',
                   ...(on ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }}>
-                <span style={{ font: `600 12px ${MONO}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{p.key}</span>
+                <span style={{ font: `600 12px ${MONO}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{w.name}</span>
                 <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>
-                  {/* whether a design run is possible here, said up front rather than on failure */}
-                  {p.repoDir ? `✓ ${p.githubRepo}` : p.githubRepo ? '— no local checkout' : '— no repo configured'}
-                  {p.saved > 0 ? ` · ${p.saved} saved` : ''}
+                  {/* whether a ticket can be opened here at all, said up front rather than on failure */}
+                  {w.jira ? `${w.jira.key}${w.jiraBound ? '' : ' (matched)'}` : '— no JIRA board linked'}
+                  {w.saved > 0 ? ` · ${w.saved} saved` : ''}
                 </span>
               </button>
             )
           })}
         </div>
 
-        <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: proj ? 'var(--text-secondary)' : 'var(--text-tertiary)', marginBottom: 6 }}>
+        {/* Which board this folder's tickets come from. A folder with no link is a state the user can
+            fix right here, not a dead end — the git-remote match is only a first guess. */}
+        {cur && !key && (
+          <div style={{ marginBottom: 14, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Tickets from</span>
+            <select value={cur.jiraBound ? cur.jira.key : ''} style={{ font: `400 11px ${MONO}`, maxWidth: 420 }}
+              aria-label="JIRA board for this project"
+              onChange={e => api.post(`/api/ticket/workspace/${cur.id}/jira`, { jiraKey: e.target.value || null })
+                .then(() => loadIdx(cur.id)).catch(er => toast(er.message, 'error'))}>
+              <option value="">{cur.jiraBound ? '(clear — match by git remote)' : cur.jira ? `auto: ${cur.jira.key} — matched by git remote` : 'auto: nothing matched'}</option>
+              {(idx?.boards || []).map(b => (
+                <option key={b.key} value={b.key}>{b.key}{b.jiraHost ? ` — ${b.jiraHost}` : ''}</option>
+              ))}
+            </select>
+            {cur.jiraBound && <span style={{ font: `400 10px ${MONO}`, color: 'var(--green)' }}>✓ board chosen by you</span>}
+            {!idx?.boards?.length && <button style={mini} onClick={() => onNav?.('setup')}>no boards configured — Open Setup →</button>}
+          </div>
+        )}
+
+        <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: ws ? 'var(--text-secondary)' : 'var(--text-tertiary)', marginBottom: 6 }}>
           2 · Ticket
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 240, position: 'relative' }}>
-            <input ref={inputRef} value={raw} disabled={!proj}
-              placeholder={proj ? `${idx?.projects?.find(p => p.key === proj)?.jiraProjectKey || proj}-1234` : 'select a project first'}
+            <input ref={inputRef} value={raw} disabled={!ws}
+              placeholder={ws ? `${cur?.jira?.projectKey || cur?.jira?.key || 'ABC'}-1234` : 'select a project first'}
               aria-label="JIRA ticket key"
               onChange={e => { setRaw(e.target.value); setErr(null) }}
               onKeyDown={e => { if (e.key === 'Enter' && ghost) open(ghost) }}
               onPaste={e => { const v = normalizeKey(e.clipboardData.getData('text')); if (v && !raw.trim()) { e.preventDefault(); setRaw(v); open(v) } }}
-              style={{ font: `500 13px ${MONO}`, opacity: proj ? 1 : 0.5 }} />
+              style={{ font: `500 13px ${MONO}`, opacity: ws ? 1 : 0.5 }} />
             {ghost && ghost !== raw.trim().toUpperCase() && (
               <span style={{ position: 'absolute', right: 10, top: 7, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', pointerEvents: 'none' }}>→ {ghost}</span>
             )}
           </div>
-          <button className="primary" disabled={!ghost || !proj || busy} onClick={() => open(ghost)}>{busy ? 'opening…' : 'Open'}</button>
+          <button className="primary" disabled={!ghost || !ws || busy} onClick={() => open(ghost)}>{busy ? 'opening…' : 'Open'}</button>
         </div>
         <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginTop: 6 }}>
-          {proj
+          {ws
             ? <>paste a browse URL or type the key — lowercase and <code>ABC 1234</code> are fine</>
-            : 'saved tickets, the JIRA host and the repository a design reads are all per project'}
+            : 'saved tickets, the folder agents read and the JIRA host are all per project'}
         </div>
         {err && <div style={{ marginTop: 10, background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)' }}>
           {err.reason}{err.detail ? <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{err.detail}</div> : null}
         </div>}
-        {recent.length > 0 && !key && (
-          <div style={{ marginTop: 12 }}>
-            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-              Saved in {proj} · opens from cache, no JIRA call
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 5 }}>
-              {recent.map(x => (
-                <button key={x.key} style={{ ...mini, display: 'flex', gap: 8, alignItems: 'baseline', textAlign: 'left', width: '100%' }} onClick={() => { setRaw(x.key); open(x.key) }}>
-                  <b style={{ font: `600 11px ${MONO}`, color: 'var(--text-link)' }}>{x.key}</b>
-                  <span style={{ font: `400 11px ${BODY}`, color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.summary || ''}</span>
-                  {x.nodes > 0 && <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>◈ {x.nodes}</span>}
-                </button>
-              ))}
-            </div>
+
+        {/* What the SELECTED folder actually is. The picker shows the name; this is the evidence
+            behind it — the path an agent will run in, and the skills it will find there. */}
+        {cur && !key && (
+          <div style={{ marginTop: 12, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            <span title={cur.dir}>{tildify(cur.dir)}</span>
+            {cur.slug ? <span>{cur.slug}</span> : <span style={{ color: 'var(--amber)' }}>{cur.isGit ? 'no origin remote' : 'not a git repo'}</span>}
+            {cur.jira?.host && <span>{cur.jira.host}</span>}
+            {cur.skills?.length > 0 && <span style={{ color: 'var(--green)' }}>{cur.skills.length} project skill{cur.skills.length > 1 ? 's' : ''} available to agents</span>}
           </div>
         )}
-        {/* Detail for the SELECTED project only. The full list was here before the picker existed
-            and is now the picker's job; repeating it made the same facts appear twice. */}
-        {proj && !key && (() => {
-          const p = (idx?.projects || []).find(x => x.key === proj)
-          if (!p) return null
-          return (
-            <div style={{ marginTop: 12, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-              <span>{p.jiraHost || 'no JIRA host'}</span>
-              <span>{p.githubRepo || 'no repo configured'}</span>
-              <span style={{ color: p.repoHow === 'remote' ? 'var(--green)' : p.repoDir ? 'var(--amber)' : 'var(--text-secondary)' }}>
-                {p.repoHow === 'remote' ? '✓ checkout matched by git remote'
-                  : p.repoDir ? '≈ checkout matched by folder name only'
-                  : '— no local checkout: design, files and grounded generation are unavailable'}
-              </span>
-              {p.skills?.length > 0 && <span style={{ color: 'var(--green)' }}>{p.skills.length} project skill{p.skills.length > 1 ? 's' : ''} available to agents</span>}
-              {p.repoDir && <span style={{ color: 'var(--text-secondary)' }}>{p.repoDir}</span>}
-            </div>
-          )
-        })()}
-
-        {/* Bind a folder yourself. Remote-matching is right when it works and silent when it does
-            not — a fork, a monorepo, a differently-named remote, or no githubRepo at all all end as
-            "no local checkout" with nothing to do about it. These are the folders you have actually
-            opened a session in, the same set the Projects tab lists. */}
-        {proj && !key && (() => {
-          const p = (idx?.projects || []).find(x => x.key === proj)
-          const locals = idx?.localProjects || []
-          if (!p) return null
-          const bound = idx?.bindings?.[proj] || null
-          return (
-            <div style={{ marginTop: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Work in</span>
-              <select value={bound || ''} style={{ font: `400 11px ${MONO}`, maxWidth: 420 }}
-                onChange={e => api.post(`/api/ticket/project/${proj}/repo`, { dir: e.target.value || null })
-                  .then(() => loadIdx(proj)).catch(err => toast(err.message, 'error'))}>
-                <option value="">{p.repoHow === 'bound' ? '(clear — match by git remote)' : p.repoDir ? `auto: ${p.repoDir}` : 'auto: nothing matched'}</option>
-                {locals.map(l => (
-                  <option key={l.dir} value={l.dir}>{l.name}{l.slug ? ` — ${l.slug}` : l.isGit ? '' : ' (not a git repo)'}</option>
-                ))}
-              </select>
-              {p.repoHow === 'bound' && <span style={{ font: `400 10px ${MONO}`, color: 'var(--green)' }}>✓ folder chosen by you</span>}
-              {!locals.length && <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>no projects registered — open one in Claude Code first</span>}
-            </div>
-          )
-        })()}
       </div>
+
+      {/* ---- saved tickets, as cards ---- */}
+      {cur && !key && (
+        <Sec title={`Saved in ${cur.name}`}
+          right={<span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>opens from cache · no JIRA call</span>}>
+          {!saved.length
+            ? <Empty text="Nothing saved here yet. Open a ticket above and everything you generate for it — description, criteria, tests, design — is kept in this project." />
+            : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
+                {saved.map(x => <SavedCard key={x.key} x={x} onOpen={() => { setRaw(x.key); open(x.key) }} onForget={() => forget(x.key)} />)}
+              </div>
+            )}
+        </Sec>
+      )}
 
       {t?.available && (
         <>
@@ -256,6 +245,53 @@ const age = iso => {
   return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.floor(m / 60)}h ago` : `${Math.floor(m / 1440)}d ago`
 }
 
+// ---- saved ticket card -------------------------------------------------------------------------
+// A card, not a row: the point of the cache is that re-opening a ticket costs nothing, and that is
+// only useful if you can tell from the grid WHICH ticket you want. So each card carries what was
+// already paid for — the summary, the status, and which artifacts exist — rather than a bare key
+// that has to be opened to be identified.
+//
+// Every badge below is read from disk, never assumed. A missing artifact renders as absent, not as
+// a zero and not as a greyed-out tick (README.md "Honesty rules" §1, §2).
+function SavedCard({ x, onOpen, onForget }) {
+  const [confirm, setConfirm] = useState(false)
+  const badge = (on, label, title) => on
+    ? <span title={title} style={{ font: `400 10px ${MONO}`, color: 'var(--green)' }}>{label}</span>
+    : null
+  return (
+    <div style={{ position: 'relative', border: '1px solid var(--border-default)', borderRadius: 8, background: 'var(--bg-elevated)' }}>
+      <button onClick={onOpen} title={x.summary || x.key}
+        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: 'none', border: 0, borderRadius: 8, cursor: 'pointer', color: 'inherit' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, paddingRight: 20 }}>
+          <b style={{ font: `600 12px ${MONO}`, color: 'var(--text-link)' }}>{x.key}</b>
+          {x.type && <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>{x.type}</span>}
+          {x.status && <span className="chip" style={{ marginLeft: 'auto' }}>{x.status}</span>}
+        </div>
+        {/* Two lines, clamped. A one-line ellipsis on a JIRA summary usually cuts before the verb. */}
+        <div style={{ font: `400 12px/1.45 ${BODY}`, color: 'var(--text-primary)', marginTop: 5, minHeight: 34,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {x.summary || <span style={{ color: 'var(--text-secondary)' }}>no summary saved</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 7, flexWrap: 'wrap' }}>
+          {badge(x.hasAc, '✓ AC', 'acceptance criteria generated')}
+          {badge(x.hasTests, '✓ tests', 'test cases generated')}
+          {badge(x.hasDoc, '✓ design', 'a design document was written into the repo')}
+          {x.nodes > 0 && <span title={`${x.nodes} components in the graph`} style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>◈ {x.nodes}</span>}
+          <span style={{ marginLeft: 'auto', font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>{age(x.fetchedAt) || '—'}</span>
+        </div>
+      </button>
+      {/* The cache is the user's, so forgetting an entry has to be possible — and confirmed, because
+          it throws away a fetch and a design that were paid for. */}
+      <button aria-label={confirm ? `confirm forgetting ${x.key}` : `forget ${x.key}`} title={confirm ? 'click again to forget' : 'forget this ticket'}
+        onClick={() => (confirm ? onForget() : setConfirm(true))} onBlur={() => setConfirm(false)}
+        style={{ position: 'absolute', top: 6, right: 6, padding: '1px 5px', borderRadius: 4, border: 0, background: 'none', cursor: 'pointer',
+          font: `400 11px ${MONO}`, color: confirm ? 'var(--red)' : 'var(--text-secondary)' }}>
+        {confirm ? 'forget?' : '✕'}
+      </button>
+    </div>
+  )
+}
+
 const TicketRail = ({ t, busy, onRefresh, onClose }) => (
   <div style={{ ...PANEL, padding: '10px 14px', marginBottom: 10 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -264,15 +300,13 @@ const TicketRail = ({ t, busy, onRefresh, onClose }) => (
       <span className="chip">{t.project?.key}</span>
       <span style={{ font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{t.status || '—'}</span>
       <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{t.type || '—'}</span>
-      {t.project?.githubRepo && (
-        // A basename match is a GUESS — a directory that merely shares a name. Showing it with the
-        // same green tick as a matched git origin is a green tick over an absent source, and the
-        // cost is an agent running with --dangerously-skip-permissions in the wrong checkout.
-        <span title={t.repo?.dir || t.repo?.reason || ''}
-          style={{ font: `400 11px ${MONO}`, color: t.repo?.how === 'remote' ? 'var(--green)' : t.repo?.dir ? 'var(--amber)' : 'var(--text-secondary)' }}>
-          {t.project.githubRepo} {t.repo?.how === 'remote' ? '✓' : t.repo?.dir ? '≈ matched by folder name, not by git remote' : '— not resolved'}
-        </span>
-      )}
+      {/* The folder agents will run in, named on every screen that can start one. Nothing is inferred
+          any more — this is the project you selected — but it is still shown, because the cost of it
+          being wrong is an agent running with --dangerously-skip-permissions in the wrong checkout. */}
+      <span title={t.repo?.dir || t.repo?.reason || ''}
+        style={{ font: `400 11px ${MONO}`, color: t.repo?.dir ? 'var(--green)' : 'var(--red)' }}>
+        {t.repo?.dir ? `${t.workspace?.name || tildify(t.repo.dir)} ✓` : `— ${t.repo?.reason || 'no folder'}`}
+      </span>
       {/* Cached content is labelled with its age and refresh is one click — otherwise "served from
           disk" quietly becomes "served yesterday's ticket as though it were live". */}
       <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -291,7 +325,7 @@ const TicketRail = ({ t, busy, onRefresh, onClose }) => (
         silently. */}
     {t.keyPrefixMismatch && (
       <div style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', marginTop: 4 }}>
-        ⚠ this key starts with <b>{t.keyPrefixMismatch}</b>, but you have <b>{t.project?.key}</b> selected — it was opened against {t.project?.jiraHost || 'this project'}. Switch project if that is wrong.
+        ⚠ this key starts with <b>{t.keyPrefixMismatch}</b>, but <b>{t.workspace?.name}</b> is linked to the <b>{t.project?.key}</b> board — it was opened against {t.project?.jiraHost || 'that host'}. Change the board or the project if that is wrong.
       </div>
     )}
     {/* Which of YOUR project's skills the agent will be told to use. Detected from the checkout, so
@@ -386,7 +420,7 @@ function CriteriaTab({ t, onUpdate }) {
   const gen = kind => {
     setBusy(kind); setErr(null)
     const url = grounded
-      ? `/api/ticket/${t.key}/generate?project=${t.project.key}`
+      ? `/api/ticket/${t.key}/generate?workspace=${t.workspace.id}`
       : `/api/eng/ticket/${t.key}/generate?project=${t.project.key}`
     api.post(url, { kind })
       .then(a => setArt(kind, a)).catch(e => setErr(e.message)).finally(() => setBusy(''))
@@ -425,14 +459,14 @@ function CriteriaTab({ t, onUpdate }) {
             {busy === kind && (
               <div style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>
                 {grounded
-                  ? `Reading ${t.project.githubRepo} and writing ${META[kind].noun} — this takes a few minutes because it greps the code first.`
+                  ? `Reading ${t.workspace?.name} and writing ${META[kind].noun} — this takes a few minutes because it greps the code first.`
                   : 'Generating from the ticket text alone — no local checkout resolved, so nothing can be checked against the code.'}
               </div>
             )}
             {!grounded && !busy && (
               <Banner>
-                No local checkout resolved for {t.project?.githubRepo || 'this project'}, so anything generated here is written from the
-                ticket text alone and cannot cite a real file. Open the repository once in Claude Code so it is registered.
+                {t.repo?.reason || 'No project folder'} — so anything generated here is written from the ticket text
+                alone and cannot cite a real file. Pick a project whose folder still exists on disk.
               </Banner>
             )}
             {!a && busy !== kind && !editing && <Empty text={`No ${META[kind].noun} yet — generate them from the ticket.`} />}
@@ -485,7 +519,7 @@ function DesignTab({ t, onNav }) {
   const [multi, setMulti] = useState(() => new Set())
   const [live, setLive] = useState('')     // aria-live text; also shown, so it is not screen-reader-only trivia
   const [now, setNow] = useState(Date.now())
-  const load = useCallback(() => api.get(`/api/ticket/${t.key}/design?project=${t.project.key}`).then(x => { setD(x); setRun(x.run) }).catch(() => {}), [t.key, t.project.key])
+  const load = useCallback(() => api.get(`/api/ticket/${t.key}/design?workspace=${t.workspace.id}`).then(x => { setD(x); setRun(x.run) }).catch(() => {}), [t.key, t.workspace.id])
   useEffect(() => { load() }, [load])
 
   // A run is server-owned, so reattaching after a remount is just a new EventSource — it replays.
@@ -518,12 +552,12 @@ function DesignTab({ t, onNav }) {
   // started even though the server saved it correctly, and the canvas reads as broken.
   const move = useCallback(pos => {
     setD(prev => (prev?.graph ? { ...prev, graph: { ...prev.graph, nodes: prev.graph.nodes.map(n => (pos[n.id] ? { ...n, position: pos[n.id] } : n)) } } : prev))
-    api.patch(`/api/ticket/${t.key}/design/layout?project=${t.project.key}`, { positions: pos })
+    api.patch(`/api/ticket/${t.key}/design/layout?workspace=${t.workspace.id}`, { positions: pos })
       .catch(() => toast('could not save the new layout', 'error'))
-  }, [t.key, t.project.key])
+  }, [t.key, t.workspace.id])
   const start = () => {
     setStarting(true)
-    api.post(`/api/ticket/${t.key}/design/run?project=${t.project.key}`, {})
+    api.post(`/api/ticket/${t.key}/design/run?workspace=${t.workspace.id}`, {})
       .then(r => { setRun(r.run); setTail([]) })
       .catch(e => toast(e.message, 'error'))
       .finally(() => setStarting(false))
@@ -542,7 +576,7 @@ function DesignTab({ t, onNav }) {
   const mode = view || auto
   const running = run && !run.done
 
-  const ed = useGraphEditor({ tKey: t.key, project: t.project.key, graph: g, rev: d?.rev, onGraph: setD })
+  const ed = useGraphEditor({ tKey: t.key, workspace: t.workspace.id, graph: g, rev: d?.rev, onGraph: setD })
   // ⌘Z / ⌘⇧Z at the section level: the canvas nodes are buttons, so a binding on the canvas alone
   // would only fire while one of them had focus.
   useEffect(() => {
@@ -558,20 +592,20 @@ function DesignTab({ t, onNav }) {
 
   const rederive = keep => {
     setApplying(true)
-    api.post(`/api/ticket/${t.key}/design/rederive?project=${t.project.key}`, { action: 'apply', keep })
+    api.post(`/api/ticket/${t.key}/design/rederive?workspace=${t.workspace.id}`, { action: 'apply', keep })
       .then(setD).catch(e => toast(e.message, 'error')).finally(() => setApplying(false))
   }
   const discard = () => {
     setApplying(true)
-    api.post(`/api/ticket/${t.key}/design/rederive?project=${t.project.key}`, { action: 'discard' })
+    api.post(`/api/ticket/${t.key}/design/rederive?workspace=${t.workspace.id}`, { action: 'discard' })
       .then(setD).catch(e => toast(e.message, 'error')).finally(() => setApplying(false))
   }
-  const retryExtract = () => api.post(`/api/ticket/${t.key}/design/extract?project=${t.project.key}`, {})
+  const retryExtract = () => api.post(`/api/ticket/${t.key}/design/extract?workspace=${t.workspace.id}`, {})
     .then(x => { setD(x); toast('diagram extracted', 'success') })
     .catch(e => toast(e.message, 'error'))
   const toBoard = () => {
-    if (!confirm(`Create a Task Board ticket for ${t.key} in ${t.project.githubRepo}?`)) return
-    api.post(`/api/ticket/${t.key}/board?project=${t.project.key}`, {})
+    if (!confirm(`Create a Task Board ticket for ${t.key} in ${t.workspace?.name}?`)) return
+    api.post(`/api/ticket/${t.key}/board?workspace=${t.workspace.id}`, {})
       .then(() => { load(); toast('handed off to the Task Board', 'success') })
       .catch(e => toast(e.message, 'error'))
   }
@@ -580,7 +614,7 @@ function DesignTab({ t, onNav }) {
     <>
       {running && (
         <Sec title="① Design document" right={<span style={{ font: `400 11px ${MONO}`, color: 'var(--blue)' }}>running · {elapsed(now - run.startedAt)}</span>}>
-          <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginBottom: 8 }}>reading {t.project.githubRepo} at {run.cwd || t.repo.dir}</div>
+          <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginBottom: 8 }}>reading {t.workspace?.name} at {tildify(run.cwd || t.repo.dir || '')}</div>
           <div className="logblock" style={{ maxHeight: 150, overflow: 'auto' }}>
             {tail.length ? tail.map((x, i) => <div key={i}>▸ {x}</div>) : <span style={{ color: 'var(--text-secondary)' }}>waiting for the first tool call…</span>}
           </div>
@@ -595,8 +629,8 @@ function DesignTab({ t, onNav }) {
       {!running && (
         <Sec title="Design" right={
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {d?.doc?.exists && <button style={mini} onClick={() => api.get(`/api/ticket/${t.key}/design/doc?project=${t.project.key}`).then(r => setDoc(doc ? null : r)).catch(e => toast(e.message, 'error'))}>{doc ? 'hide document' : 'view document'}</button>}
-            {nodes.length > 0 && <button style={mini} onClick={() => fetch(`/api/ticket/${t.key}/design/mermaid?project=${t.project.key}`).then(r => r.text()).then(x => { navigator.clipboard?.writeText(x); toast('mermaid copied', 'success') })}>copy mermaid</button>}
+            {d?.doc?.exists && <button style={mini} onClick={() => api.get(`/api/ticket/${t.key}/design/doc?workspace=${t.workspace.id}`).then(r => setDoc(doc ? null : r)).catch(e => toast(e.message, 'error'))}>{doc ? 'hide document' : 'view document'}</button>}
+            {nodes.length > 0 && <button style={mini} onClick={() => fetch(`/api/ticket/${t.key}/design/mermaid?workspace=${t.workspace.id}`).then(r => r.text()).then(x => { navigator.clipboard?.writeText(x); toast('mermaid copied', 'success') })}>copy mermaid</button>}
             {/* disabled while starting: `running` only flips after the round trip, so an
                 undebounced double-click spawned two agents into the same working tree */}
             <button style={mini} disabled={starting} onClick={start}>{starting ? 'starting…' : d?.doc ? 'regenerate' : 'run design'}</button>
@@ -609,11 +643,11 @@ function DesignTab({ t, onNav }) {
             <Banner>
               That run wrote {run.partial.bytes.toLocaleString()} bytes to <code>{run.partial.rel}</code> before it stopped.
               It was NOT moved to the final path, so nothing half-written is sitting where a finished spec would be.
-              <button style={{ ...mini, marginLeft: 8 }} onClick={() => api.del(`/api/ticket/${t.key}/design/partial?project=${t.project.key}`).then(load).catch(e => toast(e.message, 'error'))}>discard it</button>
+              <button style={{ ...mini, marginLeft: 8 }} onClick={() => api.del(`/api/ticket/${t.key}/design/partial?workspace=${t.workspace.id}`).then(load).catch(e => toast(e.message, 'error'))}>discard it</button>
             </Banner>
           )}
           {run?.error && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 10 }}>The run failed: {run.error}</div>}
-          {d?.doc?.gitignored && <Banner>The document was written to a gitignored path. Run <code>git add -f {d.doc.rel}</code> in {t.project.githubRepo} to track it — this app will not run git on your repo.</Banner>}
+          {d?.doc?.gitignored && <Banner>The document was written to a gitignored path. Run <code>git add -f {d.doc.rel}</code> in {t.workspace?.name} to track it — this app will not run git on your repo.</Banner>}
           {d?.diverged && <Banner>The design document changed after this diagram was built. Regenerate to re-derive it; your node positions are preserved.</Banner>}
 
           {/* `d &&` guards the pre-load flash: `d` starts null and load() is async, so without it
@@ -692,7 +726,7 @@ function DesignTab({ t, onNav }) {
               <div aria-live="polite" style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', marginTop: 4, minHeight: 14 }}>{live}</div>
             </div>
             {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} ed={ed} onClose={() => setSel(null)} onSelect={setSel} />}
-            {chatOpen && <DesignChat tKey={t.key} project={t.project.key} graph={g} selected={sel} rev={d.rev} onApplied={setD} />}
+            {chatOpen && <DesignChat tKey={t.key} workspace={t.workspace.id} graph={g} selected={sel} rev={d.rev} onApplied={setD} />}
           </div>
         </>
       )}
@@ -834,7 +868,7 @@ const Label = ({ children }) => <div style={{ font: `600 10px ${MONO}`, letterSp
 // ---- Files ---------------------------------------------------------------------------------------
 function FilesTab({ t }) {
   const [f, setF] = useState(null)
-  useEffect(() => { api.get(`/api/ticket/${t.key}/files?project=${t.project.key}`).then(setF).catch(e => setF({ available: false, reason: e.message })) }, [t.key, t.project.key])
+  useEffect(() => { api.get(`/api/ticket/${t.key}/files?workspace=${t.workspace.id}`).then(setF).catch(e => setF({ available: false, reason: e.message })) }, [t.key, t.workspace.id])
   if (!f) return <Empty text="Loading…" />
   if (!f.available) return <NotReady reason={f.reason} />
 

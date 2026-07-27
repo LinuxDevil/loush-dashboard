@@ -23,11 +23,11 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { ticketDetail, cfgFor, loadProjects, artifactsFor, reqHash, readArtifacts as readTicketArtifacts, writeArtifacts as writeTicketArtifacts } from './eng.mjs'
-import { resolveClone, listLocalProjects } from '../lib/clone.mjs'
+import { listLocalProjects } from '../lib/clone.mjs'
 import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
-import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile } from '../lib/paths.mjs'
+import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile, workspaceId } from '../lib/paths.mjs'
 
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
 const DASH_PORT = Number(process.env.DASH_PORT) || 5178
@@ -92,21 +92,37 @@ function writeState(project, key, s) {
 /** Saved tickets for ONE project. Recents are per project because the project is the scope. */
 function listKeys(project) {
   const dir = ticketProjectDir(project)
+  // Read once, outside the loop: eng-artifacts.json is a single flat blob, so re-reading it per
+  // ticket would parse the same file N times to answer N questions about it.
+  let art = {}
+  try { art = readTicketArtifacts() } catch {}
   try {
     return fs.readdirSync(dir).filter(f => f.endsWith('.json')).map(f => {
       const key = f.replace(/\.json$/, '')
-      let at = 0, nodes = 0, summary = null, hasDoc = false
+      // Everything a card shows is read from disk here. A card that only said "ABC-1" would make the
+      // user open a ticket to find out whether it is the one they already worked on — which is the
+      // JIRA round trip the cache exists to avoid.
+      let at = 0, nodes = 0, summary = null, hasDoc = false, type = null, status = null, fetchedAt = null
       try {
         const st = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
         // Sort by last LOOKED AT, not last generated — recents are about where you were.
         at = Math.max(Date.parse(st.fetchedAt || 0) || 0, Date.parse(st.doc?.genAt || 0) || 0)
         nodes = st.graph?.nodes?.length || 0
         summary = st.ticket?.summary || null
+        type = st.ticket?.type || null
+        status = st.ticket?.status || null
+        fetchedAt = st.fetchedAt || null
         hasDoc = !!st.doc
       } catch {}
-      return { key, at, nodes, summary, hasDoc }
+      const a = art[key] || {}
+      return { key, at, nodes, summary, hasDoc, type, status, fetchedAt, hasAc: !!a.ac, hasTests: !!a.tests }
     }).sort((a, b) => b.at - a.at)
   } catch { return [] }
+}
+
+/** Just how many, for the workspace picker — listKeys() opens and parses every file to build cards. */
+function countKeys(project) {
+  try { return fs.readdirSync(ticketProjectDir(project)).filter(f => f.endsWith('.json')).length } catch { return 0 }
 }
 
 const sha = s => 'sha256:' + crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16)
@@ -220,41 +236,70 @@ ${qa.length ? `\n**Start with ${qa.slice(0, 3).map(x => `\`${x.name}\``).join(' 
 `
 }
 
-// An explicit binding beats any amount of inference. `resolveClone` matches the git origin remote,
-// which is right when it works and silent when it does not — a fork, a monorepo, a checkout with a
-// different remote name, or a project with no `githubRepo` configured at all all end up as "no
-// local checkout" with nothing the user can do about it from here. So: let them point at one of the
-// projects they have actually opened a session in, and remember it.
-const BINDINGS = () => path.join(TICKET_DIR, 'repo-bindings.json')
+// WORKSPACE -> JIRA BOARD. The direction matters and it used to run the other way.
+//
+// Before: the JIRA project key was the thing the user picked, and a folder was inferred from it by
+// matching `githubRepo` against a git origin remote. That inference is right when it works and
+// silent when it does not — a fork, a monorepo, a differently-named remote, or a project with no
+// `githubRepo` at all all ended as "no local checkout", which disabled design, files and grounded
+// generation with nothing the user could do about it from that screen.
+//
+// Now: the user picks the FOLDER, because that is the thing they are actually working in, the thing
+// agents run inside, and the thing saved tickets belong to. All that is left to determine is which
+// board its tickets come from — one key, chosen explicitly here or matched by git remote as a first
+// guess, and the UI says which of the two happened.
+//
+// Keying on the folder also fixes two things the old direction could not express: renaming a board
+// in projects.json no longer orphans anything, and two checkouts of the same board are distinct.
+const BINDINGS = () => path.join(TICKET_DIR, 'workspace-jira.json')
 const readBindings = () => { try { return JSON.parse(fs.readFileSync(BINDINGS(), 'utf8')) } catch { return {} } }
-function writeBinding(project, dir) {
+function writeBinding(ws, jiraKey) {
   const b = readBindings()
-  if (dir) b[project] = dir; else delete b[project]
+  if (jiraKey) b[ws] = jiraKey; else delete b[ws]
   fs.mkdirSync(TICKET_DIR, { recursive: true })
   fs.writeFileSync(BINDINGS(), JSON.stringify(b, null, 2))
   return b
 }
 
-/** Where a design run for this project would execute, and why it can or cannot. */
-function repoFor(cfg) {
-  const withCaps = (dir, how, repo, reason) => {
-    if (!dir) return { dir: null, how: null, repo: repo || null, reason }
-    const caps = detectCapabilities(dir)
-    return { dir, how, repo: repo || null, reason: null, skills: caps.skills.map(s => s.name), commands: caps.commands.map(c => c.name) }
+/**
+ * The workspaces a user can select: every folder they have opened a session in, plus its JIRA board
+ * if one can be determined. The FOLDER is the unit — it is what they pick, what agents run inside,
+ * and what saved tickets hang off.
+ */
+function listWorkspaces() {
+  const projects = loadProjects()
+  const bindings = readBindings()
+  return listLocalProjects().map(l => {
+    const id = workspaceId(l.dir)
+    // Explicit choice first, then a git-remote match against a configured board.
+    const jiraKey = bindings[id] || projects.find(p => p.githubRepo && l.slug && p.githubRepo.toLowerCase() === l.slug.toLowerCase())?.key || null
+    const cfg = jiraKey ? projects.find(p => p.key === jiraKey) : null
+    const caps = detectCapabilities(l.dir)
+    return {
+      id, dir: l.dir, name: l.name, slug: l.slug, isGit: l.isGit, lastActive: l.lastActive,
+      jira: cfg ? { key: cfg.key, host: cfg.jiraHost || null, projectKey: cfg.jiraProjectKey, writes: cfg.writes === true } : null,
+      jiraBound: !!bindings[id],
+      skills: caps.skills.map(s => s.name),
+      saved: countKeys(id),
+    }
+  })
+}
+const workspaceById = id => listWorkspaces().find(w => w.id === id) || null
+
+/**
+ * Where a run for this workspace executes. There is nothing to infer any more: the user selected a
+ * folder, so that folder IS the working directory. `resolveClone`'s git-remote matching was only
+ * ever a way to guess this, and guessing failed silently on forks, monorepos and differently-named
+ * remotes — which disabled design, files and grounded generation with no recourse on that screen.
+ */
+function repoFor(ws) {
+  if (!ws?.dir) return { dir: null, how: null, repo: null, reason: 'no project selected' }
+  if (!fs.existsSync(ws.dir)) return { dir: null, how: null, repo: ws.slug || null, reason: `${ws.dir} no longer exists on disk` }
+  const caps = detectCapabilities(ws.dir)
+  return {
+    dir: ws.dir, how: 'selected', repo: ws.slug || null, reason: null,
+    skills: caps.skills.map(s => s.name), commands: caps.commands.map(c => c.name),
   }
-  // 1. an explicit binding, if the directory is still there
-  const bound = readBindings()[cfg?.key]
-  if (bound && fs.existsSync(bound)) return withCaps(bound, 'bound', cfg?.githubRepo)
-  // 2. the git-remote match
-  if (cfg?.githubRepo) {
-    const r = resolveClone(cfg.githubRepo)
-    if (r) return withCaps(r.dir, r.how, cfg.githubRepo)
-    return withCaps(null, null, cfg.githubRepo,
-      `no local checkout matched ${cfg.githubRepo} by git remote — pick the folder yourself below, or open it once in Claude Code so it is registered`)
-  }
-  // 3. nothing configured and nothing bound — still fixable from here, so say how
-  return withCaps(null, null, null,
-    `project ${cfg?.key || '?'} has no githubRepo in projects.json — pick the folder to work in below, or add the repo in Setup`)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -369,29 +414,53 @@ Rules for the graph:
 
 // ---------------------------------------------------------------------------------------------
 export default function mountTicket(app) {
-  // The PROJECT is the scope, and it is chosen before a key is typed — it decides the JIRA host,
-  // the repository the design agent reads, and which saved tickets are listed. So it is required and
-  // explicit here rather than guessed from the key's prefix. The prefix is still checked, but only
-  // to warn: a key from another board is usually a paste mistake, and silently retargeting it would
-  // resolve the ticket against the wrong host and the wrong repo.
-  const resolve = (req, res) => {
+  // The WORKSPACE is the scope, and it is chosen before a key is typed. It decides the folder agents
+  // run in, which saved tickets are listed, and — through its board link — the host the key is
+  // fetched from. `?project=` is still accepted as the workspace id so nothing already open breaks.
+  //
+  // The key's own prefix is NEVER used to pick a scope. It is compared, but only to warn: a key from
+  // another board is usually a paste mistake, and silently retargeting it would resolve the ticket
+  // against the wrong host and run an agent in the wrong checkout.
+  const resolveWs = (req, res) => {
     const key = normalizeKey(req.params.key)
     if (!key) { res.status(400).json({ error: `"${req.params.key}" is not a JIRA key — expected something like ABC-1234` }); return null }
-    const asked = req.query.project || req.body?.project
+    const asked = req.query.workspace || req.body?.workspace || req.query.project || req.body?.project
     if (!asked) { res.status(400).json({ error: 'a project is required — select one before opening a ticket' }); return null }
-    const cfg = cfgFor(Array.isArray(asked) ? asked[0] : asked)
-    if (!cfg) {
-      const known = loadProjects().map(p => p.key)
+    // String()/[0], not `asked` directly: Express turns `?workspace[]=a&workspace[]=b` into an ARRAY
+    // and `?workspace[x]=y` into an OBJECT. See the note above cfgFor in server/eng.mjs — the same
+    // shape once took the whole dashboard down.
+    const id = String(Array.isArray(asked) ? asked[0] : asked)
+    const ws = workspaceById(id)
+    if (!ws) {
       res.status(404).json({
-        error: `no project called "${String(asked)}" is configured`,
-        detail: known.length ? `configured projects: ${known.join(', ')}` : 'no projects are configured yet — add one in Setup',
+        error: `"${id}" is not one of your open projects`,
+        detail: 'select a project you have opened a session in',
         available: false,
       })
       return null
     }
-    const prefix = key.split('-')[0]
+    return { key, ws }
+  }
+
+  // Everything the board decides — the host, the write gate, a live fetch. Routes that only touch
+  // this machine's own state (forgetting a cached ticket, discarding a partial document) use
+  // resolveWs instead: demanding a board there made an unlinked folder's saved tickets impossible
+  // to delete, which is the same dead end the workspace model exists to remove.
+  const resolve = (req, res) => {
+    const r = resolveWs(req, res); if (!r) return null
+    if (!r.ws.jira) {
+      res.status(400).json({
+        error: `${r.ws.name} is not linked to a JIRA board yet`,
+        detail: 'choose which board its tickets come from, next to the project name',
+        available: false,
+      })
+      return null
+    }
+    const cfg = cfgFor(r.ws.jira.key)
+    if (!cfg) { res.status(404).json({ error: `the board "${r.ws.jira.key}" linked to ${r.ws.name} is no longer configured`, available: false }); return null }
+    const prefix = r.key.split('-')[0]
     const mismatch = prefix !== cfg.jiraProjectKey && prefix !== cfg.key ? prefix : null
-    return { key, cfg, mismatch }
+    return { ...r, cfg, mismatch }
   }
 
   // ---- the tab's own index ----
@@ -400,64 +469,50 @@ export default function mountTicket(app) {
   // Recents are per project because the project is the scope: a ticket saved under one board's
   // configuration has nothing to say about another's.
   app.get('/api/ticket/index', (req, res) => {
-    const projects = loadProjects().map(p => {
-      const r = repoFor(p)
-      return {
-        key: p.key, jiraProjectKey: p.jiraProjectKey, name: p.name, jiraHost: p.jiraHost || null,
-        githubRepo: p.githubRepo || null, repoDir: r.dir, repoHow: r.how, repoReason: r.reason,
-        writes: p.writes === true, skills: r.skills || [], commands: r.commands || [],
-        saved: listKeys(p.key).length,
-      }
-    })
-    const asked = req.query.project
-    const sel = asked ? projects.find(p => p.key === String(asked).toUpperCase()) : null
+    const workspaces = listWorkspaces()
+    const asked = req.query.workspace || req.query.project
+    const sel = asked ? workspaces.find(w => w.id === String(asked)) : null
     res.json({
-      available: projects.length > 0,
-      projects,
-      project: sel?.key || null,
-      recent: sel ? listKeys(sel.key).slice(0, 20) : [],
-      // The folders you have opened a session in — the same set the Projects tab lists. Offered so
-      // a project whose remote does not match is something you can fix here rather than a dead end.
-      localProjects: listLocalProjects(),
-      bindings: readBindings(),
+      available: workspaces.length > 0,
+      workspaces,
+      // The boards a workspace can be linked to. Listed separately because a workspace with no link
+      // is a state the user can fix here, not a dead end.
+      boards: loadProjects().map(p => ({ key: p.key, name: p.name, jiraHost: p.jiraHost || null, jiraProjectKey: p.jiraProjectKey, githubRepo: p.githubRepo || null })),
+      workspace: sel?.id || null,
+      saved: sel ? listKeys(sel.id) : [],
       runs: [...runs.values()].filter(r => !r.done).map(runView),
     })
   })
 
-  /** Bind a JIRA project to a folder on disk (or clear the binding and fall back to remote matching). */
-  app.post('/api/ticket/project/:project/repo', (req, res) => {
-    const cfg = cfgFor(req.params.project)
-    if (!cfg) return res.status(404).json({ error: `no project called "${req.params.project}" is configured` })
-    const dir = req.body?.dir ? String(req.body.dir) : null
-    if (dir) {
-      // Only a directory the user has actually opened a session in. This endpoint must not become a
-      // way to point an agent with --dangerously-skip-permissions at an arbitrary path.
-      if (!listLocalProjects().some(p => p.dir === dir)) {
-        return res.status(400).json({ error: 'that folder is not one of your registered projects — open it once in Claude Code first' })
-      }
-      if (!fs.existsSync(dir)) return res.status(400).json({ error: `${dir} no longer exists` })
-    }
-    writeBinding(cfg.key, dir)
-    capCache.delete(dir || '')
-    res.json({ ok: true, repo: repoFor(cfg) })
+  /** Link a workspace to the JIRA board its tickets come from (or clear the link). */
+  app.post('/api/ticket/workspace/:id/jira', (req, res) => {
+    const ws = workspaceById(req.params.id)
+    if (!ws) return res.status(404).json({ error: 'not one of your open projects' })
+    const key = req.body?.jiraKey ? String(req.body.jiraKey).toUpperCase() : null
+    if (key && !cfgFor(key)) return res.status(400).json({ error: `no board called "${key}" is configured — add it in Setup` })
+    writeBinding(ws.id, key)
+    res.json({ ok: true, workspace: workspaceById(ws.id) })
   })
 
   /** Forget a saved ticket — the cache is the user's, so removing an entry has to be possible. */
   app.delete('/api/ticket/:key/saved', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    try { fs.unlinkSync(ticketStateFile(r.cfg.key, r.key)) } catch {}
+    const r = resolveWs(req, res); if (!r) return
+    try { fs.unlinkSync(ticketStateFile(r.ws.id, r.key)) } catch {}
     res.json({ ok: true })
   })
 
   // ---- key-first fetch. Never blocks on a snapshot, and never re-fetches what is already on disk. ----
   app.get('/api/ticket/:key', async (req, res) => {
     const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
-    const repo = repoFor(r.cfg)
+    const s = readState(r.ws.id, r.key)
+    const repo = repoFor(r.ws)
     const envelope = (d, cached, fetchedAt) => ({
       available: true, ...d,
       artifacts: artifactsFor(d),
+      // `project` stays for the JIRA board (host, write gate); `workspace` is the folder that every
+      // subsequent request scopes to. The client sends the workspace id back, never the board key.
       project: { key: r.cfg.key, jiraHost: r.cfg.jiraHost, githubRepo: r.cfg.githubRepo, writes: r.cfg.writes === true },
+      workspace: { id: r.ws.id, name: r.ws.name, dir: r.ws.dir },
       repo: { dir: repo.dir, how: repo.how, reason: repo.reason },
       url: r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : null,
       // Cached content is LABELLED as cached, with its age. Serving yesterday's ticket as though it
@@ -476,7 +531,7 @@ export default function mountTicket(app) {
     try {
       const d = await ticketDetail(r.cfg, r.key)     // waitForPrs:false, withCommits:false — the fast path
       const fetchedAt = new Date().toISOString()
-      writeState(r.cfg.key, r.key, { ...s, ticket: d, fetchedAt })
+      writeState(r.ws.id, r.key, { ...s, ticket: d, fetchedAt })
       res.json(envelope(d, false, fetchedAt))
     } catch (e) {
       // A failed refresh must not lose what we already had — serving the cached copy with the
@@ -502,14 +557,14 @@ export default function mountTicket(app) {
     const r = resolve(req, res); if (!r) return
     const kind = req.body?.kind
     if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
-    const repo = repoFor(r.cfg)
+    const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
 
     const live = [...runs.values()].filter(x => !x.done)
     const sameRepo = live.find(x => x.cwd === repo.dir)
     if (sameRepo) return res.status(409).json({ error: `${sameRepo.key} is running a design in ${repo.repo} — one agent per repository at a time` })
 
-    const s = readState(r.cfg.key, r.key)
+    const s = readState(r.ws.id, r.key)
     let d
     try { d = s.ticket || await ticketDetail(r.cfg, r.key) }
     catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
@@ -562,8 +617,8 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
 
   // ---- design state ----
   app.get('/api/ticket/:key/design', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     let doc = s.doc
     if (doc?.path) {
       // The document lives in the user's repo and can be edited or deleted there. Report what is
@@ -576,7 +631,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     const diverged = !!(doc?.exists && s.graph && s.graph.derivedFromDocSha && s.graph.derivedFromDocSha !== doc.sha)
     const bt = boardTicket(s.board?.id)
     res.json({
-      ...s, doc, diverged, run: runView(runs.get(r.key)), repo: repoFor(r.cfg),
+      ...s, doc, diverged, run: runView(runs.get(r.key)), repo: repoFor(r.ws),
       // Read live, not from our own copy: the whole point of the handoff is that the Ticket tab can
       // show where the work actually got to. A stale cached stage would defeat it.
       board: s.board ? { ...s.board, stage: bt?.stage ?? null, gone: !bt, title: bt?.title ?? null } : null,
@@ -585,8 +640,8 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   })
 
   app.get('/api/ticket/:key/design/doc', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const p = readState(r.cfg.key, r.key).doc?.path
+    const r = resolveWs(req, res); if (!r) return
+    const p = readState(r.ws.id, r.key).doc?.path
     if (!p) return res.status(404).json({ error: 'no design document has been generated for this ticket' })
     try { res.json({ path: p, md: fs.readFileSync(p, 'utf8') }) }
     catch { res.status(404).json({ error: 'the design document is gone from disk', path: p }) }
@@ -599,7 +654,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     if (live.some(x => x.key === r.key)) return res.status(409).json({ error: 'a run is already in flight for this ticket' })
     if (live.length >= MAX_CONCURRENT) return res.status(429).json({ error: `${live.length} design runs are already in flight (${live.map(x => x.key).join(', ')}) — wait, or cancel one` })
 
-    const repo = repoFor(r.cfg)
+    const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
     // §per-repo lock — the global cap alone let two tickets run agents in the SAME working tree.
     // Both would read a tree the other might be mid-write in, and both write into the same specs
@@ -659,7 +714,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
           if (clean) { try { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.renameSync(stageAbs, abs) } catch (e) { run.error = `wrote ${run.stageRel} but could not move it into place: ${e.message}` } }
           else partial = { rel: run.stageRel, path: stageAbs, bytes: (() => { try { return fs.statSync(stageAbs).size } catch { return 0 } })() }
         }
-        const s = readState(r.cfg.key, r.key)
+        const s = readState(r.ws.id, r.key)
         let doc = s.doc
         if (fs.existsSync(abs) && clean) {
           const body = fs.readFileSync(abs, 'utf8')
@@ -692,7 +747,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
             at: new Date().toISOString(),
           }
         }
-        writeState(r.cfg.key, r.key, next)
+        writeState(r.ws.id, r.key, next)
         } catch (e) {
           run.error = run.error || `the run finished but its result could not be saved: ${e.message}`
         } finally {
@@ -731,10 +786,10 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   // The preview is the point: a regeneration reconciles against hand edits, and the user has to be
   // able to see kept/added/dropped and keep their own nodes before it lands.
   app.post('/api/ticket/:key/design/rederive', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     if (!s.pending) return res.status(404).json({ error: 'nothing pending' })
-    if (req.body?.action === 'discard') return res.json(writeState(r.cfg.key, r.key, { ...s, pending: null, rev: s.rev + 1 }))
+    if (req.body?.action === 'discard') return res.json(writeState(r.ws.id, r.key, { ...s, pending: null, rev: s.rev + 1 }))
 
     // `keep` names nodes the user chose to rescue from the dropped list. A node the model omitted
     // is not thereby proven wrong, and silently discarding hand-work to a background regeneration
@@ -749,7 +804,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     for (const e of s.graph?.edges || []) {
       if (have.has(e.source) && have.has(e.target) && !graph.edges.some(x => x.id === e.id)) graph.edges.push(e)
     }
-    res.json(writeState(r.cfg.key, r.key, { ...s, graph: layout(graph), pending: null, rev: s.rev + 1 }))
+    res.json(writeState(r.ws.id, r.key, { ...s, graph: layout(graph), pending: null, rev: s.rev + 1 }))
   })
 
   // ---- hand the ticket to the Task Board pipeline ----
@@ -758,9 +813,9 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   // path so the link works in both directions rather than being a one-way paste into `desc`.
   app.post('/api/ticket/:key/board', async (req, res) => {
     const r = resolve(req, res); if (!r) return
-    const repo = repoFor(r.cfg)
+    const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
-    const s = readState(r.cfg.key, r.key)
+    const s = readState(r.ws.id, r.key)
     let d
     try { d = await ticketDetail(r.cfg, r.key) }
     catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
@@ -783,7 +838,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       })
       if (!r2.ok) throw new Error(`board ${r2.status}: ${(await r2.text()).slice(0, 200)}`)
       const t = await r2.json()
-      writeState(r.cfg.key, r.key, { ...s, board: { id: t.id, at: new Date().toISOString(), project: repo.dir } })
+      writeState(r.ws.id, r.key, { ...s, board: { id: t.id, at: new Date().toISOString(), project: repo.dir } })
       res.json({ ok: true, id: t.id, stage: t.stage })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -792,7 +847,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   // Deleting it is the USER's call, never the server's, and the path is derived here rather than
   // accepted from the request so this cannot become an arbitrary-delete endpoint.
   app.delete('/api/ticket/:key/design/partial', (req, res) => {
-    const r = resolve(req, res); if (!r) return
+    const r = resolveWs(req, res); if (!r) return
     const run = runs.get(r.key)
     if (!run?.partial) return res.status(404).json({ error: 'no partial document for this ticket' })
     try { fs.unlinkSync(run.partial.path); run.partial = null; res.json({ ok: true }) }
@@ -801,8 +856,8 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
 
   // ---- re-extract the graph from the document: the cheap retry ----
   app.post('/api/ticket/:key/design/extract', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     // Falls back to the run's own stored output, so the retry button works without the client
     // having to keep megabytes of model text it never sees. Without this the endpoint was
     // uncallable — which is why design.md's "retry button" never existed.
@@ -811,14 +866,14 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     const parsed = parseGraph(raw)
     if (!parsed.graph.nodes.length) return res.status(422).json({ error: parsed.error || 'no graph could be extracted', warnings: parsed.warnings })
     const merged = s.graph ? mergeGraph(s.graph, parsed.graph) : { graph: parsed.graph, report: null }
-    const out = writeState(r.cfg.key, r.key, { ...s, graph: { ...layout(merged.graph), derivedFromDocSha: s.doc?.sha || null, genAt: new Date().toISOString() }, warnings: parsed.warnings, rev: (s.rev || 0) + 1, mergeReport: merged.report })
+    const out = writeState(r.ws.id, r.key, { ...s, graph: { ...layout(merged.graph), derivedFromDocSha: s.doc?.sha || null, genAt: new Date().toISOString() }, warnings: parsed.warnings, rev: (s.rev || 0) + 1, mergeReport: merged.report })
     res.json(out)
   })
 
   // ---- structural edit, guarded by rev ----
   app.put('/api/ticket/:key/design/graph', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     const want = Number(req.get('if-match') ?? req.body?.rev)
     if (Number.isFinite(want) && want !== s.rev) return res.status(409).json({ error: 'this design changed elsewhere', rev: s.rev, yours: want, graph: s.graph })
     // trustPositions: this is a HAND edit, so the coordinates in it are the user's, not a model's.
@@ -832,30 +887,30 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       // of them, quietly freezing the diagram.
       n.data.origin = sent.get(n.id)?.data?.origin || prevById.get(n.id)?.data?.origin || 'user'
     }
-    res.json(writeState(r.cfg.key, r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph?.derivedFromDocSha ?? null }, warnings, rev: s.rev + 1 }))
+    res.json(writeState(r.ws.id, r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph?.derivedFromDocSha ?? null }, warnings, rev: s.rev + 1 }))
   })
 
   // ---- positions only. No precondition: last-write-wins is correct for coordinates. ----
   app.patch('/api/ticket/:key/design/layout', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     if (!s.graph) return res.status(404).json({ error: 'no graph yet' })
     const pos = req.body?.positions || {}
     const nodes = s.graph.nodes.map(n => (pos[n.id] && Number.isFinite(pos[n.id].x) && Number.isFinite(pos[n.id].y) ? { ...n, position: { x: Math.round(pos[n.id].x), y: Math.round(pos[n.id].y) } } : n))
-    writeState(r.cfg.key, r.key, { ...s, graph: { ...s.graph, nodes } })   // rev deliberately unchanged
+    writeState(r.ws.id, r.key, { ...s, graph: { ...s.graph, nodes } })   // rev deliberately unchanged
     res.json({ ok: true, rev: s.rev })
   })
 
   // ---- ops proposed by chat, applied by the user ----
   app.post('/api/ticket/:key/design/ops', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     if (!s.graph) return res.status(404).json({ error: 'no graph yet' })
     const want = Number(req.get('if-match') ?? req.body?.rev)
     if (Number.isFinite(want) && want !== s.rev) return res.status(409).json({ error: 'this design changed elsewhere', rev: s.rev, yours: want })
     const { graph, results } = applyOps(s.graph, req.body?.ops)
     if (!results.some(x => x.ok)) return res.status(422).json({ error: 'no op could be applied', results })
-    const out = writeState(r.cfg.key, r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph.derivedFromDocSha ?? null }, rev: s.rev + 1 })
+    const out = writeState(r.ws.id, r.key, { ...s, graph: { ...layout(graph), derivedFromDocSha: s.graph.derivedFromDocSha ?? null }, rev: s.rev + 1 })
     res.json({ ...out, results })
   })
 
@@ -864,13 +919,13 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   // assistant with write access to the artifact turns every hallucination into a silent edit.
   // Resumes the design run's own session so a turn costs a question, not the whole plan again.
   app.post('/api/ticket/:key/design/chat', async (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     if (!s.graph) return res.status(404).json({ error: 'no design graph yet — run a design first' })
     const question = String(req.body?.text || '').trim()
     if (!question) return res.status(400).json({ error: 'text required' })
-    const cwd = s.chat?.cwd || s.cwd || repoFor(r.cfg).dir
-    if (!cwd) return res.status(400).json({ error: repoFor(r.cfg).reason })
+    const cwd = s.chat?.cwd || s.cwd || repoFor(r.ws).dir
+    if (!cwd) return res.status(400).json({ error: repoFor(r.ws).reason })
 
     const focus = (req.body?.nodeIds || []).map(id => s.graph.nodes.find(n => n.id === id)).filter(Boolean)
     const shape = s.graph.nodes.map(n => `  - id: ${n.id}\n    label: ${n.data.label}\n    type: ${n.type}${n.data.files?.length ? `\n    files: ${n.data.files.map(f => f.rel).join(', ')}` : ''}`).join('\n')
@@ -911,19 +966,19 @@ say so. You are proposing; the user decides what to apply.`
     // Persist only the session POINTER. The CLI already keeps the transcript on disk and
     // historyEvents() reads it back; a second copy here would grow without bound and would put a
     // plane-B artifact into a store the Ticket tab hands around.
-    if (out.sessionId) writeState(r.cfg.key, r.key, { ...readState(r.cfg.key, r.key), chat: { sessionId: out.sessionId, cwd } })
+    if (out.sessionId) writeState(r.ws.id, r.key, { ...readState(r.ws.id, r.key), chat: { sessionId: out.sessionId, cwd } })
     res.json({ text: out.result, ops, cost: out.cost ?? null, sessionId: out.sessionId || null })
   })
 
   app.get('/api/ticket/:key/design/mermaid', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
     if (!s.graph) return res.status(404).json({ error: 'no graph yet' })
     res.type('text/plain').send(toMermaid(s.graph))
   })
 
   app.delete('/api/ticket/:key/design', (req, res) => {
-    const r = resolve(req, res); if (!r) return
+    const r = resolveWs(req, res); if (!r) return
     try { fs.unlinkSync(ticketStateFile(r.key)) } catch {}
     res.json({ ok: true })
   })
@@ -932,9 +987,9 @@ say so. You are proposing; the user decides what to apply.`
   // The three tiers are the deliverable. A file the plan says it will CREATE that already exists is
   // reclassified as an edit (with a warning) rather than shown in a tier that promises no metrics.
   app.get('/api/ticket/:key/files', (req, res) => {
-    const r = resolve(req, res); if (!r) return
-    const s = readState(r.cfg.key, r.key)
-    const repo = repoFor(r.cfg)
+    const r = resolveWs(req, res); if (!r) return
+    const s = readState(r.ws.id, r.key)
+    const repo = repoFor(r.ws)
     if (!s.graph) return res.json({ available: false, reason: 'no design graph yet — run a design first' })
     if (!repo.dir) return res.json({ available: false, reason: repo.reason })
 
@@ -991,7 +1046,7 @@ say so. You are proposing; the user decides what to apply.`
       note: 'no data-flow edges are drawn between planned-new files — there is no source to parse',
     }
     const computedAt = new Date().toISOString()
-    writeState(r.cfg.key, r.key, { ...readState(r.cfg.key, r.key), files: { stamp, payload }, filesAt: computedAt })
+    writeState(r.ws.id, r.key, { ...readState(r.ws.id, r.key), files: { stamp, payload }, filesAt: computedAt })
     res.json({ ...payload, cached: false, computedAt })
   })
 }

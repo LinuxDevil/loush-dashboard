@@ -270,24 +270,57 @@ The new feature inherits all four. Detail and reproduction in `findings.md` §2.
 
 All `/api/ticket/*` → `server/ticket.mjs`. AC/tests stay on `/api/eng/*`.
 
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/api/ticket/:key` | key-first fetch; `available:false` + reason when unconfigured |
-| `GET` | `/api/ticket/:key/design` | `{rev, doc, graph, warnings, run}` |
-| `POST` | `/api/ticket/:key/design/run` | async spawn, streamed; 429 at the existing 3-run cap |
-| `GET` | `/api/ticket/:key/design/events` | SSE, replay-then-live |
-| `POST` | `/api/ticket/:key/design/extract` | re-run the cheap doc→graph pass — the retry button |
-| `PUT` | `/api/ticket/:key/design/graph` | full replace; `If-Match: <rev>`; 409 on mismatch |
-| `PATCH` | `/api/ticket/:key/design/layout` | **positions only**, debounced; no precondition |
-| `POST` | `/api/ticket/:key/design/ops` | ordered op list from chat; validated; `If-Match` |
-| `GET` | `/api/ticket/:key/files` | `{verified, plannedEdits, plannedNew, stats}` |
+### The scope every route takes
+
+Every keyed route carries `?workspace=<id>` — the FOLDER the user selected, not a JIRA project key.
+The key's own prefix is never used to pick a scope; it is compared only to warn, because silently
+retargeting a pasted key resolves it against the wrong host and runs an agent in the wrong checkout.
+
+Two resolvers, and the difference is load-bearing:
+
+- **`resolveWs`** — a valid key and a folder from the registered set. Everything that only touches
+  this machine's own state: reading or editing a graph, forgetting a cached ticket, discarding a
+  partial document, listing files.
+- **`resolve`** — the above *plus* a linked JIRA board. Only the four routes that actually talk to
+  JIRA: the live fetch, generation, a design run and the Task Board handoff.
+
+Getting this wrong is not theoretical — it shipped once. `DELETE /saved` went through the
+board-requiring resolver, so a folder whose board link was cleared held saved tickets that could
+never be deleted. Pinned by `test/server/ticket.test.mjs`.
+
+| Method | Path | Scope | Notes |
+|---|---|---|---|
+| `GET` | `/api/ticket/index` | — | workspaces, boards, and the selected workspace's saved tickets |
+| `POST` | `/api/ticket/workspace/:id/jira` | folder | link a folder to the board its tickets come from, or clear it |
+| `GET` | `/api/ticket/:key` | + board | key-first fetch; disk first, `?fresh=1` to re-fetch |
+| `DELETE` | `/api/ticket/:key/saved` | folder | forget one cached ticket — the cache is the user's |
+| `POST` | `/api/ticket/:key/generate` | + board | AC/tests, grounded in the selected folder |
+| `GET` | `/api/ticket/:key/design` | folder | `{rev, doc, graph, warnings, run}` |
+| `POST` | `/api/ticket/:key/design/run` | + board | async spawn, streamed; 429 at the existing run cap |
+| `GET` | `/api/ticket/:key/design/events` | — | SSE, replay-then-live |
+| `POST` | `/api/ticket/:key/design/extract` | folder | re-run the cheap doc→graph pass — the retry button |
+| `POST` | `/api/ticket/:key/design/rederive` | folder | apply/discard the three-way merge preview |
+| `PUT` | `/api/ticket/:key/design/graph` | folder | full replace; `If-Match: <rev>`; 409 on mismatch |
+| `PATCH` | `/api/ticket/:key/design/layout` | folder | **positions only**, debounced; no precondition |
+| `POST` | `/api/ticket/:key/design/ops` | folder | ordered op list from chat; validated; `If-Match` |
+| `POST` | `/api/ticket/:key/design/chat` | folder | ask about the graph; returns ops, applies none |
+| `GET` | `/api/ticket/:key/files` | folder | `{verified, plannedEdits, plannedNew, stats}` |
+| `POST` | `/api/ticket/:key/board` | + board | hand off to the Task Board |
 
 ## 7. Storage
 
 `eng-artifacts.json` is wrong here: it is rewritten whole on every save (`:1192`), gitignored, and
 unversioned. Instead:
 
-- **One file per key** — `.ticket-state/<KEY>.json`, so a node drag rewrites ~8 KB, not the corpus.
+- **One file per key, partitioned by workspace** — `.ticket-state/<workspace-id>/<KEY>.json`, so a
+  node drag rewrites ~8 KB, not the corpus. The workspace id is `<basename>-<8 hex of sha256(path)>`,
+  so `~/work/api` and `~/fork/api` are distinct and both are recognisable on disk. It is derived
+  from the PATH, never from the JIRA key: keying on the board meant renaming it in `projects.json`
+  orphaned every saved ticket, and two checkouts of one board could not be told apart.
+  The pre-partition flat layout is still read, so nothing saved before this is orphaned.
+- **The folder→board link** — `.ticket-state/workspace-jira.json`, one key per workspace. A git
+  origin match against `githubRepo` is the first guess; an explicit choice wins and the UI says
+  which of the two happened.
 - **The design doc goes in the target repo**, git-tracked, written by the agent itself.
   ⚠ If that repo gitignores `docs/` — **as this one does at `.gitignore:21` while tracking 28 files
   under it** — surface *"this path is gitignored; `git add -f` to track it"* and **never run git

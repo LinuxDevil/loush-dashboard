@@ -28,7 +28,7 @@ const describe = o => {
   return o.op
 }
 
-export default function DesignChat({ tKey, project, graph, selected, rev, onApplied }) {
+export default function DesignChat({ tKey, workspace, graph, selected, rev, onApplied }) {
   const [log, setLog] = useState([])   // {role, text} | {role:'ops', ops, chosen:Set, applied}
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,7 +53,7 @@ export default function DesignChat({ tKey, project, graph, selected, rev, onAppl
     setText(''); setBusy(true)
     setLog(l => [...l, { role: 'user', text: question }])
     try {
-      const r = await api.post(`/api/ticket/${tKey}/design/chat?project=${project}`, { text: question, nodeIds: selected ? [selected] : [] })
+      const r = await api.post(`/api/ticket/${tKey}/design/chat?workspace=${workspace}`, { text: question, nodeIds: selected ? [selected] : [] })
       setLog(l => [...l, { role: 'assistant', text: r.text, cost: r.cost },
         ...(r.ops?.length ? [{ role: 'ops', ops: r.ops, chosen: new Set(r.ops.map((_, i) => i).filter(i => !String(r.ops[i].op).startsWith('remove'))) }] : [])])
     } catch (e) {
@@ -65,7 +65,7 @@ export default function DesignChat({ tKey, project, graph, selected, rev, onAppl
     const ops = entry.ops.filter((_, i) => entry.chosen.has(i))
     if (!ops.length) return
     try {
-      const out = await api.post(`/api/ticket/${tKey}/design/ops?project=${project}`, { ops, rev })
+      const out = await api.post(`/api/ticket/${tKey}/design/ops?workspace=${workspace}`, { ops, rev })
       const ok = (out.results || []).filter(r => r.ok).length
       const bad = (out.results || []).filter(r => !r.ok)
       setLog(l => l.map((e, i) => (i === idx ? { ...e, applied: { ok, bad } } : e)))

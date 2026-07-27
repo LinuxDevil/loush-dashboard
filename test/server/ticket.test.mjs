@@ -181,13 +181,29 @@ test('two projects may hold the same ticket key without colliding', async () => 
   assert.equal(path.basename(a), 'PROJ-1.json')
 })
 
-test('project and key segments are both hard-guarded against traversal', async () => {
+test('workspace and key segments are both hard-guarded against traversal', async () => {
   const { ticketStateFile } = await import('../../lib/paths.mjs')
   const p = ticketStateFile('../../etc', '../../../passwd')
   assert.ok(!p.includes('..'), p)
-  assert.ok(/ETC/.test(p) && /PASSWD\.json$/.test(p), p)
+  // The KEY is uppercased (JIRA keys are uppercase by convention, so `abc-1` and `ABC-1` are the
+  // same ticket). The WORKSPACE segment keeps its case, because it carries a readable folder
+  // basename and case-folding two sibling folders together would merge their saved tickets.
+  assert.ok(/[/\\]etc[/\\]/.test(p) && /PASSWD\.json$/.test(p), p)
   for (const bad of [['', 'A-1'], ['ABC', ''], [null, 'A-1'], ['ABC', '///']])
     assert.throws(() => ticketStateFile(bad[0], bad[1]), /invalid/, JSON.stringify(bad))
+})
+
+// A workspace id must survive a rename of anything ELSE and must not collide across checkouts —
+// it is the merge key for every saved ticket, so a collision serves one project's work under
+// another's name and a churn orphans the lot.
+test('a workspace id is derived from the path, and two checkouts of one repo differ', async () => {
+  const { workspaceId } = await import('../../lib/paths.mjs')
+  const a = workspaceId('/home/u/work/api'), b = workspaceId('/home/u/fork/api')
+  assert.notEqual(a, b, 'same basename, different path -> different id')
+  assert.equal(a, workspaceId('/home/u/work/api'), 'stable across calls')
+  assert.ok(a.startsWith('api-'), `readable on disk: ${a}`)
+  assert.ok(!/[^A-Za-z0-9_-]/.test(a), `path-safe: ${a}`)
+  assert.throws(() => workspaceId(''), /invalid/)
 })
 
 test('a project must be selected — the key prefix is not used to guess one', () => {
@@ -204,31 +220,69 @@ test('pre-partition state is still readable, so nothing is orphaned', () => {
   assert.ok(/legacyTicketStateFile\(key\)/.test(src), 'readState falls back to the flat layout')
 })
 
-// ── binding a project to a folder on disk ────────────────────────────────────────────────────────
-test('an explicit folder binding beats git-remote inference', () => {
+// ── the workspace, and the board it draws tickets from ──────────────────────────────────────────
+// The FOLDER is the unit the user selects. It is what agents run inside and what saved tickets hang
+// off. The JIRA key is a property of a board — keying on it meant renaming the board orphaned the
+// binding, and two checkouts of one board could not be told apart.
+test('the selected folder IS the working directory — nothing is inferred', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  const fn = src.slice(src.indexOf('function repoFor(cfg)'), src.indexOf('// ------', src.indexOf('function repoFor(cfg)')))
-  // Order matters: the binding is checked before resolveClone. Remote matching is right when it
-  // works and silent when it does not, and the user's explicit choice is not a fallback.
-  assert.ok(fn.indexOf('readBindings()') < fn.indexOf('resolveClone('), 'the binding is consulted first')
-  assert.ok(/fs\.existsSync\(bound\)/.test(fn), 'a binding to a folder that has gone away is ignored')
+  const fn = src.slice(src.indexOf('function repoFor(ws)'), src.indexOf('// ------', src.indexOf('function repoFor(ws)')))
+  assert.ok(fn.length > 0, 'repoFor takes the workspace')
+  assert.ok(!/resolveClone\(/.test(fn), 'no git-remote guessing decides where an agent runs')
+  assert.ok(/fs\.existsSync\(ws\.dir\)/.test(fn), 'a folder that has gone away is reported, not used')
 })
 
-test('binding only accepts a folder you have already opened a session in', () => {
+test('the workspace set is exactly the folders you have opened a session in', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  const route = src.slice(src.indexOf("app.post('/api/ticket/project/:project/repo'"), src.indexOf('// ---- key-first fetch'))
-  // This endpoint decides the cwd of an agent that runs with --dangerously-skip-permissions, so it
-  // must never accept an arbitrary path from the request body.
-  assert.ok(/listLocalProjects\(\)\.some\(p => p\.dir === dir\)/.test(route), 'the path is checked against the registered set')
-  assert.ok(/not one of your registered projects/.test(route), 'and the refusal says why')
+  const fn = src.slice(src.indexOf('function listWorkspaces()'), src.indexOf('const workspaceById'))
+  // Every cwd this feature can reach comes from here. It decides where an agent runs with
+  // --dangerously-skip-permissions, so it must be a registry read and never a path from a request.
+  assert.ok(/listLocalProjects\(\)/.test(fn), 'built from the registered project list')
+  assert.ok(/workspaceId\(l\.dir\)/.test(fn), 'ids are derived from those paths')
+  const link = src.slice(src.indexOf("app.post('/api/ticket/workspace/:id/jira'"), src.indexOf("app.delete('/api/ticket/:key/saved'"))
+  assert.ok(/workspaceById\(req\.params\.id\)/.test(link), 'the id is resolved against that set')
+  assert.ok(/not one of your open projects/.test(link), 'and the refusal says why')
+  // The body carries a BOARD KEY, never a directory — so no request can name a new cwd.
+  assert.ok(!/req\.body\?\.dir|body\.dir/.test(link), 'the request body cannot name a folder')
+  assert.ok(/cfgFor\(key\)/.test(link), 'and the board must already be configured')
 })
 
-test('a project with no githubRepo is still fixable, not a dead end', () => {
+test('a folder with no board is fixable on this screen, not a dead end', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  // The old message told the user to edit projects.json and stopped. Every unresolved case now
-  // names the action available on this screen.
-  assert.ok(/pick the folder to work in below/.test(src))
-  assert.ok(/pick the folder yourself below/.test(src))
+  assert.ok(/is not linked to a JIRA board yet/.test(src), 'the state is named')
+  assert.ok(/choose which board its tickets come from/.test(src), 'and so is the action')
+  const ui = fs.readFileSync(path.join(ROOT, 'src/sections/TicketSection.jsx'), 'utf8')
+  assert.ok(/api\.post\(`\/api\/ticket\/workspace\/\$\{cur\.id\}\/jira`/.test(ui), 'and the UI offers it')
+})
+
+// Found by running it: DELETE /saved went through the board-requiring resolver, so a folder whose
+// board link was cleared (or whose board was removed from projects.json) held saved tickets that
+// could never be deleted. Forgetting a cached file needs a folder, not a JIRA host.
+test('local-only routes need a folder, not a board', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const body = src.slice(src.indexOf('export default function mountTicket'))
+  // Only the four routes that actually talk to JIRA — the live fetch, generation, a design run and
+  // the board handoff — may demand a linked board. Everything else is this machine's own state.
+  const boardGated = (body.match(/const r = resolve\(req, res\)/g) || []).length
+  assert.equal(boardGated, 4, `only JIRA-touching routes gate on a board, found ${boardGated}`)
+  const route = body.slice(body.indexOf("app.delete('/api/ticket/:key/saved'"), body.indexOf("app.get('/api/ticket/:key',"))
+  assert.ok(/resolveWs\(req, res\)/.test(route), 'forgetting a cached ticket is not board-gated')
+  // resolveWs still refuses an unknown folder — it relaxes the board, never the cwd check.
+  const fn = body.slice(body.indexOf('const resolveWs ='), body.indexOf('const resolve ='))
+  assert.ok(/workspaceById\(id\)/.test(fn) && /is not one of your open projects/.test(fn))
+  assert.ok(/Array\.isArray\(asked\)/.test(fn), 'a repeated/bracketed query param cannot throw here')
+})
+
+test('saved tickets are listed as cards carrying what was already paid for', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  const fn = src.slice(src.indexOf('function listKeys(project)'), src.indexOf('/** Just how many'))
+  // A bare key forces the user to open a ticket to find out which one it is — which is the JIRA
+  // round trip the cache exists to avoid. Everything on the card is read from disk.
+  for (const field of ['summary', 'type', 'status', 'hasDoc', 'hasAc', 'hasTests', 'nodes'])
+    assert.ok(new RegExp(`\\b${field}\\b`).test(fn), `${field} is on a saved entry`)
+  const ui = fs.readFileSync(path.join(ROOT, 'src/sections/TicketSection.jsx'), 'utf8')
+  assert.ok(/function SavedCard\(/.test(ui), 'and rendered as a card')
+  assert.ok(/gridTemplateColumns: 'repeat\(auto-fill/.test(ui), 'in a grid')
 })
 
 // ── the project's own skills ─────────────────────────────────────────────────────────────────────
