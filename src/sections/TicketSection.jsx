@@ -75,6 +75,10 @@ const NotReady = ({ reason, detail, onNav, to = 'setup', cta = 'Open Setup →' 
 
 export default function TicketSection({ onNav }) {
   const [idx, setIdx] = useState(null)
+  // The PROJECT is chosen before a key is typed: it decides the JIRA host, the repository the design
+  // agent reads, and which saved tickets are listed. Remembered, because you work in one for a
+  // stretch — but never guessed on first run, because guessing resolves a key against the wrong host.
+  const [proj, setProj] = useState(() => { try { return localStorage.getItem('ticket.project') } catch { return null } })
   const [raw, setRaw] = useState('')
   const [key, setKey] = useState(null)
   const [t, setT] = useState(null)          // ticket payload
@@ -83,21 +87,26 @@ export default function TicketSection({ onNav }) {
   const [tab, setTab] = useState('Ticket')
   const inputRef = useRef(null)
 
-  useEffect(() => { api.get('/api/ticket/index').then(setIdx).catch(() => setIdx({ available: false, projects: [] })) }, [])
-  useEffect(() => { if (!key && inputRef.current) inputRef.current.focus() }, [key])
+  const loadIdx = useCallback(p => api.get(`/api/ticket/index${p ? `?project=${encodeURIComponent(p)}` : ''}`)
+    .then(setIdx).catch(() => setIdx({ available: false, projects: [] })), [])
+  useEffect(() => { loadIdx(proj) }, [proj, loadIdx])
+  // Focus the key field only once a project is chosen — before that there is nothing useful to type.
+  useEffect(() => { if (proj && !key && inputRef.current) inputRef.current.focus() }, [proj, key])
+  const pickProject = p => { setProj(p); setKey(null); setT(null); setRaw(''); setErr(null); try { localStorage.setItem('ticket.project', p) } catch {} }
 
   const open = useCallback((k, fresh) => {
     const norm = normalizeKey(k)
     if (!norm) { setErr({ reason: `"${k}" is not a JIRA key — expected something like ABC-1234` }); return }
+    if (!proj) { setErr({ reason: 'select a project first — it decides the JIRA host and the repository' }); return }
     setBusy(true); setErr(null); setKey(norm)
     // A refresh keeps you where you are; opening a DIFFERENT ticket must not leave you on the
     // Design tab looking at the previous ticket's diagram.
     if (!fresh) { setT(null); setTab('Ticket') }
-    api.get(`/api/ticket/${norm}${fresh ? '?fresh=1' : ''}`)
-      .then(d => { setT(d); api.get('/api/ticket/index').then(setIdx).catch(() => {}) })
+    api.get(`/api/ticket/${norm}?project=${encodeURIComponent(proj)}${fresh ? '&fresh=1' : ''}`)
+      .then(d => { setT(d); loadIdx(proj) })
       .catch(e => setErr({ reason: e.message, detail: e.detail }))
       .finally(() => setBusy(false))
-  }, [])
+  }, [proj, loadIdx])
 
   // Recents come from the SERVER's state files, not localStorage: they survive a different browser,
   // a cleared profile and a machine move, and they can carry the summary so the list is readable.
@@ -108,31 +117,61 @@ export default function TicketSection({ onNav }) {
 
   return (
     <div>
-      {/* ---- key entry ---- */}
+      {/* ---- 1. pick the project, 2. open a ticket in it ---- */}
       <div style={{ ...PANEL, padding: '14px 16px', marginBottom: 12 }}>
+        <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>
+          1 · Project
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          {(idx?.projects || []).map(p => {
+            const on = proj === p.key
+            return (
+              <button key={p.key} onClick={() => pickProject(p.key)} aria-pressed={on}
+                title={[p.jiraHost, p.githubRepo, p.repoDir || p.repoReason].filter(Boolean).join('\n')}
+                style={{ ...mini, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '7px 11px',
+                  ...(on ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }}>
+                <span style={{ font: `600 12px ${MONO}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{p.key}</span>
+                <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }}>
+                  {/* whether a design run is possible here, said up front rather than on failure */}
+                  {p.repoDir ? `✓ ${p.githubRepo}` : p.githubRepo ? '— no local checkout' : '— no repo configured'}
+                  {p.saved > 0 ? ` · ${p.saved} saved` : ''}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: proj ? 'var(--text-secondary)' : 'var(--text-tertiary)', marginBottom: 6 }}>
+          2 · Ticket
+        </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 240, position: 'relative' }}>
-            <input ref={inputRef} value={raw} placeholder="ABC-1234"
+            <input ref={inputRef} value={raw} disabled={!proj}
+              placeholder={proj ? `${idx?.projects?.find(p => p.key === proj)?.jiraProjectKey || proj}-1234` : 'select a project first'}
               aria-label="JIRA ticket key"
               onChange={e => { setRaw(e.target.value); setErr(null) }}
               onKeyDown={e => { if (e.key === 'Enter' && ghost) open(ghost) }}
               onPaste={e => { const v = normalizeKey(e.clipboardData.getData('text')); if (v && !raw.trim()) { e.preventDefault(); setRaw(v); open(v) } }}
-              style={{ font: `500 13px ${MONO}` }} />
+              style={{ font: `500 13px ${MONO}`, opacity: proj ? 1 : 0.5 }} />
             {ghost && ghost !== raw.trim().toUpperCase() && (
               <span style={{ position: 'absolute', right: 10, top: 7, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', pointerEvents: 'none' }}>→ {ghost}</span>
             )}
           </div>
-          <button className="primary" disabled={!ghost || busy} onClick={() => open(ghost)}>{busy ? 'opening…' : 'Open'}</button>
+          <button className="primary" disabled={!ghost || !proj || busy} onClick={() => open(ghost)}>{busy ? 'opening…' : 'Open'}</button>
         </div>
         <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginTop: 6 }}>
-          paste a browse URL or type the key — lowercase and <code>ABC 1234</code> are fine
+          {proj
+            ? <>paste a browse URL or type the key — lowercase and <code>ABC 1234</code> are fine</>
+            : 'saved tickets, the JIRA host and the repository a design reads are all per project'}
         </div>
         {err && <div style={{ marginTop: 10, background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)' }}>
           {err.reason}{err.detail ? <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{err.detail}</div> : null}
         </div>}
         {recent.length > 0 && !key && (
           <div style={{ marginTop: 12 }}>
-            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Recent · opens from cache, no JIRA call</span>
+            <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              Saved in {proj} · opens from cache, no JIRA call
+            </span>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 5 }}>
               {recent.map(x => (
                 <button key={x.key} style={{ ...mini, display: 'flex', gap: 8, alignItems: 'baseline', textAlign: 'left', width: '100%' }} onClick={() => { setRaw(x.key); open(x.key) }}>
@@ -144,21 +183,24 @@ export default function TicketSection({ onNav }) {
             </div>
           </div>
         )}
-        {idx && !key && (
-          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {idx.projects.map(p => (
-              <div key={p.key} style={{ display: 'flex', gap: 8, alignItems: 'baseline', font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>
-                <b style={{ color: 'var(--text-primary)', minWidth: 44 }}>{p.key}</b>
-                <span>{p.jiraHost || 'no host'}</span>
-                <span style={{ color: 'var(--text-secondary)' }}>{p.githubRepo || 'no repo'}</span>
-                {/* the ONE place the user learns why Design/Files may be unavailable */}
-                <span style={{ color: p.repoDir ? 'var(--green)' : 'var(--text-secondary)' }}>
-                  {p.repoDir ? `✓ checkout resolved${p.repoHow === 'basename' ? ' (by name)' : ''}` : '— no local checkout'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Detail for the SELECTED project only. The full list was here before the picker existed
+            and is now the picker's job; repeating it made the same facts appear twice. */}
+        {proj && !key && (() => {
+          const p = (idx?.projects || []).find(x => x.key === proj)
+          if (!p) return null
+          return (
+            <div style={{ marginTop: 12, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+              <span>{p.jiraHost || 'no JIRA host'}</span>
+              <span>{p.githubRepo || 'no repo configured'}</span>
+              <span style={{ color: p.repoHow === 'remote' ? 'var(--green)' : p.repoDir ? 'var(--amber)' : 'var(--text-secondary)' }}>
+                {p.repoHow === 'remote' ? '✓ checkout matched by git remote'
+                  : p.repoDir ? '≈ checkout matched by folder name only'
+                  : '— no local checkout: design, files and grounded generation are unavailable'}
+              </span>
+              {p.skills?.length > 0 && <span style={{ color: 'var(--green)' }}>{p.skills.length} project skill{p.skills.length > 1 ? 's' : ''} available to agents</span>}
+            </div>
+          )
+        })()}
       </div>
 
       {t?.available && (
@@ -217,6 +259,14 @@ const TicketRail = ({ t, busy, onRefresh, onClose }) => (
     </div>
     <div style={{ font: `600 15px ${HEAD}`, color: 'var(--text-primary)', marginTop: 6, lineHeight: 1.35 }}>{t.summary}</div>
     {t.refreshError && <div style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', marginTop: 4 }}>{t.refreshError}</div>}
+    {/* The selected project wins, but a key from another board is almost always a paste mistake, and
+        it would be resolved against this project's host and repository. Say so rather than obey
+        silently. */}
+    {t.keyPrefixMismatch && (
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', marginTop: 4 }}>
+        ⚠ this key starts with <b>{t.keyPrefixMismatch}</b>, but you have <b>{t.project?.key}</b> selected — it was opened against {t.project?.jiraHost || 'this project'}. Switch project if that is wrong.
+      </div>
+    )}
     {/* Which of YOUR project's skills the agent will be told to use. Detected from the checkout, so
         this is evidence rather than a promise — if it is empty, nothing was found and nothing will
         be invoked. */}

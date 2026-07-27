@@ -169,6 +169,41 @@ test('"files read" counts reads, not writes', () => {
   assert.ok(/!\['Write', 'Edit', 'MultiEdit', 'NotebookEdit'\]\.includes\(c\.name\)/.test(src))
 })
 
+// ── saved tickets are partitioned by project ─────────────────────────────────────────────────────
+test('two projects may hold the same ticket key without colliding', async () => {
+  const { ticketStateFile, ticketProjectDir } = await import('../../lib/paths.mjs')
+  // The project is the scope: it decides the JIRA host and the repository a design reads. A flat,
+  // key-keyed file would serve one project's ticket under another's configuration.
+  const a = ticketStateFile('ABC', 'PROJ-1')
+  const b = ticketStateFile('DEF', 'PROJ-1')
+  assert.notEqual(a, b, 'same key under two projects resolves to different files')
+  assert.equal(path.dirname(a), ticketProjectDir('ABC'))
+  assert.equal(path.basename(a), 'PROJ-1.json')
+})
+
+test('project and key segments are both hard-guarded against traversal', async () => {
+  const { ticketStateFile } = await import('../../lib/paths.mjs')
+  const p = ticketStateFile('../../etc', '../../../passwd')
+  assert.ok(!p.includes('..'), p)
+  assert.ok(/ETC/.test(p) && /PASSWD\.json$/.test(p), p)
+  for (const bad of [['', 'A-1'], ['ABC', ''], [null, 'A-1'], ['ABC', '///']])
+    assert.throws(() => ticketStateFile(bad[0], bad[1]), /invalid/, JSON.stringify(bad))
+})
+
+test('a project must be selected — the key prefix is not used to guess one', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  assert.ok(/a project is required — select one before opening a ticket/.test(src))
+  // The prefix is still compared, but only to warn: silently retargeting a pasted key would resolve
+  // it against the wrong host and the wrong repository.
+  assert.ok(/const mismatch = prefix !== cfg\.jiraProjectKey/.test(src), 'a mismatched prefix is detected')
+  assert.ok(/keyPrefixMismatch: r\.mismatch/.test(src), 'and reported to the client')
+})
+
+test('pre-partition state is still readable, so nothing is orphaned', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
+  assert.ok(/legacyTicketStateFile\(key\)/.test(src), 'readState falls back to the flat layout')
+})
+
 // ── the project's own skills ─────────────────────────────────────────────────────────────────────
 // Every agent run uses the target repository as its cwd, so that project's skills are loaded — but
 // the agent will not reach for them unless the prompt says they exist. These pin the two bugs found
