@@ -330,6 +330,12 @@ function DesignTab({ t, onNav }) {
     return () => { es.close(); clearInterval(tick) }
   }, [run?.done, run?.startedAt, t.key, load])
 
+  // Stable across renders on purpose: DesignCanvas re-binds its d3 drag handlers whenever this
+  // identity changes, and an inline arrow here would re-bind them on every parent render.
+  const move = useCallback(
+    pos => api.patch(`/api/ticket/${t.key}/design/layout?project=${t.project.key}`, { positions: pos }).catch(() => {}),
+    [t.key, t.project.key],
+  )
   const start = () => api.post(`/api/ticket/${t.key}/design/run?project=${t.project.key}`, {})
     .then(r => { setRun(r.run); setTail([]) }).catch(e => toast(e.message, 'error'))
   const cancel = () => api.post(`/api/ticket/${t.key}/design/cancel`, {}).then(load).catch(() => {})
@@ -414,8 +420,7 @@ function DesignTab({ t, onNav }) {
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               {mode === 'Canvas'
-                ? <DesignCanvas graph={g} selected={sel} onSelect={setSel} focusId={null}
-                    onMove={pos => api.patch(`/api/ticket/${t.key}/design/layout?project=${t.project.key}`, { positions: pos }).catch(() => {})} />
+                ? <DesignCanvas graph={g} selected={sel} onSelect={setSel} focusId={null} onMove={move} />
                 : <Outline graph={g} selected={sel} onSelect={setSel} />}
             </div>
             {sel && <Inspector node={nodes.find(n => n.id === sel)} graph={g} onClose={() => setSel(null)} />}

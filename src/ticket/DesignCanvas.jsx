@@ -134,7 +134,13 @@ export default function DesignCanvas({ graph, selected, onSelect, onMove, onDele
   return (
     <div ref={wrapRef}
       style={{ position: 'relative', overflow: 'hidden', background: 'var(--bg-inset)', border: '1px solid var(--border-default)', borderRadius: 8, height: 'min(62vh, 640px)', cursor: 'grab' }}>
-      <div ref={gRef} style={{ position: 'absolute', transformOrigin: '0 0', transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.k})`, width: extent.w, height: extent.h }}>
+      {/* role="listbox" is REQUIRED for the role="option" nodes below to be valid ARIA — an option
+          with no listbox ancestor is ignored, which would leave the whole canvas unannounced.
+          listbox/option is the closest real pattern to a node graph (there is no ARIA graph
+          pattern, and role="application" would suppress browse mode entirely). */}
+      <div ref={gRef} role="listbox" aria-multiselectable="false"
+        aria-label={`Design graph — ${nodes.length} components, ${edges.length} connections`}
+        style={{ position: 'absolute', transformOrigin: '0 0', transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.k})`, width: extent.w, height: extent.h }}>
         <svg width={extent.w} height={extent.h} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} aria-hidden="true">
           <defs>
             <marker id="dc-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">

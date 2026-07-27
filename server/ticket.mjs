@@ -94,6 +94,13 @@ function repoFor(cfg) {
 // bumps `tick`, which is in the section key, so a refresh click remounts the section and would tear
 // down a client-owned EventSource mid-run. Replay-then-live SSE means a remount reattaches.
 const runs = new Map() // key -> {key, kind, startedAt, events, listeners, child, done, error, cost, tools, files, cwd, docPath}
+const KEEP_FINISHED = 8   // a finished run holds its whole event buffer; keep a few for the "what
+                          // happened" panel and drop the rest, or a long-lived server accumulates
+                          // thousands of events per ticket forever.
+function pruneRuns() {
+  const finished = [...runs.values()].filter(r => r.done).sort((a, b) => b.startedAt - a.startedAt)
+  for (const r of finished.slice(KEEP_FINISHED)) runs.delete(r.key)
+}
 const MAX_EVENTS = 4000   // a long agentic run is thousands of events; replaying all of them on every
                           // remount is its own performance bug. Keep a bounded tail.
 const MAX_CONCURRENT = 2
@@ -275,6 +282,10 @@ export default function mountTicket(app) {
       onExit: ({ error }) => {
         run.done = true
         run.error = run.cancelled ? null : (error || null)
+        // Everything below writes state and closes listeners. If any of it throws, the listeners
+        // would hang open forever waiting for an end that never comes — so it is all guarded and
+        // the close happens in `finally`.
+        try {
         // Persist what the run produced. The document itself was written by the agent into the repo.
         const abs = path.join(repo.dir, docRel)
         const s = readState(r.key)
@@ -296,7 +307,13 @@ export default function mountTicket(app) {
           lastRun: { at: new Date(run.startedAt).toISOString(), cost: run.cost ?? null, ms: run.ms ?? null, tools: run.tools, filesRead: run.files.size, parsedHow: parsed.how, parseError: parsed.error },
           mergeReport: merged.report,
         })
-        for (const res2 of run.listeners) { try { res2.end() } catch {} }
+        } catch (e) {
+          run.error = run.error || `the run finished but its result could not be saved: ${e.message}`
+        } finally {
+          for (const res2 of run.listeners) { try { res2.end() } catch {} }
+          run.listeners.clear()
+          pruneRuns()
+        }
       },
     })
     res.json({ ok: true, run: runView(run), docRel })
