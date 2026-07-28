@@ -48,6 +48,7 @@ to `App.jsx` films itself with no edit to the script.
 
 - [The tour](#the-tour) — the whole app moving, every section, real data
 - [Working Set](#working-set--what-the-agent-did-to-your-code) — the flagship, zero config
+- [Todos](#todos--one-day-seven-stages-filed-by-file) — the day list, from what the agent actually touched
 - [Setup](#setup--every-config-and-credential-visually) — projects, credentials, work week
 - [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger
 - [Harness](#harness--sessions-forensics-and-usage) — sessions, forensics, usage
@@ -113,6 +114,44 @@ Every row ends in an action, and the actions run **inside the app**:
 **Zero external config.** No JIRA, no `gh`, no team file, no network. Repos are discovered from the
 `cwd` recorded in your own transcripts. The walk cap and unresolved-import count are printed on
 screen, because a graph that silently truncates is a poster, not an instrument.
+
+---
+
+## Todos — one day, seven stages, filed by file
+
+**The problem.** The Working Set tells you what the agent did to your code. Nothing told you what
+_you_ still owe on it. A note in a separate app has no idea which file it is about, and the Task
+Board is the agent's board — a ticket there moves stage because a run finished, owns a worktree and a
+branch, and is far too much machinery for _"chase the design review on the FAB"_.
+
+**What it does.** A checkable list scoped to **one day**, moving through the delivery stages your team
+actually uses — **Draft → In progress → Code review → Design QA → Manual QA → Ready for release →
+Live** — with every row optionally filed under the **directory and file** it belongs to.
+
+- **Two ways in.** A floating button on every screen opens a drawer for capture and ticking off
+  without losing your place (`Alt+T`); the **Todos** tab is the same list as a full board. The day
+  selected in one is the day shown in the other, and a tick in one lands in the other immediately.
+- **Two ways to read it.** _Board — by stage_ answers "what is stuck in Code review". _Tree — by
+  directory & file_ answers "what is outstanding in `src/sections`", which is the view a notes app
+  cannot give you.
+- **Checkable twice over.** Todos tick, and so do their sub-tasks. Ticking completes an item but never
+  promotes its stage — a Draft you decided was handled is a real state, and silently marking it Live
+  would claim something shipped that did not. Moving a todo _to_ Live does tick it; un-ticking a Live
+  todo walks it back a stage, because `live && !done` is not a real state.
+- **It starts from the current data.** The suggestion panel reads the same `~/.claude` transcripts
+  every other screen reads and lists **the files the agent edited on that day, in that repo**, grouped
+  directory → file, with edit counts, `+/-` line volume, sessions and the tool errors hit on each one.
+  One click files them as Draft todos already bound to their path, carrying that evidence on the card.
+- **Nothing is lost to the date scope.** Unfinished todos from earlier days surface in a carry-over
+  strip with a one-click _pull into today_ — a date-scoped list that hides yesterday is a to-do app
+  that loses to-dos.
+- **Honest when empty.** With no agent history the panel says so, in words, and explains that
+  hand-typed todos still work — it does not render an empty board as if there were nothing to do.
+
+State lives in `~/.claude/dashboard-todos.json` and is written through the same versioned `track()`
+path as every other write in this app, so a todo edit is backed up and rollback-able like a config
+change. The stage model is one module (`lib/todos.mjs`) imported by both the server and the browser:
+a second copy is exactly how a stage rename produces cards that render in no column.
 
 ---
 
@@ -504,6 +543,7 @@ calls onExit exactly once"_, where `onExit` never fires for a spawn of a missing
 | Endpoint                                                                                                                                                    | What                                                                                                               |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `GET /api/fe/workingset?root=&days=` · `GET /api/fe/dossier?root=&file=` · `POST /api/fe/mute`                                                              | Working Set: rework rank, import graph, coverage; per-file prompt→diff→error timeline and context bundle           |
+| `GET /api/todos?date=&root=` · `GET /api/todos/count?date=` · `GET /api/todos/suggest?date=&root=` · `POST /api/todos` · `POST /api/todos/{import,move}` · `PATCH\|DELETE /api/todos/:id` | Todos: one day's list with its carry-over and directory→file tree; the dock's badge count; the day's real agent activity to file from; create / bulk-file / move / patch (stage, done, sub-tasks) |
 | `GET /api/features`                                                                                                                                         | Which optional bundles are mounted (`companyTools`). The client reads this before deciding which nav entries exist |
 | `GET /api/constitution/*` · `GET /api/atoms/*` · `/api/figma-capture/*`                                                                                     | Only mounted when `Company_Tools` allows — otherwise these routes do not exist                                     |
 | `GET /api/setup` · `PUT /api/setup/{eng,project,credentials,notify}` · `DELETE /api/setup/project` · `POST /api/setup/test/jira` · `GET /api/setup/test/gh` | Visual config. **`GET /api/setup` never returns a secret value** — only `set: true\|false`                         |
