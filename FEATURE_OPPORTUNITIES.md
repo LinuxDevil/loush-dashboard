@@ -116,13 +116,13 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: `GovernanceSection.jsx` (Approvals tab) and the new Access tab (from the beadle item), plus documented as policy in `docs/`.
 - **Caveats**: Apache-2.0, documentation-level adoption.
 
-### 75-item production-readiness freeze audit
+### 75-item production-readiness freeze audit — IMPLEMENTED (with 017)
 - **Source**: A. claude-code-build-framework (RESEARCH_MERGED.md, Feature inventory; Recommended adoptions)
 - **What**: A numbered, categorized 75-item checklist (`FA-001`…`FA-075`) gating production release, emitting a `READY TO FREEZE` or `READ-ONLY PLAN` verdict token.
 - **Where to add**: new "Freeze audit" tab in `src/sections/GovernanceSection.jsx`; checklist data in a new `src/data/checklists/freeze-audit.js`; done-state persisted via the existing `track()` mechanism.
 - **Caveats**: MIT. ~20 of 75 items are Supabase/Discord/Railway/React-specific — tag them `appliesTo: supabase` and hide by default.
 
-### Auto-checkable subset of the freeze audit against a real repo
+### Auto-checkable subset of the freeze audit against a real repo — IMPLEMENTED
 - **Source**: A. claude-code-build-framework (RESEARCH_MERGED.md, Recommended adoptions)
 - **What**: Machine-verifiable checks for ~8 of the 75 audit items against a real checkout: `.claude/agents/` non-empty, `.claude/hooks/pre_tool_use.py` exists, `settings.json` has `hooks` + `permissions.defaultMode`, `settings.local.json` gitignored, `.env.example` keys match `process.env` usage, `git status` clean.
 - **Where to add**: new `/api/gov/freeze-audit?project=` endpoint in `server/index.mjs`, feeding the Freeze Audit tab with `auto: pass|fail|n-a` alongside manual ticks.
@@ -747,19 +747,19 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: `server/index.mjs` — `KINDS`, `itemFile()`, `/api/res/:kind`, `overviewItems()` — walk `~/.claude/commands/**` and `~/.claude/agents/**`, deriving display names as `sc/implement.md` → `sc:implement`.
 - **Caveats**: None noted. Described as the single highest-value item in the whole SuperClaude analysis — fixes a real bug in Loush itself.
 
-### Framework attribution in the Capability Ledger
+### Framework attribution in the Capability Ledger — IMPLEMENTED
 - **Source**: SuperClaude Framework (RESEARCH_MERGED.md, Recommended adoptions)
 - **What**: Detects which installed framework a given command/agent/skill came from via file-path signatures, frontmatter shape, and settings.json plugin entries — enabling "SuperClaude v4.3.0 costs you N tokens/session; 27 of its 50 capabilities have never fired."
 - **Where to add**: new `server/frameworks.mjs`; a `source` column in `CapabilityLedger.jsx` and a filter chip in `LibrarySection.jsx`.
 - **Caveats**: MIT. Detection rules are heuristics, not copied code.
 
-### Frontmatter linting for malformed skill/command files
+### Frontmatter linting for malformed skill/command files — IMPLEMENTED
 - **Source**: SuperClaude Framework (RESEARCH_MERGED.md, Recommended adoptions)
 - **What**: Flags commands/skills whose YAML frontmatter fails to parse or disagrees with the filename — surfacing "this file's frontmatter didn't parse, Claude Code is treating it as prompt text."
 - **Where to add**: `server/index.mjs`'s `parseFM()`, propagating an `fmMissing`/`fmError` flag through `overviewItems()` into `CapabilityLedger.jsx` and `LibrarySection.jsx` rows.
 - **Caveats**: None noted.
 
-### Declared MCP/agent dependency graph from command frontmatter
+### Declared MCP/agent dependency graph from command frontmatter — IMPLEMENTED
 - **Source**: SuperClaude Framework (RESEARCH_MERGED.md, Recommended adoptions)
 - **What**: An `mcp-servers: []` / `personas: []` frontmatter convention enabling a "broken dependency" check and MCP-level ROI ("you have X installed; only 2 commands reference it and neither has fired").
 - **Where to add**: `server/index.mjs`'s `overviewItems()` (carry `fm['mcp-servers']`/`fm.personas` through), rendered in `FlowSection.jsx`/`PlanGraph.jsx` and cross-checked in `McpSection.jsx`.

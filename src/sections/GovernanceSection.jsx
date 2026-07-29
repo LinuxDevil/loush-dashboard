@@ -11,10 +11,11 @@ export default function GovernanceSection() {
   const [tab, setTab] = useState('Versions')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Freeze audit', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
       {tab === 'Versions' && <Versions />}
       {tab === 'Approvals' && <Approvals />}
       {tab === 'Access' && <Access />}
+      {tab === 'Freeze audit' && <FreezeAudit />}
       {tab === 'Audit log' && <Audit />}
       {tab === 'Drift' && <Drift />}
       {tab === 'Batch ops' && <BatchOps />}
@@ -254,6 +255,108 @@ function Access() {
             await api.put('/api/access/permission', { profile: newProfile.trim(), project: matrix.projects[0], mode: '---' })
             setNewProfile('')
           })}>add profile</button>
+      </div>
+    </div>
+  )
+}
+
+const FA_STATUS = {
+  pass: { color: 'var(--green)', gloss: 'checked against the repo and satisfied' },
+  fail: { color: 'var(--red)', gloss: 'checked against the repo and not satisfied' },
+  manual: { color: 'var(--text-tertiary)', gloss: 'no machine can decide this — tick it yourself once reviewed' },
+  'n-a': { color: 'var(--text-tertiary)', gloss: 'scoped to a stack this project does not use' },
+  unknown: { color: 'var(--violet)', gloss: 'the check itself could not run — not a pass and not a fail' },
+}
+
+// A production-readiness checklist attested against a real checkout. The differentiator is that
+// most of it is actually verified rather than asserted, so the honest handling of the parts that
+// cannot be verified is what makes the verified parts worth anything.
+function FreezeAudit() {
+  const [projects, setProjects] = useState([])
+  const [project, setProject] = useState('')
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [show, setShow] = useState('actionable')
+
+  useEffect(() => {
+    api.get('/api/projects').then(list => {
+      setProjects(list)
+      setProject(p => p || (list.find(x => x.current) || list[0] || {}).path || '')
+    }).catch(e => setErr(e.message))
+  }, [])
+  const load = p => { setD(null); api.get('/api/gov/freeze-audit?fresh=1&project=' + encodeURIComponent(p)).then(setD).catch(e => setErr(e.message)) }
+  useEffect(() => { if (project) load(project) }, [project])
+
+  const tick = (id, ticked) =>
+    api.put('/api/gov/freeze-audit/tick', { project, id, ticked }).then(() => load(project)).catch(e => setErr(e.message))
+
+  if (err && !d) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>auditing…</div>
+
+  const sum = d.summary || {}
+  // Default view hides what nobody can act on right now. The counts stay visible so the list
+  // never reads as the whole checklist.
+  const rows = (d.items || []).filter(i => show === 'all' || ['fail', 'unknown', 'manual'].includes(i.status))
+  const ready = d.verdict === 'READY TO FREEZE'
+
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Freeze audit</div>
+        <select value={project} onChange={e => setProject(e.target.value)} style={{ maxWidth: 280 }}>
+          {projects.map(p => <option key={p.path} value={p.path}>{p.name}</option>)}
+        </select>
+        <span style={{ font: `600 11px ${MONO}`, color: ready ? 'var(--green)' : 'var(--amber, #d79921)' }}>{d.verdict}</span>
+        <select value={show} onChange={e => setShow(e.target.value)} style={{ marginLeft: 'auto' }}>
+          <option value="actionable">needs attention</option>
+          <option value="all">all {sum.total} items</option>
+        </select>
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, font: `400 11px ${MONO}`, marginBottom: 6, flexWrap: 'wrap' }}>
+        {['pass', 'fail', 'manual', 'n-a', 'unknown'].map(k => (
+          <span key={k} title={FA_STATUS[k].gloss} style={{ color: FA_STATUS[k].color }}>{sum[k] || 0} {k}</span>
+        ))}
+      </div>
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        {/* Stack scoping decides which items even apply, so showing the evidence for it keeps a
+            wrong guess visible instead of quietly turning real failures into n-a. */}
+        stacks detected: {d.detectedStacks?.length ? d.detectedStacks.join(', ') : 'none'}
+        {d.stackEvidence && Object.keys(d.stackEvidence).length > 0 && ' (' + Object.entries(d.stackEvidence).map(([k, v]) => `${k}: ${v.join('; ')}`).join(' · ') + ')'}
+        <div>
+          <b>{sum.manual || 0}</b> items no machine can decide — they stay open until a human ticks them.
+          {sum.unknown > 0 && <> <b style={{ color: 'var(--violet)' }}>{sum.unknown} could not be checked at all</b>, which blocks a freeze exactly as hard as a failure.</>}
+        </div>
+      </div>
+      {err && <div style={{ font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 8 }}>{err}</div>}
+
+      <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+        {rows.map(i => {
+          const st = FA_STATUS[i.status] || FA_STATUS.unknown
+          const isTicked = (d.ticked || []).includes(i.id)
+          return (
+            <div key={i.id} style={{ display: 'flex', gap: 10, padding: '7px 4px', borderBottom: '1px solid var(--border-subtle)', font: `400 11px ${MONO}`, alignItems: 'flex-start' }}>
+              <span title={st.gloss} style={{ color: st.color, width: 62, flexShrink: 0 }}>{i.status}</span>
+              <span style={{ color: 'var(--text-tertiary)', width: 54, flexShrink: 0 }}>{i.id}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: 'var(--text-secondary)' }}>{i.text}</div>
+                {/* Evidence is what separates this from a checklist you tick by feel. */}
+                {i.evidence?.detail && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>{i.evidence.detail}</div>}
+                {i.status === 'manual' && i.manualReason && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>manual: {i.manualReason}</div>}
+              </div>
+              {/* A tick can only settle a `manual` item. It deliberately cannot clear a fail or
+                  an unknown — a human asserting a machine-checkable fact we already checked and
+                  found false is exactly the failure this whole screen exists to prevent. */}
+              {i.status === 'manual' && (
+                <label style={{ flexShrink: 0, display: 'flex', gap: 4, alignItems: 'center', color: isTicked ? 'var(--green)' : 'var(--text-tertiary)' }}>
+                  <input type="checkbox" checked={isTicked} onChange={e => tick(i.id, e.target.checked)} />
+                  reviewed
+                </label>
+              )}
+            </div>
+          )
+        })}
+        {rows.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--green)' }}>nothing needs attention</div>}
       </div>
     </div>
   )

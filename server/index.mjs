@@ -25,6 +25,7 @@ import { classifyError } from '../lib/error-taxonomy.mjs'
 import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { createTailer } from '../lib/transcript-tail.mjs'
 import { detectFramework, lintFrontmatter, declaredDependencies, checkDependencies } from '../lib/capability-provenance.mjs'
+import { auditRepo } from '../lib/freeze-audit.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -619,6 +620,7 @@ app.delete('/api/artifacts', (req, res) => {
 // ---------- overview: context cost, quality score, specificity, groups/tags ----------
 const META_FILE = path.join(CLAUDE, 'dashboard-meta.json')
 const readMeta = () => { try { return JSON.parse(fs.readFileSync(META_FILE, 'utf8')) } catch { return { tags: {} } } }
+const writeMeta = m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2))
 const tokens = s => Math.ceil((s || '').length / 4) // ~4 chars/token heuristic
 
 function scoreItem(fm, body, kind) {
@@ -902,6 +904,63 @@ async function parsedRecords(file) {
   const r = await analysisTailer.read(file)
   return r.ok ? { records: r.records, malformed: r.malformed?.length || 0, cached: r.cached } : { records: [], malformed: 0, cached: false, error: r.error }
 }
+
+// ---------- freeze audit ----------
+// Which stack tags a checkout actually warrants. Without this every repo fails the checks
+// belonging to stacks it does not use — and the audit's whole value is that its failures are
+// worth reading. Detection is deliberately evidence-based and reported back, so a wrong tag is
+// visible rather than silently reshaping the result.
+function detectStacks(dir) {
+  const stacks = new Set(), because = {}
+  const mark = (tag, why) => { stacks.add(tag); (because[tag] ||= []).push(why) }
+  const has = f => { try { return fs.existsSync(path.join(dir, f)) } catch { return false } }
+  let pkg = null
+  try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) } catch {}
+  if (pkg) {
+    mark('npm', 'package.json')
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
+    if (deps.react || deps['react-dom']) mark('react', 'react in dependencies')
+    if (deps['@playwright/test'] || deps.playwright) mark('playwright', 'playwright in dependencies')
+    if (Object.keys(deps).some(d => d.includes('supabase'))) mark('supabase', 'supabase in dependencies')
+    if (Object.keys(deps).some(d => d.includes('discord'))) mark('discord', 'discord in dependencies')
+    if (Object.keys(deps).some(d => /(^|\W)(pg|postgres)/.test(d))) mark('postgres', 'postgres client in dependencies')
+  }
+  if (has('index.html') || has('public/index.html')) mark('web', 'index.html present')
+  if (has('railway.json') || has('railway.toml')) mark('railway', 'railway config present')
+  if (has('STATE.md') || has('CONTEXT.md')) mark('ccbf', 'claude-code-build-framework state files present')
+  return { stacks: [...stacks].sort(), because }
+}
+
+app.get('/api/gov/freeze-audit', async (req, res) => {
+  try {
+    const dir = path.resolve(String(req.query.project || PROJECT))
+    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'project not found: ' + dir })
+    const detected = detectStacks(dir)
+    // An explicit ?stacks= overrides detection, so a user who knows better than the heuristic
+    // can say so rather than arguing with it.
+    const declared = req.query.stacks != null ? String(req.query.stacks).split(',').map(t => t.trim()).filter(Boolean) : detected.stacks
+    const ticked = readMeta().freezeAuditTicked?.[dir] || []
+    const audit = await auditRepo(dir, { stacks: declared, ticked })
+    res.json({ ...audit, detectedStacks: detected.stacks, stackEvidence: detected.because, declaredStacks: declared, ticked })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Human ticks for the items no machine can decide. Stored per project; they can lift a `manual`
+// item out of the blocker list and deliberately cannot touch a `fail` or an `unknown`.
+app.put('/api/gov/freeze-audit/tick', (req, res) => {
+  try {
+    const dir = path.resolve(String(req.body?.project || PROJECT))
+    const id = String(req.body?.id || '')
+    if (!/^FA-\d{3}$/.test(id)) return res.status(400).json({ error: 'id must look like FA-001' })
+    const meta = readMeta()
+    meta.freezeAuditTicked ||= {}
+    const set = new Set(meta.freezeAuditTicked[dir] || [])
+    req.body?.ticked === false ? set.delete(id) : set.add(id)
+    meta.freezeAuditTicked[dir] = [...set]
+    writeMeta(meta)
+    res.json({ ok: true, ticked: meta.freezeAuditTicked[dir] })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 
 // ---------- prompt complexity ----------
 // What tier of work you are actually asking for, scored offline from the prompt text. The
