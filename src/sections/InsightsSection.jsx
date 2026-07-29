@@ -52,7 +52,12 @@ function Complexity() {
       })}
       <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--amber, #d79921)', lineHeight: 1.6 }}>
         {/* The caveat is read from the API, not restated, so it cannot drift from the truth. */}
-        {!d.calibrated && <div>⚠ {d.caveat}</div>}
+        {/* Show the caveat either way — a fitted classifier is not a proven one, and the
+            distinction is exactly what a reader needs to decide how hard to lean on this. */}
+        <div style={{ color: d.calibrated ? 'var(--text-tertiary)' : 'var(--amber, #d79921)' }}>
+          {d.calibrated ? '' : '⚠ '}{d.caveat}
+          {d.calibration && ` (n=${d.calibration.sampleSize})`}
+        </div>
         {dist.unknown > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.unknown} turn(s) unscoreable — counted separately, not folded into simple</div>}
         {dist.lowConfidence > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.lowConfidence} of {total} scored below the confidence threshold</div>}
         {d.capped && <div style={{ color: 'var(--text-tertiary)' }}>capped at {d.turnCap} turns — older turns in this window were not scored</div>}

@@ -420,7 +420,7 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: `src/sections/ContextExplorerSection.jsx`, computed over transcript data Loush already parses (no full wire-level proxy needed).
 - **Caveats**: MIT. The full proxy-based wire capture (ccglass's own approach) is high-effort/new-runtime-component — lower priority than the diff visualization alone over existing transcript data.
 
-### Offline prompt-complexity / cost-tier classifier — IMPLEMENTED (uncalibrated)
+### Offline prompt-complexity / cost-tier classifier — IMPLEMENTED (calibrated, n=21)
 - **Source**: manifest (RESEARCH_MERGED.md, Feature inventory `scoring/config.ts`, `sigmoid.ts`; Recommended adoptions)
 - **What**: A 32-dimension request scorer (22 keyword + 10 structural dimensions) feeding a sigmoid+confidence function that classifies a turn into a tier (`simple|standard|complex|reasoning`), with a "momentum" mechanism carrying the prior turn's tier forward.
 - **Where to add**: new `lib/complexity.mjs`, consumed when building `/api/usage`/`/api/insights` in `server/index.mjs`; rendered in `InsightsSection.jsx` and a prompt-quality section

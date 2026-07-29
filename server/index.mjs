@@ -23,6 +23,7 @@ import { installNetworkGuard } from '../lib/network-guard.mjs'
 import { detectTestCommand } from '../lib/testdetect.mjs'
 import { classifyError } from '../lib/error-taxonomy.mjs'
 import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
+import { createTailer } from '../lib/transcript-tail.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -865,27 +866,39 @@ app.get('/api/usage', (req, res) => {
   })
 })
 
-// ---------- prompt complexity ----------
-// What tier of work you are actually asking for, scored offline from the prompt text. The
-// intended payoff is spotting expensive models doing cheap work — but the thresholds are not
-// calibrated yet, so this reports a distribution and says so rather than costing it out.
-app.get('/api/complexity', (req, res) => {
-  const days = Math.min(90, Number(req.query.days) || 7)
-  const since = Date.now() - days * 24 * 3600_000
+// Both endpoints below re-read every matching transcript on each request, and they are polled.
+// The tailer's parse cache is keyed on (mtime, size) and LRU-bounded, so an unchanged file is
+// parsed once and reused; only files that actually grew get re-read.
+const analysisTailer = createTailer({ maxCachedFiles: 256 })
+function transcriptsSince(since) {
   const base = path.join(CLAUDE, 'projects')
   const files = []
   const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl') && fs.statSync(p).mtimeMs >= since) files.push(p) } } catch {} }
   walk(base)
+  return { base, files }
+}
+// Returns parsed records plus how many lines could not be parsed, so a caller can report that
+// rather than quietly analysing a subset.
+async function parsedRecords(file) {
+  const r = await analysisTailer.read(file)
+  return r.ok ? { records: r.records, malformed: r.malformed?.length || 0, cached: r.cached } : { records: [], malformed: 0, cached: false, error: r.error }
+}
+
+// ---------- prompt complexity ----------
+// What tier of work you are actually asking for, scored offline from the prompt text. The
+// intended payoff is spotting expensive models doing cheap work — but the thresholds are not
+// calibrated yet, so this reports a distribution and says so rather than costing it out.
+app.get('/api/complexity', async (req, res) => {
+  const days = Math.min(90, Number(req.query.days) || 7)
+  const since = Date.now() - days * 24 * 3600_000
+  const { files } = transcriptsSince(since)
   const MAX_TURNS = 500
   const turns = []
-  let capped = false
+  let capped = false, unparsable = 0
   for (const f of files) {
-    let lines
-    try { lines = fs.readFileSync(f, 'utf8').split('\n') } catch { continue }
-    for (const line of lines) {
-      if (!line.includes('"user"')) continue
-      let j
-      try { j = JSON.parse(line) } catch { continue }
+    const { records, malformed } = await parsedRecords(f)
+    unparsable += malformed
+    for (const j of records) {
       if (j.type !== 'user' || j.isSidechain) continue
       const t = Date.parse(j.timestamp || 0)
       if (!t || t < since) continue
@@ -899,36 +912,32 @@ app.get('/api/complexity', (req, res) => {
   }
   const results = classifyConversation(turns)
   res.json({
-    days, turns: turns.length, turnCap: MAX_TURNS, capped,
+    days, turns: turns.length, turnCap: MAX_TURNS, capped, unparsableLines: unparsable,
     distribution: tierDistribution(results),
-    // Load-bearing caveat: these boundaries have never been fitted against real data, so the
-    // distribution shows how turns fall relative to each other, not what tier they truly are.
-    calibrated: false,
-    caveat: 'Tier boundaries are untuned heuristics — treat this as a relative distribution, not an empirical measurement.',
+    // Boundaries are now fitted, but to a 21-prompt hand-labelled set (see
+    // test/fixtures/complexity-labelled.mjs) — not to user-confirmed ground truth. Say which,
+    // rather than letting "calibrated" imply more than was actually done.
+    calibrated: true,
+    calibration: { method: 'fitted to a hand-labelled fixture set', sampleSize: 21, fixture: 'test/fixtures/complexity-labelled.mjs' },
+    caveat: 'Boundaries are fitted to 21 hand-labelled prompts, not to user-confirmed ground truth. Tier counts are directional; disagree with a label and the fixture is where to change it.',
   })
 })
 
 // ---------- error taxonomy ----------
 // Groups recent failures by cause. The point is the distinction the raw transcript loses: a
 // rate limit and a broken tool call both look like "an error" until something classifies them.
-app.get('/api/errors', (req, res) => {
+app.get('/api/errors', async (req, res) => {
   const days = Math.min(90, Number(req.query.days) || 7)
   const since = Date.now() - days * 24 * 3600_000
-  const base = path.join(CLAUDE, 'projects')
-  const files = []
-  const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl') && fs.statSync(p).mtimeMs >= since) files.push(p) } } catch {} }
-  walk(base)
+  const { base, files } = transcriptsSince(since)
   const byCategory = {}, samples = []
-  let scanned = 0, capped = false
+  let scanned = 0, capped = false, unparsable = 0
   const MAX_SAMPLES = 200
   for (const f of files) {
     const proj = path.relative(base, f).split(path.sep)[0]
-    let lines
-    try { lines = fs.readFileSync(f, 'utf8').split('\n') } catch { continue }
-    for (const line of lines) {
-      if (!line.includes('is_error') && !line.includes('"error"')) continue
-      let j
-      try { j = JSON.parse(line) } catch { continue }
+    const { records, malformed } = await parsedRecords(f)
+    unparsable += malformed
+    for (const j of records) {
       const t = Date.parse(j.timestamp || 0)
       if (!t || t < since) continue
       const blocks = Array.isArray(j.message?.content) ? j.message.content : []
@@ -947,7 +956,7 @@ app.get('/api/errors', (req, res) => {
   }
   const groups = Object.values(byCategory).sort((a, b) => b.count - a.count)
   res.json({
-    days, scanned, groups, samples,
+    days, scanned, groups, samples, unparsableLines: unparsable,
     // Say what was left out rather than presenting a capped list as the whole picture.
     sampleCap: MAX_SAMPLES, samplesCapped: capped,
     // Only tool-level errors are visible in transcripts; provider API errors are not recorded
