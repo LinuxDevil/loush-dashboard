@@ -6,7 +6,9 @@ Every entry below cites the upstream project it came from and the `RESEARCH_MERG
 
 ## Read this first
 
-**Security finding, not just a feature idea:** several entries below (see "Chat & Permissions") point out that Loush's own chat currently runs fully unsandboxed via `--dangerously-skip-permissions`. That's flagged by the research as worse than the permission model of at least one of the upstream projects surveyed (siteboon's CloudCLI) and is called out as the single highest-integrity fix available in this whole list — read the "Browser-rendered permission prompts" entry before anything else.
+**On `--dangerously-skip-permissions`:** the research flagged Loush's unsandboxed chat as its top finding and recommended adding interactive permission prompts. **That has been considered and declined** — running without per-tool gates is a deliberate product decision for a local-first, single-user dashboard, where a chat that blocks on prompts defeats the purpose. Feature `080` is marked declined; don't re-raise it as a defect.
+
+The tradeoff it accepts is real and worth keeping in view: a chat-initiated run can take any tool action, writes and shell included, with no interactive gate. The security work that *is* in scope bounds what the process can reach rather than what it may do — `005` (loopback bind + Host-header allowlist), `007` (outbound-network guard), `085` (attachment path containment), `011` (per-project rwx access matrix). Those matter more here than they would in a codebase that also had prompts.
 
 **Licensing legend** — check this before copying any code, not just borrowing an idea:
 
@@ -522,11 +524,12 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 
 ## Chat & Permissions
 
-### Browser-rendered permission prompts (replace `--dangerously-skip-permissions`)
+### Browser-rendered permission prompts (replace `--dangerously-skip-permissions`) — DECLINED
+- **Status**: **Declined, do not implement.** Keeping `--dangerously-skip-permissions` is a deliberate decision; see the note at the top of this document and `features/080-*.md`.
 - **Source**: CloudCLI / siteboon-claude-code-ui (RESEARCH_MERGED.md, Feature inventory; Recommended adoptions)
 - **What**: A `canUseTool` callback that awaits a promise while a permission-request banner is shown in the browser, with a 55-second timeout for normal tools and infinite wait for `AskUserQuestion`/`ExitPlanMode`, plus an "allow + remember" action that appends a rule to the session's live allow-list.
 - **Where to add**: `server/chat-ws.mjs` (see WebSocket protocol below) + a new permission banner in `src/sections/ChatSection.jsx`; resulting allow/deny events surfaced in `GovernanceSection.jsx` and `CapabilityLedger.jsx`.
-- **Caveats**: AGPL-3.0-or-later — port the design, not the code, get written permission first if pasting anything. **Flagged in the research as the highest-integrity fix in this whole document, since Loush's chat currently runs fully unsandboxed via `--dangerously-skip-permissions`.**
+- **Caveats**: AGPL-3.0-or-later — port the design, not the code, get written permission first if pasting anything. The research flagged this as its highest-integrity recommendation; that recommendation has been considered and declined.
 
 ### WebSocket chat protocol with `seq`-based replay
 - **Source**: CloudCLI / siteboon-claude-code-ui (RESEARCH_MERGED.md, Architecture; Recommended adoptions)
