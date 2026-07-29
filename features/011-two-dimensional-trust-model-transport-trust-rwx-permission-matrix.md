@@ -2,6 +2,14 @@
 
 **Category:** Security, Governance & Access Control
 
+> **Status: implemented.** `lib/access.mjs` (policy) + `server/access.mjs` (store, routes,
+> `requireAccess` middleware) + an Access tab in `GovernanceSection.jsx`; tests in
+> `test/lib/access.test.mjs`. Keyed `(profile, project)` with `r`=read/display, `w`=write into,
+> `x`=run commands against. Whitelist-only and no inheritance, both pinned by tests. Ships
+> `enforced:false` so it changes nothing until opted in, and reports `wouldDeny` meanwhile so
+> the matrix can be filled in safely on a live install. beadle's transport-trust half is
+> deliberately not ported — nothing here arrives from a stranger.
+
 - **Source**: B2 / beadle (RESEARCH_MERGED.md, Feature inventory / Project-specific deep dives)
 - **What**: Combines a 4-level transport-trust classification with an orthogonal `rwx` permission matrix keyed `permissions[identity][contact] → "rwx"|"rw-"|"r--"|"---"`. Defaults are whitelist-only (`---`), no inheritance between identity cells, and a "redacted listing" mode shows sender/date/trust metadata without exposing gated content.
 - **Where to add**: new `server/access.mjs` + a new "Access" tab in `src/sections/GovernanceSection.jsx`, retargeting the matrix from `(identity, contact)` to `(profile, project)`: `r`=dashboard may read/display a project, `w`=may write into it, `x`=may run commands against it. Store as JSON under `~/.claude/dashboard-access.json`.

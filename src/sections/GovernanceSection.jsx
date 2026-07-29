@@ -11,9 +11,10 @@ export default function GovernanceSection() {
   const [tab, setTab] = useState('Versions')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Versions', 'Approvals', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
       {tab === 'Versions' && <Versions />}
       {tab === 'Approvals' && <Approvals />}
+      {tab === 'Access' && <Access />}
       {tab === 'Audit log' && <Audit />}
       {tab === 'Drift' && <Drift />}
       {tab === 'Batch ops' && <BatchOps />}
@@ -143,6 +144,116 @@ function Approvals() {
             <button className="danger" onClick={() => decide(false)}>Reject</button>
           </div>
         </> : <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>select a proposal to review its diff against the current global config</div>}
+      </div>
+    </div>
+  )
+}
+
+// Per-(profile, project) rwx matrix. r = may read/display, w = may write into, x = may run
+// commands against. Unconfigured cells read `---`: access is granted, never inherited.
+const MODE_BITS = ['r', 'w', 'x']
+const MODE_HELP = { r: 'read and display this project', w: 'write into it (config, captures, tickets)', x: 'run commands against it' }
+
+function Access() {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [newProfile, setNewProfile] = useState('')
+  const load = () => api.get('/api/access').then(setData).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [])
+
+  const send = async (fn) => {
+    setBusy(true); setErr('')
+    try { await fn(); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  // Clicking a bit flips just that bit and writes the whole cell back, so the mode string the
+  // server stores is always the one shown in the grid.
+  const toggleBit = (profile, project, mode, bit) => {
+    const next = MODE_BITS.map((b, i) => (b === bit ? (mode[i] === b ? '-' : b) : mode[i])).join('')
+    return send(() => api.put('/api/access/permission', { profile, project, mode: next }))
+  }
+
+  if (err && !data) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!data) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>loading…</div>
+  const { matrix, enforced } = data
+
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 4 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Project access</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{tildify(data.file)}</span>
+        <span style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: enforced ? 'var(--green)' : 'var(--amber, var(--text-tertiary))' }}>
+          {enforced ? 'enforcing' : 'not enforced — recording only'}
+        </span>
+        <button className="mini" style={{ marginTop: 0 }} disabled={busy}
+          onClick={() => send(() => api.put('/api/access/enforced', { enforced: !enforced }))}>
+          {enforced ? 'stop enforcing' : 'start enforcing'}
+        </button>
+      </div>
+      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        {MODE_BITS.map(b => <span key={b} style={{ marginRight: 14 }}><b style={{ color: 'var(--text-secondary)' }}>{b}</b> {MODE_HELP[b]}</span>)}
+        <div style={{ marginTop: 4 }}>
+          A cell with no entry is <code>---</code>. Nothing is inherited between cells — a profile with access to one project has none on another.
+          {!enforced && ' While not enforcing, denied actions are allowed and flagged, so you can fill this in safely before switching it on.'}
+        </div>
+      </div>
+      {err && <div style={{ font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 8 }}>{err}</div>}
+
+      {matrix.projects.length === 0
+        ? <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no projects known yet — open Workspaces &gt; Projects first</div>
+        : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', font: `400 11px ${MONO}`, minWidth: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '6px 10px 6px 4px', color: 'var(--text-tertiary)', fontWeight: 400 }}>profile</th>
+                  {matrix.projects.map(p => (
+                    <th key={p} title={p} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--text-secondary)', fontWeight: 400, whiteSpace: 'nowrap' }}>
+                      {p.split('/').pop() || p}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.rows.map(row => (
+                  <tr key={row.profile}>
+                    <td style={{ padding: '6px 10px 6px 4px', color: 'var(--accent-light)', whiteSpace: 'nowrap' }}>{row.profile}</td>
+                    {row.cells.map(cell => (
+                      <td key={cell.project} style={{ padding: '4px 10px' }}>
+                        <span style={{ display: 'inline-flex', gap: 2 }}>
+                          {MODE_BITS.map((b, i) => {
+                            const on = cell.mode[i] === b
+                            return (
+                              <button key={b} disabled={busy} title={`${row.profile} may ${MODE_HELP[b]}`}
+                                onClick={() => toggleBit(row.profile, cell.project, cell.mode, b)}
+                                style={{
+                                  marginTop: 0, padding: '1px 5px', minWidth: 18, cursor: 'pointer',
+                                  font: `600 11px ${MONO}`,
+                                  color: on ? 'var(--green)' : 'var(--text-tertiary)',
+                                  background: on ? 'var(--bg-raised, transparent)' : 'transparent',
+                                  border: `1px solid ${on ? 'var(--green)' : 'var(--border-subtle)'}`, borderRadius: 3,
+                                }}>{on ? b : '-'}</button>
+                            )
+                          })}
+                          {!cell.configured && <span title="never configured — denied by default" style={{ color: 'var(--text-tertiary)', marginLeft: 4 }}>·</span>}
+                        </span>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <input value={newProfile} onChange={e => setNewProfile(e.target.value)} placeholder="new profile name…" style={{ width: 200 }} />
+        <button className="mini" style={{ marginTop: 0 }} disabled={busy || !newProfile.trim() || !matrix.projects.length}
+          onClick={() => send(async () => {
+            // A new profile starts denied everywhere — it exists as a row to grant from.
+            await api.put('/api/access/permission', { profile: newProfile.trim(), project: matrix.projects[0], mode: '---' })
+            setNewProfile('')
+          })}>add profile</button>
       </div>
     </div>
   )

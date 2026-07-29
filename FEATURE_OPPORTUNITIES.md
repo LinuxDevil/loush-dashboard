@@ -86,13 +86,13 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: alongside existing `/api/gov/drift` in Governance; surfaced in a Library section
 - **Caveats**: Same no-LICENSE/permission-recorded caveat.
 
-### Two-dimensional trust model (transport trust + rwx permission matrix)
+### Two-dimensional trust model (transport trust + rwx permission matrix) — IMPLEMENTED
 - **Source**: B2 / beadle (RESEARCH_MERGED.md, Feature inventory / Project-specific deep dives)
 - **What**: Combines a 4-level transport-trust classification with an orthogonal `rwx` permission matrix keyed `permissions[identity][contact] → "rwx"|"rw-"|"r--"|"---"`. Defaults are whitelist-only (`---`), no inheritance between identity cells, and a "redacted listing" mode shows sender/date/trust metadata without exposing gated content.
 - **Where to add**: new `server/access.mjs` + a new "Access" tab in `src/sections/GovernanceSection.jsx`, retargeting the matrix from `(identity, contact)` to `(profile, project)`: `r`=dashboard may read/display a project, `w`=may write into it, `x`=may run commands against it. Store as JSON under `~/.claude/dashboard-access.json`.
 - **Caveats**: MIT licensed. The 4-level transport-trust part is not portable (only meaningful for messages arriving from strangers over a network) — skip it, per the research's own recommendation.
 
-### Per-session Docker container isolation — explicitly NOT recommended
+### Per-session Docker container isolation — REJECTED
 - **Source**: B1 / NanoClaw (RESEARCH_MERGED.md, Feature inventory)
 - **What**: One long-lived Docker container per session with 9 fixed mounts, mount allowlists, symlink-traversal defense, and fail-closed defaults. Flagged as wrong threat model for a local-first single-user tool.
 - **Where to add**: Not directly applicable — do not adopt wholesale. The one salvageable piece (a fail-closed allowlist file outside the project root listing which repo roots may be read) folds into the rwx Access tab idea above.

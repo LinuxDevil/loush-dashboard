@@ -14,6 +14,7 @@ import mountConstitution from './constitution.mjs'
 import mountAtoms from './atoms.mjs'
 import mountFigmaCapture from './figma-capture.mjs'
 import mountPageCapture from './page-capture.mjs'
+import mountAccess from './access.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
 import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
@@ -55,6 +56,9 @@ app.use(express.json({ limit: '10mb' }))
 mountEng(app) // /api/eng/* — the delivery snapshot (JIRA changelog + GitHub PRs)
 mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
+// /api/access/* — per-(profile, project) rwx policy. Core governance, so it is mounted
+// unconditionally; `track` is hoisted from below and records each change in the audit log.
+mountAccess(app, { track: (...a) => track(...a) })
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
 mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })
