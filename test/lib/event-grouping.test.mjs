@@ -418,6 +418,44 @@ test('groupEvents never throws on malformed input and counts what it could not r
   }
 })
 
+test('subagent nesting also works off sourceToolUseID, the field real transcripts use', () => {
+  // The regression this guards: the spec names `parentToolUseId`, but the subagent JSONL files
+  // Claude Code actually writes carry `sourceToolUseID`. Reading only the documented name meant
+  // nesting worked in tests and never once in production.
+  const records = [
+    assistant([use('task2', 'Task', { subagent_type: 'explorer' })]),
+    assistant([use('sub2', 'Read', { file_path: '/p/a.mjs' })], { isSidechain: true, sourceToolUseID: 'task2' }),
+    result('sub2'),
+    result('task2'),
+  ]
+  const { groups, counts } = groupEvents(records)
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].children[0].tool, 'Read')
+  assert.equal(counts.sidechainUnlinked, 0)
+})
+
+test('sidechain events with no parent link at all are counted as unlinked, not quietly flattened', () => {
+  // The regression this guards: most real subagent records carry only `agentId`, so they cannot be
+  // attributed to a parent from the record alone. That fact has to be visible to the caller.
+  const { counts } = groupEvents([
+    assistant([use('s1', 'Grep', { pattern: 'x' })], { isSidechain: true, agentId: 'agent-a1', agentType: 'explorer' }),
+  ])
+  assert.equal(counts.sidechain, 1)
+  assert.equal(counts.sidechainUnlinked, 1)
+})
+
+test('record types this build does not model are counted by type rather than vanishing', () => {
+  // The regression this guards: real transcripts contain `attachment` records; dropping them with
+  // no trace made a partial timeline indistinguishable from a complete one.
+  const { groups, counts } = groupEvents([
+    { type: 'attachment', uuid: 'x1' },
+    { type: 'attachment', uuid: 'x2' },
+    assistant([use('r1', 'Read', { file_path: '/p/a.mjs' })]),
+  ])
+  assert.equal(groups.length, 1)
+  assert.deepEqual(counts.skippedRecordTypes, { attachment: 2 })
+})
+
 test('an unknown tool still groups and pairs like any other call', () => {
   // The regression this guards: the grouping pass keyed off a known-tool table, so MCP calls
   // vanished from the timeline entirely rather than showing as unrecognised.

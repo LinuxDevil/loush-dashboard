@@ -68,6 +68,74 @@ function Bisect({ bug, onRefresh }) {
   )
 }
 
+// Findings from the claude-code-security-review action. Kept next to Bugs because that is what
+// they are, and separate from JIRA bugs because their provenance is different: these are a
+// scanner's opinion, not something a human filed.
+//
+// Takes a path because the artifact has a 7-day retention on GitHub — fetching it is a CI wiring
+// decision, and guessing at one here would produce a screen that silently shows nothing.
+function SecurityFindings() {
+  const [file, setFile] = useState('')
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const run = () => {
+    setBusy(true); setErr(''); setD(null)
+    api.get('/api/security/findings?file=' + encodeURIComponent(file.trim()))
+      .then(setD).catch(e => setErr(e.message)).finally(() => setBusy(false))
+  }
+  const SEV = { HIGH: 'var(--red)', MEDIUM: 'var(--amber, #d79921)', LOW: 'var(--text-tertiary)' }
+  return (
+    <div className="panel">
+      <h3>Security findings <span className="muted">from a claudecode-results.json artifact</span></h3>
+      <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
+        <input value={file} onChange={e => setFile(e.target.value)} placeholder="/path/to/claudecode-results.json"
+          onKeyDown={e => { if (e.key === 'Enter' && file.trim() && !busy) run() }}
+          style={{ font: '400 12px var(--mono)', flex: 1 }} />
+        <button onClick={run} disabled={busy || !file.trim()}>{busy ? 'reading…' : 'load'}</button>
+      </div>
+      {err && <div style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>}
+      {d && (
+        <>
+          {/* The single most important thing on this screen. When the upstream filter errors it
+              keeps findings UNFILTERED and only admits it in a justification string — so a
+              filtered count can silently include unfiltered results. Badged, not buried. */}
+          {d.filterFailedOpen && (
+            <div style={{ font: '400 11px var(--mono)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 6, padding: 8, margin: '8px 0' }}>
+              ⚠ The upstream filter failed open — findings below were NOT filtered as the summary claims.
+              {d.failOpen?.kinds?.length ? ` (${d.failOpen.kinds.join(', ')})` : ''}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 16, font: '400 11px var(--mono)', flexWrap: 'wrap', marginBottom: 8 }}>
+            <span>{(d.findings || []).length} kept</span>
+            {/* null, not 0 — an absent stat is not a measured zero. */}
+            <span style={{ color: 'var(--text-tertiary)' }}>hard-excluded: {d.filterStats?.hardExcluded ?? '—'}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}>claude-excluded: {d.filterStats?.claudeExcluded ?? '—'}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}>avg confidence: {d.filterStats?.averageConfidence ?? '—'}</span>
+            {d.localFilter && <span title="what this machine's copy of the rules would drop, independent of what the vendor actually dropped">local rules would drop {d.localFilter.excluded?.length ?? 0}</span>}
+          </div>
+          <table className="data" style={{ font: '400 11px var(--mono)', width: '100%' }}>
+            <thead><tr><th>sev</th><th style={{ textAlign: 'left' }}>file</th><th style={{ textAlign: 'left' }}>category</th><th style={{ textAlign: 'left' }}>description</th></tr></thead>
+            <tbody>
+              {(d.findings || []).map((f, i) => (
+                <tr key={i}>
+                  <td style={{ color: SEV[f.severity] || 'var(--violet)' }}>{f.severity || 'unknown'}</td>
+                  <td>{f.file}{f.line != null ? ':' + f.line : ''}</td>
+                  <td style={{ color: 'var(--text-tertiary)' }}>{f.category || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)' }} title={f.exploit_scenario || ''}>{String(f.description || '').slice(0, 120)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(d.malformed || []).length > 0 && (
+            <p className="small">{d.malformed.length} record(s) could not be parsed and are excluded from the counts above.</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function BugsSection() {
   const projects = useProjects()
   const [bugs, setBugs] = useState(null)
@@ -95,6 +163,7 @@ export default function BugsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Intake projects={projects} onDone={load} />
+      <SecurityFindings />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <select value={fProj} onChange={e => setFProj(e.target.value)}><option value="">all projects</option>{projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)}><option value="">all statuses</option>{Object.keys(STATUS).map(s => <option key={s}>{s}</option>)}</select>
