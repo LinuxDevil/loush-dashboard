@@ -795,13 +795,13 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: editor UI in `CustomizeSection.jsx` or `HarnessSection.jsx`; storage/spawn-arg assembly in a new `server/profiles.mjs`; surfaced in `GovernanceSection.jsx`
 - **Caveats**: FlyCrys/Nimbalyst are MIT-licensed. Be explicit in the UI that this is a launch-time allowlist, not interactive mid-session tool gating.
 
-### Structured CSS/DOM extraction for a live-page capture
+### Structured CSS/DOM extraction for a live-page capture — IMPLEMENTED
 - **Source**: A / Perfect-Web-Clone ("Nexting") (RESEARCH_MERGED.md, Feature inventory; Recommended adoptions)
 - **What**: A headless-browser extractor producing structured design data from a live page: full stylesheets/`@keyframes`/CSS variables/media queries, value→usage-count histograms for colors/fonts/spacing, hover/focus/active interaction-state capture, light/dark theme detection, and section/block segmentation with bounding boxes.
 - **Where to add**: new `server/page-capture.mjs`, sibling to `server/figma-capture.mjs`, writing into the same `.claude/figma-captures/<slug>/` layout so the existing Captures UI picks it up. Start with just the `StyleSummary` histograms over `getComputedStyle`.
 - **Caveats**: **No LICENSE file** (README MIT badge is not a real grant). Do not copy code — reimplement the schema/algorithm independently, or get written permission first.
 
-### 10-category agent tool taxonomy (Preview → Diagnostics → Self-Healing ladder)
+### 10-category agent tool taxonomy (Preview → Diagnostics → Self-Healing ladder) — IMPLEMENTED
 - **Source**: A / Perfect-Web-Clone (RESEARCH_MERGED.md, Notable code worth stealing)
 - **What**: A functional partition of a 40+ tool agent surface into categories including a "Source Query" pattern for querying oversized context rather than dumping it, and a Preview→Diagnostics→Self-Healing capability ladder.
 - **Where to add**: documentation in `docs/`, as an organizing principle for `McpSection.jsx` / `CapabilityLedger.jsx`.

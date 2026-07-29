@@ -13,6 +13,7 @@ import mountSetup from './setup.mjs'
 import mountConstitution from './constitution.mjs'
 import mountAtoms from './atoms.mjs'
 import mountFigmaCapture from './figma-capture.mjs'
+import mountPageCapture from './page-capture.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
 import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
@@ -88,6 +89,7 @@ if (COMPANY_TOOLS) {
   mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
   mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
   mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
+  mountPageCapture(app)    // /api/page-capture/*  — same capture layout, sourced from a live URL
   console.log('[claude-dashboard] Company tools enabled (projects.json -> Company_Tools)')
 }
 // Feature flags the client needs before it can decide which nav entries exist.
