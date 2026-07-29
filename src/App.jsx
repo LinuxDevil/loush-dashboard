@@ -35,6 +35,8 @@ import ForensicsSection from './sections/ForensicsSection.jsx';
 import UsagePanel from './sections/UsagePanel.jsx';
 import TeamBaseline from './sections/TeamBaseline.jsx';
 import Palette from './ui/Palette.jsx';
+import TodoDock from './ui/TodoDock.jsx';
+import TodosSection from './sections/TodosSection.jsx';
 import { api, forceFresh } from './lib/api.js';
 
 // THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
@@ -66,6 +68,17 @@ const BASE_SECTIONS = [
     kicker: 'Dashboard',
     title: 'Working Set — what the agent did to your code',
     el: <WorkingSet />,
+  },
+  // The human's day list, next to the two screens that tell you what the day contained. The floating
+  // dock (TodoDock, mounted in the shell) opens the same list in a drawer from anywhere; this tab is
+  // the full board — same data, room to plan.
+  {
+    id: 'todos',
+    label: 'Todos',
+    icon: '☑',
+    kicker: 'Dashboard',
+    title: 'Todos — one day, seven stages, filed by file',
+    el: <TodosSection />,
   },
   {
     id: 'inbox',
@@ -448,6 +461,9 @@ export default function App() {
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
+      {/* Floating on every screen: capture and tick off without leaving what you were reading.
+          "Open full board" hands off to the Todos tab, which is the same list with room to plan. */}
+      <TodoDock onNav={nav} />
       {toasts.length > 0 && (
         <div
           style={{
