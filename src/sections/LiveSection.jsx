@@ -80,6 +80,23 @@ export default function LiveSection() {
                   </span>
                 </div>
 
+                {/* Mid-turn state, shown only when the hook has seen this session more recently
+                    than its transcript was written. Between turn boundaries the transcript says
+                    nothing at all, so this is the only signal that exists in that window. */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {s.live ? (
+                    <span style={{ font: `400 11px ${MONO}`, color: 'var(--green)' }}>
+                      ▸ {s.live.status}
+                      {s.live.tool && <> · <b>{s.live.tool}</b>{s.live.toolInputKeys?.length ? ` (${s.live.toolInputKeys.join(', ')})` : ''}</>}
+                      {s.live.agents > 0 && ` · ${s.live.agents} subagent${s.live.agents === 1 ? '' : 's'}`}
+                    </span>
+                  ) : (
+                    <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+                      no live signal — showing what the transcript last recorded
+                    </span>
+                  )}
+                </div>
+
                 {/* Context pressure. A known percentage gets a bar; an unknown window gets the
                     real token count and no bar, because inventing a denominator to fill a bar
                     is exactly the kind of plausible-looking guess this codebase refuses. */}

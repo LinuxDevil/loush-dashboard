@@ -1009,15 +1009,36 @@ app.get('/api/live', (req, res) => {
   const { files } = collectUsage()
   const projNames = {}
   try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
+  // Mid-turn state from the hook receiver, keyed by session id. This is the whole point of the
+  // hook: a transcript is only written at turn boundaries, so between them it says nothing,
+  // while the hook reports each tool call as it starts. Where both have an opinion the fresher
+  // one wins — a hook session left over from a dashboard that has been running for days must
+  // not override what the transcript says happened five seconds ago.
+  let hookSessions = new Map()
+  try {
+    const hv = hooksReceiver.getLiveState?.()
+    for (const h of hv?.sessions || []) if (h.sessionIdKnown !== false && h.sessionId) hookSessions.set(h.sessionId, h)
+  } catch { /* the board must render with or without the receiver */ }
+
   const sessions = files.filter(f => !f.isAgent && f.msgs > 0).map(f => {
     let size = 0
     try { size = fs.statSync(f.path).size } catch {}
     const sig = lastSignals(f.path, size)
     const label = projNames[f.proj] || f.proj.split('-').pop()
-    const session = { sessionId: path.basename(f.path, '.jsonl'), label, cwd: f.cwd, lastEventAt: f.mtime, ...sig }
+    const sessionId = path.basename(f.path, '.jsonl')
+    const hook = hookSessions.get(sessionId) || null
+    // Only let the hook speak for a session it has seen more recently than the transcript was
+    // written; otherwise the transcript is the better evidence.
+    const hookIsFresher = hook && Number(hook.lastSeen) > f.mtime
+    const session = { sessionId, label, cwd: f.cwd, lastEventAt: hookIsFresher ? Number(hook.lastSeen) : f.mtime, ...sig }
     return {
       ...session,
       status: deriveStatus(session, now),
+      // Reported separately rather than folded into status, so the UI can show what the agent
+      // is doing right now without the board claiming the transcript said it.
+      live: hookIsFresher
+        ? { status: hook.status, since: hook.statusSince, tool: hook.currentTool?.name || null, toolInputKeys: hook.currentTool?.inputKeys || null, agents: hook.agents?.length || 0 }
+        : null,
       context: liveContextPressure(session),
       permission: permissionBadge(session),
       msgs: f.msgs, toolCalls: f.toolCalls, cost: f.cost,
