@@ -15,6 +15,8 @@ import mountAtoms from './atoms.mjs'
 import mountFigmaCapture from './figma-capture.mjs'
 import mountPageCapture from './page-capture.mjs'
 import mountAccess from './access.mjs'
+import { securityMiddleware, bindHost, isExposedBind } from './security.mjs'
+import { installNetworkGuard } from '../lib/network-guard.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
 import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
@@ -52,7 +54,20 @@ const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
 const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
+// Host-header allowlist + loopback CORS + optional token, before any route. The Host check is
+// not redundant with binding to loopback: a page in the user's browser can point an attacker
+// domain at 127.0.0.1 and reach this server with the browser's own credentials, and only the
+// Host header distinguishes that from a genuine local request.
+app.use(...securityMiddleware())
 app.use(express.json({ limit: '10mb' }))
+// Opt-in outbound audit. Off by default and deliberately so: this app makes real outbound
+// calls (api.anthropic.com, api.figma.com, Atlassian), so 'block' breaks working features.
+// DASH_NETWORK_GUARD=report records what actually leaves; =block refuses non-loopback.
+if (process.env.DASH_NETWORK_GUARD) {
+  const mode = process.env.DASH_NETWORK_GUARD === 'block' ? 'block' : 'report'
+  installNetworkGuard({ mode, onViolation: v => console.warn(`[network-guard] ${mode}: ${v.host}:${v.port}`) })
+  console.log(`[claude-dashboard] outbound network guard: ${mode}`)
+}
 mountEng(app) // /api/eng/* — the delivery snapshot (JIRA changelog + GitHub PRs)
 mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
@@ -4812,8 +4827,12 @@ app.put('/api/scheduler', (req, res) => res.json(writeSchedulerConfig(CLAUDE, re
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))
-app.listen(PORT, () => {
+app.listen(PORT, bindHost(), () => {
+  const host = bindHost()
   console.log(`[claude-dashboard] API on http://localhost:${PORT}`)
+  // Binding beyond loopback puts a server that reads transcripts and writes config on the
+  // network. Deliberate is fine; silent is not.
+  if (isExposedBind(host)) console.warn(`[claude-dashboard] WARNING: bound to ${host}, not loopback — this dashboard is reachable from other machines`)
   // start the plane-A fetch at boot, not at first request: the inbox badge/notification/Slack push are wrong
   // until it lands, so the clock should start now. Failure is fine — it retries (short backoff), it never caches null.
   engSnapshot(true).then(s => console.log(`[claude-dashboard] eng snapshot ${s?.available ? 'warm' : 'unavailable (will retry)'}`)).catch(() => {})

@@ -50,7 +50,7 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: `server/index.mjs`, mounted on every write route (setup writes, config writes, ticket writes)
 - **Caveats**: No LICENSE file on CAST (permission to copy already obtained per research — record it).
 
-### Local-only security hardening (loopback bind, Host-header allowlist, optional token gate)
+### Local-only security hardening (loopback bind, Host-header allowlist, optional token gate) — IMPLEMENTED
 - **Source**: Claude Code Agent Monitor / CCAM (RESEARCH_MERGED.md, Feature inventory `security.js`; Recommended adoptions)
 - **What**: Binds to loopback by default, restricts CORS to loopback, enforces a Host-header allowlist to prevent DNS-rebinding attacks, and offers an optional bearer/`x-dashboard-token` gate on API routes and the WS upgrade — closing a class of vulnerability CCAM itself had a CVE for (GHSA-gr74-4xfh-6jw9).
 - **Where to add**: `server/index.mjs` + new `server/security.mjs`
@@ -62,7 +62,7 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: new `lib/pii.mjs`; called from `server/index.mjs`, especially the usage/session/forensics readers and any `ChatSection.jsx` SSE stream
 - **Caveats**: MIT-licensed. Research flags CSI's `ipv4`/`email` patterns as over-broad — make those two opt-in rather than defaults.
 
-### Outbound-network guard (enforced local-first claim)
+### Outbound-network guard (enforced local-first claim) — IMPLEMENTED (opt-in; premise corrected)
 - **Source**: Claude Code Dashboard / "CSI" (RESEARCH_MERGED.md, Feature inventory `network-guard.ts`; Recommended adoptions)
 - **What**: Patches `net.Socket.prototype.connect` to allowlist only `127.0.0.1`/`localhost`/`::1`/`0.0.0.0`, recording any blocked outbound connection attempt — turning a "local-first, zero telemetry" README claim into an enforced, auditable invariant.
 - **Where to add**: new `lib/network-guard.mjs`, imported as the first statement of `server/index.mjs`
@@ -426,7 +426,7 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: new `lib/complexity.mjs`, consumed when building `/api/usage`/`/api/insights` in `server/index.mjs`; rendered in `InsightsSection.jsx` and a prompt-quality section
 - **Caveats**: MIT — safe to copy directly. Research calls this "the highest-value idea in the whole survey" — enables claims like "you paid Opus rates for 340 simple-tier turns last month."
 
-### Cross-provider error taxonomy
+### Cross-provider error taxonomy — IMPLEMENTED
 - **Source**: manifest (RESEARCH_MERGED.md, Feature inventory `error-taxonomy.ts`; Recommended adoptions)
 - **What**: A normalized classification of provider-side errors (rate limits vs real failures vs auth errors), enabling "37% of your failed turns were rate limits, not bugs."
 - **Where to add**: `src/sections/ReliabilitySection.jsx`, `BugsSection.jsx`, fed by error entries already present in parsed JSONL
@@ -595,7 +595,7 @@ Below, each feature keeps the exact sourcing and "where to add" detail the scann
 - **Where to add**: new `server/worktree.mjs`; surfaced in a project-hub section for list/create/remove, and in `RunsSection.jsx` to show which worktree each agent run executed in
 - **Caveats**: MIT-licensed. Showing which worktree a session actually ran in is something ccpm cannot self-report — flagged as a real differentiator.
 
-### Multi-language test-command detection table
+### Multi-language test-command detection table — IMPLEMENTED
 - **Source**: ccpm (RESEARCH_MERGED.md, Feature inventory; Recommended adoptions)
 - **What**: A 13-entry marker-to-test-command table (npm, maven, gradle, composer, dotnet, cargo, go, bundler, flutter, swift, ctest, make) that lets a tool say "run this project's tests" against an arbitrary checkout with zero configuration.
 - **Where to add**: new `server/testdetect.mjs`, consumed by quality/runs code
