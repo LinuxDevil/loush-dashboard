@@ -193,7 +193,41 @@ export default function CapabilityLedger() {
 // a linter cosplaying as a metric. It is a perfectly good AUTHORING AID. It is not a measure of value.
 // That is now the ledger above.
 const LEVEL_COLOR = { poor: RED, good: GOLD, excellent: GREEN, perfect: 'var(--violet)' }
-const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.']]
+const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['origin', 'From'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.'], ['health', 'Health']]
+
+// A capability whose frontmatter does not parse still runs — it is just invisible to the
+// selector, so its description never reaches the model. That is a quiet failure worth a column.
+// A declared MCP server that is not installed is the same class of problem.
+function HealthCell({ it }) {
+  const bad = (it.fm && it.fm.ok === false) ? it.fm.findings || [] : []
+  const missing = it.deps?.missing || []
+  if (!bad.length && !missing.length) return <span className="muted">—</span>
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {bad.map(f => (
+        <span key={f.code} className="chip" title={`${f.message}${f.fix ? ' — ' + f.fix : ''}`} style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+          frontmatter
+        </span>
+      ))}
+      {missing.length > 0 && (
+        <span className="chip" title={`declares MCP server(s) not installed: ${missing.join(', ')}`} style={{ color: 'var(--amber, #d79921)', borderColor: 'var(--amber, #d79921)' }}>
+          missing mcp
+        </span>
+      )}
+    </span>
+  )
+}
+
+// null origin means we could not attribute the file, which is NOT the same as "the user wrote
+// it" — so it renders blank rather than claiming authorship in either direction.
+function OriginCell({ origin }) {
+  if (!origin?.framework) return <span className="muted">—</span>
+  return (
+    <span className="chip" title={`${origin.confidence} confidence · ${(origin.basis || []).map(b => b.code).join(', ')}`}>
+      {origin.framework}{origin.confidence === 'low' ? '?' : ''}
+    </span>
+  )
+}
 
 export function Inventory() {
   const [data, setData] = useState(null)
@@ -237,6 +271,7 @@ export function Inventory() {
             <tr key={it.kind + ':' + it.name + ':' + it.scope}>
               <td className="mono" style={{ color: 'var(--text-primary)' }}>{it.name}</td>
               <td>{it.kind}</td>
+              <td><OriginCell origin={it.origin} /></td>
               <td><span className="chip">{it.group}</span></td>
               <td className="tags-cell" onClick={() => editTags(it)} title="click to edit tags">
                 {it.tags.length ? it.tags.map(t => <span className="chip tag" key={t}>{t}</span>) : <span className="muted">+ tag</span>}
@@ -249,6 +284,7 @@ export function Inventory() {
                   {it.level} · {it.score}%
                 </span>)}</td>
               <td className="num">{it.specificity === null ? '—' : it.specificity + '%'}</td>
+              <td><HealthCell it={it} /></td>
             </tr>
           ))}
         </tbody>

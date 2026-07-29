@@ -24,6 +24,7 @@ import { detectTestCommand } from '../lib/testdetect.mjs'
 import { classifyError } from '../lib/error-taxonomy.mjs'
 import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { createTailer } from '../lib/transcript-tail.mjs'
+import { detectFramework, lintFrontmatter, declaredDependencies, checkDependencies } from '../lib/capability-provenance.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -659,6 +660,12 @@ function groupOf(name, kind) {
 function overviewItems() {
   const meta = readMeta()
   const items = []
+  // Read once and share across every capability: which MCP servers exist (to resolve declared
+  // dependencies) and the user settings (a framework's own plugin entry corroborates, but never
+  // by itself establishes, that a given file came from it).
+  let installedMcp = [], userSettings = null
+  try { installedMcp = Object.keys(readClaudeJson().mcpServers || {}) } catch {}
+  try { userSettings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8')) } catch {}
   const push = (kind, name, extra) => items.push({ kind, name, tags: meta.tags?.[`${kind}:${name}`] || [], ...extra })
   for (const kind of ['skills', 'commands', 'agents']) {
     for (const { scope, dir } of KINDS[kind].dirs()) {
@@ -672,11 +679,23 @@ function overviewItems() {
         // DEAD verdict rather than inventing one for a capability installed this morning.
         let mtime = null
         try { mtime = fs.statSync(file).mtimeMs } catch {}
+        // Provenance, frontmatter health and declared dependencies, all off the one read.
+        const origin = detectFramework(file, fm, content, { kind, settings: userSettings })
+        const lint = lintFrontmatter(content, { file, kind })
+        const deps = declaredDependencies(fm)
+        const depCheck = deps.declared ? checkDependencies(deps, { mcpServers: installedMcp }) : null
         push(kind, name, {
           scope, group: groupOf(name, kind), mtime,
           descTokens: tokens(String(fm.description || '')), // always in context (metadata listing)
           fullTokens: tokens(content),                       // loaded when invoked
           score, level: levelOf(score), specificity: specificityOf(fm, kind),
+          // null means "we could not attribute this", not "the user wrote it" — the ledger
+          // renders it as unattributed rather than claiming authorship either way.
+          origin: origin ? { framework: origin.framework, confidence: origin.confidence, basis: origin.basis } : null,
+          // A file whose frontmatter does not parse still runs; it is just invisible to the
+          // selector, which is a far quieter failure than a crash and worth surfacing.
+          fm: { ok: lint.ok, findings: lint.findings },
+          deps: deps.declared ? { mcpServers: deps.mcpServers, agents: deps.agents, missing: depCheck?.missing?.mcpServers ?? null } : null,
         })
       }
     }
