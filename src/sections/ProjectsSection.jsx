@@ -117,11 +117,62 @@ function Scaffolder({ projects, onClose, onDone }) {
   )
 }
 
+// Which worktree each agent session actually ran in. This dashboard already records every
+// session's cwd, so it can answer that; a worktree cannot report it from inside itself, which is
+// why the tool this idea came from never could.
+function Worktrees({ repo }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { setD(null); if (repo) api.get('/api/worktrees?repo=' + encodeURIComponent(repo)).then(setD).catch(e => setErr(e.message)) }, [repo])
+  if (!repo) return null
+  if (err) return <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>
+  if (!d) return null
+  if (d.status !== 'ok') {
+    // "we could not look" is reported as itself. An empty list here would read as "this repo has
+    // no worktrees", which is a different and possibly false claim.
+    return (
+      <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)' }}>
+        <b style={{ color: 'var(--text-primary)' }}>Worktrees</b> — could not determine ({d.code}): {d.reason}
+      </div>
+    )
+  }
+  const unattributed = d.sessionCounts?.['(unattributed)'] || 0
+  return (
+    <div className="panel">
+      <h3>Worktrees <span className="muted">{d.worktrees.length} · {repo.split('/').pop()}</span></h3>
+      <table className="data" style={{ font: '400 11px var(--mono)', width: '100%' }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>path</th><th style={{ textAlign: 'left' }}>branch</th><th>sessions</th><th /></tr></thead>
+        <tbody>
+          {d.worktrees.map(w => (
+            <tr key={w.path}>
+              <td style={{ color: 'var(--text-primary)' }}>{w.path}</td>
+              <td style={{ color: w.detached ? 'var(--amber, #d79921)' : 'var(--violet)' }}>{w.detached ? 'detached' : (w.branchName || w.branch || '—')}</td>
+              <td className="num">{d.sessionCounts?.[w.path] || 0}</td>
+              <td>
+                {w.bare && <span className="chip">bare</span>}
+                {w.locked && <span className="chip" title={w.lockReason || 'locked'}>locked</span>}
+                {w.prunable && <span className="chip" title={w.prunableReason || 'prunable'} style={{ color: 'var(--red)' }}>prunable</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {unattributed > 0 && (
+        <p className="small" style={{ marginBottom: 0 }}>
+          {unattributed} session(s) recorded a cwd matching no worktree here — usually work in another
+          repo. They are reported rather than assigned to the nearest match.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function ProjectsSection() {
   const [projects, setProjects] = useState(null)
   const [scaffolding, setScaffolding] = useState(false)
   const { slice, pager } = usePager(projects || [], 9)
   const load = () => api.get('/api/projects').then(setProjects)
+  // The current project, or the first known one — the worktree panel needs a repo to ask about.
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
@@ -150,6 +201,7 @@ export default function ProjectsSection() {
         <button className="primary" onClick={() => setScaffolding(true)}>+ Scaffold harness for a new repo</button>
       </div>
       {scaffolding && <Scaffolder projects={projects} onClose={() => setScaffolding(false)} onDone={load} />}
+      <Worktrees repo={(projects.find(p => p.current) || projects[0] || {}).path} />
       <div className="proj-stats">
         {stats.map(([label, value, color, sub], i) => (
           <div className="proj-stat" key={label} style={{ animationDelay: 0.05 * i + 's' }}>

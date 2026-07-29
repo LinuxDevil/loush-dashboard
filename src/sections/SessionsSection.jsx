@@ -21,6 +21,45 @@ const COLS = [
   ['compactions', 'Compact', r => r.compactions], ['errors', 'Errors', r => r.errors], ['last', 'Last', r => r.last],
 ]
 
+// Readable rows for one session's tool calls, from /api/session/events. A timeline that said
+// "Edit" now says what was edited and, where a diff was recorded, which function it landed in.
+// Tool input VALUES never reach this response — a Bash command could carry a token — so titles
+// show the binary and the detail shows key names only.
+function SessionEvents({ sessionId }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/session/events?session=' + encodeURIComponent(sessionId)).then(setD).catch(e => setErr(e.message)) }, [sessionId])
+  if (err) return <div style={{ font: '400 11px var(--mono)', color: 'var(--red)', padding: 8 }}>{err}</div>
+  if (!d) return <div style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)', padding: 8 }}>reading transcript…</div>
+  const groups = d.groups || []
+  return (
+    <div style={{ padding: '6px 0 10px', font: '400 11px var(--mono)' }}>
+      <div style={{ color: 'var(--text-tertiary)', marginBottom: 6 }}>
+        {groups.length} rows
+        {/* Both are deliberate reports rather than silent behaviour: a capped list that looks
+            complete, or a sidechain record with no parent link quietly flattened, would each be
+            a small lie about what the transcript said. */}
+        {d.truncated?.omitted > 0 && ` · ${d.truncated.omitted} omitted by the ${d.truncated.limit} row cap`}
+        {d.counts?.sidechainUnlinked > 0 && ` · ${d.counts.sidechainUnlinked} subagent record(s) carry no parent link and could not be nested`}
+        {d.unparsableLines > 0 && ` · ${d.unparsableLines} unparsable line(s)`}
+      </div>
+      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        {groups.map((g, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline' }}>
+            <span style={{ color: g.status === 'error' ? 'var(--red)' : g.status === 'running' ? 'var(--amber, #d79921)' : 'var(--text-tertiary)', width: 58, flexShrink: 0 }}>{g.status || g.kind || ''}</span>
+            <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+              {g.title}{g.count > 1 && <span style={{ color: 'var(--text-tertiary)' }}> ×{g.count}</span>}
+              {g.enclosingContext && <span style={{ color: 'var(--violet)' }}> · in {g.enclosingContext}</span>}
+            </span>
+            {g.summary && <span style={{ color: 'var(--text-tertiary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.summary}>{g.summary}</span>}
+          </div>
+        ))}
+        {groups.length === 0 && <div style={{ color: 'var(--text-tertiary)' }}>no tool calls recorded in this session</div>}
+      </div>
+    </div>
+  )
+}
+
 export default function SessionsSection() {
   const [days, setDays] = useState(7)
   const [d, setD] = useState(null)
@@ -28,6 +67,7 @@ export default function SessionsSection() {
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'last', dir: -1 })
   const [cur, setCur] = useState(0)
+  const [events, setEvents] = useState(null) // sessionId whose tool-call rows are expanded
   const filterRef = useRef(null)
   const bodyRef = useRef(null)
 
@@ -114,7 +154,7 @@ export default function SessionsSection() {
               <th>Actions</th>
             </tr></thead>
             <Stagger tag="tbody" step={14} max={300}>
-              {rows.map((r, i) => (
+              {rows.map((r, i) => [
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
                   style={{ background: i === cur ? 'var(--accent-bg)' : undefined, cursor: 'pointer' }}>
                   <td className="mono" style={{ color: 'var(--text-primary)' }} title={r.cwd}>{r.project}</td>
@@ -132,9 +172,18 @@ export default function SessionsSection() {
                     <button className="mini" style={{ marginTop: 0 }} title={r.resume} onClick={e => { e.stopPropagation(); copyResume(r) }}>y · copy</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); reveal(r) }}>reveal</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); openRaw(r) }}>raw</button>
+                    <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} title="readable rows for this session's tool calls"
+                      onClick={e => { e.stopPropagation(); setEvents(x => x === r.sessionId ? null : r.sessionId) }}>
+                      {events === r.sessionId ? 'hide' : 'events'}
+                    </button>
                   </td>
-                </tr>
-              ))}
+                </tr>,
+                events === r.sessionId ? (
+                  <tr key={r.sessionId + ':events'}>
+                    <td colSpan={11} style={{ background: 'var(--bg-base)' }}><SessionEvents sessionId={r.sessionId} /></td>
+                  </tr>
+                ) : null,
+              ]).flat().filter(Boolean)}
               {rows.length === 0 && <tr><td colSpan={11} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
             </Stagger>
           </table>

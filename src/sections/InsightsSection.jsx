@@ -14,6 +14,61 @@ const pct = x => (x == null ? '—' : Math.round(x * 100) + '%')
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : m + 'm' }
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+// Proposals derived from what actually happened in transcripts — a failed call retried with a
+// changed input that then worked, a file edited five or more times, a user reversing a previous
+// instruction, a run of consecutive failures.
+//
+// Every row is a PROPOSAL, never an accepted rule, and every row cites the records that produced
+// it. That framing is load-bearing: the output of this screen is a sentence someone may paste
+// into their CLAUDE.md, so a lesson that was not grounded in evidence would be a fabricated
+// instruction carrying the authority of a measurement.
+function Lessons() {
+  const [days, setDays] = useState(14)
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState(() => new Set())
+  useEffect(() => { setD(null); api.get('/api/lessons?days=' + days).then(setD).catch(e => setErr(e.message)) }, [days])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton />
+  const toggle = i => setOpen(s => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n })
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 6 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Lessons</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{d.lessons.length} proposals from {d.sessions.length} session(s)</span>
+        <select value={days} onChange={e => setDays(Number(e.target.value))} style={{ marginLeft: 'auto' }}>
+          {[7, 14, 30, 90].map(n => <option key={n} value={n}>{n} days</option>)}
+        </select>
+      </div>
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        All proposed, none accepted — nothing here has been reviewed. Expand a row to see the
+        transcript records it came from before believing it.
+      </div>
+      {d.lessons.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>nothing derivable in this window — which is a good sign, not an empty screen</div>}
+      {d.lessons.map((l, i) => (
+        <div key={i} style={{ padding: '8px 4px', borderBottom: '1px solid var(--border-subtle)', font: `400 11px ${MONO}` }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span title="how much of this was observed rather than inferred" style={{ color: l.confidence >= 0.7 ? 'var(--green)' : 'var(--amber, #d79921)', width: 34 }}>{Math.round((l.confidence || 0) * 100)}%</span>
+            <span className="chip">{l.signal || 'derived'}</span>
+            <span style={{ color: 'var(--text-secondary)', flex: 1, minWidth: 220 }}>{l.mistake}</span>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => toggle(i)}>{open.has(i) ? 'hide' : 'evidence'}</button>
+          </div>
+          <div style={{ color: 'var(--text-primary)', marginTop: 3 }}>▸ {l.rule}</div>
+          {/* 'unknown' is a real value here: the transcript showed the mistake but never showed a
+              fix, and inventing one would be exactly the fabrication this feature avoids. */}
+          <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>fix: {l.fix === 'unknown' ? <em>not observed in the transcript</em> : l.fix}</div>
+          {open.has(i) && (
+            <div style={{ marginTop: 6, paddingLeft: 12, borderLeft: '2px solid var(--border-default)', color: 'var(--text-tertiary)' }}>
+              <div>session {l.sessionId}</div>
+              {(l.evidence || []).map((e, j) => <div key={j}>· {e.uuid || e.ts || JSON.stringify(e).slice(0, 90)}</div>)}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const TIER_COLOR = { simple: 'var(--text-tertiary)', standard: 'var(--accent-light)', complex: 'var(--amber, #d79921)', reasoning: 'var(--red)' }
 
 // What tier of work you are asking for, scored offline from prompt text alone. Deliberately
@@ -89,10 +144,11 @@ export default function InsightsSection() {
   const [tab, setTab] = useState('Stats')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Stats', 'Duplicate prompts', 'Prompt complexity']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Stats', 'Duplicate prompts', 'Prompt complexity', 'Lessons']} tab={tab} setTab={setTab} />
       {tab === 'Stats' && <Stats />}
       {tab === 'Duplicate prompts' && <Dupes />}
       {tab === 'Prompt complexity' && <Complexity />}
+      {tab === 'Lessons' && <Lessons />}
     </div>
   )
 }

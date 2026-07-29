@@ -28,6 +28,10 @@ import { createTailer } from '../lib/transcript-tail.mjs'
 import { detectFramework, lintFrontmatter, declaredDependencies, checkDependencies } from '../lib/capability-provenance.mjs'
 import { auditRepo } from '../lib/freeze-audit.mjs'
 import { buildMap } from '../lib/design-map.mjs'
+import { listWorktrees, attributeSession } from '../lib/worktree.mjs'
+import { parseResultsJson, applyFilters, hardExclusionRules } from '../lib/security-findings.mjs'
+import { groupEvents } from '../lib/event-grouping.mjs'
+import { deriveLessons, SIGNALS } from '../lib/lessons.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -945,6 +949,92 @@ async function parsedRecords(file) {
   const r = await analysisTailer.read(file)
   return r.ok ? { records: r.records, malformed: r.malformed?.length || 0, cached: r.cached } : { records: [], malformed: 0, cached: false, error: r.error }
 }
+
+// ---------- worktrees ----------
+// Which worktree an agent run actually executed in. This dashboard already knows each session's
+// recorded cwd, so it can answer that; the tool this idea came from cannot, because a worktree
+// cannot self-report from inside itself.
+app.get('/api/worktrees', async (req, res) => {
+  try {
+    const repo = path.resolve(String(req.query.repo || PROJECT))
+    const list = await listWorktrees(repo)
+    if (list.status !== 'ok') {
+      // Not an empty list: "we could not look" and "there are none" are different answers and
+      // the endpoint refuses to collapse them.
+      return res.json({ repo, status: list.status, code: list.code, reason: list.reason, worktrees: null, sessions: [] })
+    }
+    // Attribute recent sessions to a worktree by their recorded cwd.
+    const { files } = collectUsage()
+    const sessions = files.filter(f => !f.isAgent && f.cwd).slice(0, 200).map(f => {
+      const wt = attributeSession(f.cwd, list.worktrees)
+      return {
+        sessionId: path.basename(f.path, '.jsonl'), cwd: f.cwd, mtime: f.mtime, msgs: f.msgs, cost: f.cost,
+        // null means the cwd matched no worktree — usually a session in a different repo, and
+        // reported as unattributed rather than forced into the closest match.
+        worktree: wt ? { path: wt.path, branch: wt.branchName || wt.branch || null, detached: !!wt.detached } : null,
+      }
+    })
+    const counts = {}
+    for (const s of sessions) { const k = s.worktree?.path || '(unattributed)'; counts[k] = (counts[k] || 0) + 1 }
+    res.json({ repo, status: 'ok', worktrees: list.worktrees, sessions, sessionCounts: counts, argv: list.argv })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// ---------- security findings ----------
+// Reads a claudecode-results.json produced by the security-review action. The artifact has a
+// 7-day retention on GitHub, so this takes a path: fetching it is a CI wiring decision, not
+// something to guess at here.
+app.get('/api/security/findings', (req, res) => {
+  try {
+    const file = req.query.file ? path.resolve(String(req.query.file)) : null
+    if (!file) return res.status(400).json({ error: 'file required — path to a claudecode-results.json artifact' })
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'not found: ' + file })
+    const parsed = parseResultsJson(fs.readFileSync(file, 'utf8'))
+    // Re-run the exclusion rules locally over the KEPT findings so a user can see what the
+    // vendor's filter would have dropped, independent of what it actually dropped.
+    const filtered = applyFilters(parsed.findings || [], {})
+    res.json({ file, ...parsed, localFilter: filtered, rules: hardExclusionRules().map(r => ({ id: r.id, reason: r.reason })) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// ---------- session events ----------
+// Readable rows for one session's tool calls. summarizeToolCall never echoes input VALUES, so a
+// token in a Bash command cannot reach this response.
+app.get('/api/session/events', async (req, res) => {
+  try {
+    const id = String(req.query.session || '')
+    if (!id || !/^[\w.-]+$/.test(id)) return res.status(400).json({ error: 'session id required' })
+    const { files } = collectUsage()
+    const hit = files.find(f => path.basename(f.path, '.jsonl') === id)
+    if (!hit) return res.status(404).json({ error: 'no such session: ' + id })
+    const { records, malformed } = await parsedRecords(hit.path)
+    const grouped = groupEvents(records, {})
+    res.json({ session: id, cwd: hit.cwd, ...grouped, unparsableLines: malformed })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// ---------- lessons ----------
+// Proposals derived from what actually happened, never invented. Every proposal cites the record
+// uuids that produced it; deriveLessons drops anything ungrounded before it can be returned.
+app.get('/api/lessons', async (req, res) => {
+  try {
+    const days = Math.min(90, Number(req.query.days) || 14)
+    const { files } = transcriptsSince(Date.now() - days * 24 * 3600_000)
+    const all = [], perSession = []
+    for (const f of files) {
+      const { records } = await parsedRecords(f)
+      if (!records.length) continue
+      const r = deriveLessons(records, {})
+      if (r.lessons?.length) {
+        const sid = path.basename(f, '.jsonl')
+        for (const l of r.lessons) all.push({ ...l, sessionId: sid })
+        perSession.push({ sessionId: sid, count: r.lessons.length, stats: r.stats })
+      }
+    }
+    all.sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+    res.json({ days, lessons: all, sessions: perSession, signals: SIGNALS })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 
 // ---------- design map ----------
 // lib/design-map.mjs has had no endpoint since it was added, so nothing could call it. It maps a
