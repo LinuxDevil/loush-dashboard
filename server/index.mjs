@@ -164,11 +164,44 @@ const KINDS = {
     template: n => `---\nname: ${n}\ndescription: \ntools: Read, Grep, Glob\n---\n\nSystem prompt for this agent.\n`,
   },
 }
+const OFF = '.off'
+// Flat kinds (commands/agents) may be installed into namespaced subdirectories — SuperClaude
+// ships ~/.claude/commands/sc/*.md — and a single-level readdir silently skipped every one of
+// them. A name round-trips as `sc:implement` <-> `sc/implement.md`, matching how Claude Code
+// addresses namespaced commands.
+const flatName = name => name.split(':')
+function walkFlatKind(dir) {
+  const out = []
+  const walk = (d, prefix) => {
+    let entries
+    try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) { walk(p, prefix ? `${prefix}:${e.name}` : e.name); continue }
+      let base, enabled
+      if (e.name.endsWith('.md' + OFF)) { base = e.name.slice(0, -(3 + OFF.length)); enabled = false }
+      else if (e.name.endsWith('.md')) { base = e.name.slice(0, -3); enabled = true }
+      else continue
+      out.push({ name: prefix ? `${prefix}:${base}` : base, file: p, enabled })
+    }
+  }
+  walk(dir, '')
+  return out
+}
+// Enabled items only — the shape every read path other than the customize view wants.
+function listItemNames(kind, dir) {
+  if (!fs.existsSync(dir)) return []
+  if (KINDS[kind].nested) {
+    try { return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name) } catch { return [] }
+  }
+  return walkFlatKind(dir).filter(i => i.enabled).map(i => i.name)
+}
 function itemFile(kind, scopeDir, name) {
-  return KINDS[kind].nested ? path.join(scopeDir, name, 'SKILL.md') : path.join(scopeDir, name + '.md')
+  return KINDS[kind].nested ? path.join(scopeDir, name, 'SKILL.md') : path.join(scopeDir, ...flatName(name)) + '.md'
 }
 function itemRoot(kind, scopeDir, name) {
-  return KINDS[kind].nested ? path.join(scopeDir, name) : path.join(scopeDir, name + '.md')
+  return KINDS[kind].nested ? path.join(scopeDir, name) : path.join(scopeDir, ...flatName(name)) + '.md'
 }
 function scopeDir(kind, scope) {
   const s = KINDS[kind].dirs().find(d => d.scope === scope)
@@ -180,10 +213,7 @@ const kindGuard = (req, res, next) => (KINDS[req.params.kind] ? next() : res.sta
 app.get('/api/res/:kind', kindGuard, (req, res) => {
   const kind = req.params.kind, out = []
   for (const { scope, dir } of KINDS[kind].dirs()) {
-    if (!fs.existsSync(dir)) continue
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const name = KINDS[kind].nested ? entry.name : entry.name.replace(/\.md$/, '')
-      if (KINDS[kind].nested ? !entry.isDirectory() : !entry.name.endsWith('.md')) continue
+    for (const name of listItemNames(kind, dir)) {
       const file = itemFile(kind, dir, name)
       if (!fs.existsSync(file)) continue
       const st = fs.statSync(file)
@@ -222,7 +252,8 @@ app.put('/api/res/:kind/item', kindGuard, (req, res) => {
 
 app.post('/api/res/:kind', kindGuard, (req, res) => {
   const { kind } = req.params, { scope = 'user', name } = req.body
-  if (!/^[\w.-]+$/.test(name || '')) return res.status(400).json({ error: 'invalid name' })
+  // `:` separates a namespace (sc:implement -> sc/implement.md); safe() still bounds the result.
+  if (!/^[\w.-]+(:[\w.-]+)*$/.test(name || '') || name.includes('..')) return res.status(400).json({ error: 'invalid name' })
   const file = safe(itemFile(kind, scopeDir(kind, scope), name))
   if (fs.existsSync(file)) return res.status(409).json({ error: 'already exists' })
   fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -368,27 +399,25 @@ app.put('/api/settings', (req, res) => {
 //   · mcp     → park the server config in `_disabledMcpServers` in ~/.claude.json (out of `mcpServers` = off).
 //   · plugins → the native `enabledPlugins` boolean in settings.json.
 //   · hooks   → move the matcher entry between `settings.hooks[event]` and `settings._disabledHooks[event]`.
-const OFF = '.off'
 function customizeRes(kind) { // skills/commands/agents
   const out = []
+  const add = (scope, name, enabled, file) => {
+    const content = fs.readFileSync(file, 'utf8')
+    const { fm } = parseFM(content)
+    out.push({ kind, name, scope, group: scope, enabled, description: String(fm.description || ''), tokens: tokens(content), path: file, status: enabled ? 'on' : 'off' })
+  }
   for (const { scope, dir } of KINDS[kind].dirs()) {
     if (!fs.existsSync(dir)) continue
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      let name, enabled, file
-      if (KINDS[kind].nested) {
+    if (KINDS[kind].nested) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         if (!e.isDirectory()) continue
-        name = e.name
-        const live = path.join(dir, name, 'SKILL.md')
-        if (fs.existsSync(live)) { enabled = true; file = live }
-        else if (fs.existsSync(live + OFF)) { enabled = false; file = live + OFF }
-        else continue
-      } else {
-        if (e.name.endsWith('.md' + OFF)) { name = e.name.slice(0, -(3 + OFF.length)); enabled = false; file = path.join(dir, e.name) }
-        else if (e.name.endsWith('.md')) { name = e.name.slice(0, -3); enabled = true; file = path.join(dir, e.name) }
-        else continue
+        const live = path.join(dir, e.name, 'SKILL.md')
+        if (fs.existsSync(live)) add(scope, e.name, true, live)
+        else if (fs.existsSync(live + OFF)) add(scope, e.name, false, live + OFF)
       }
-      const { fm } = parseFM(fs.readFileSync(file, 'utf8'))
-      out.push({ kind, name, scope, group: scope, enabled, description: String(fm.description || ''), tokens: tokens(fs.readFileSync(file, 'utf8')), path: file, status: enabled ? 'on' : 'off' })
+    } else {
+      // Disabled items keep their .md.off suffix, so both states come back from one walk.
+      for (const { name, file, enabled } of walkFlatKind(dir)) add(scope, name, enabled, file)
     }
   }
   return out
@@ -448,8 +477,8 @@ app.post('/api/customize/toggle', (req, res) => {
   try {
     const { kind, scope, name, enable, ref } = req.body
     if (kind === 'skills' || kind === 'commands' || kind === 'agents') {
-      const dir = scopeDir(kind, scope)
-      const live = safe(KINDS[kind].nested ? path.join(dir, name, 'SKILL.md') : path.join(dir, name + '.md'))
+      // itemFile(), not a hand-built path — it is what maps `sc:implement` onto sc/implement.md.
+      const live = safe(itemFile(kind, scopeDir(kind, scope), name))
       return res.json(toggleOffFile(live, enable))
     }
     if (kind === 'rules') {
@@ -600,9 +629,7 @@ function overviewItems() {
   const push = (kind, name, extra) => items.push({ kind, name, tags: meta.tags?.[`${kind}:${name}`] || [], ...extra })
   for (const kind of ['skills', 'commands', 'agents']) {
     for (const { scope, dir } of KINDS[kind].dirs()) {
-      if (!fs.existsSync(dir)) continue
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const name = KINDS[kind].nested ? entry.name : entry.name.replace(/\.md$/, '')
+      for (const name of listItemNames(kind, dir)) {
         const file = itemFile(kind, dir, name)
         if (!fs.existsSync(file)) continue
         const content = fs.readFileSync(file, 'utf8')
