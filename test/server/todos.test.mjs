@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dayStart } from '../../lib/todos.mjs'
+import { dayStart, dayKey, shiftDay } from '../../lib/todos.mjs'
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'todos-test-'))
 process.env.HOME = TMP
@@ -40,7 +40,7 @@ const failStats = () => [{ sessionId: 's1', errs: [{ t: dayStart(DAY) + 3_700_00
 function harness() {
   const routes = new Map()
   const app = {}
-  for (const m of ['get', 'post', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
+  for (const m of ['get', 'post', 'put', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
   mountTodos(app, { scanTranscripts, failStats })
   return (method, urlPath, { query = {}, params = {}, body = {} } = {}) => {
     const h = routes.get(method + ' ' + urlPath)
@@ -54,7 +54,24 @@ function harness() {
 
 fs.mkdirSync(REPO, { recursive: true })
 const call = harness()
-const reset = () => { try { fs.rmSync(STORE) } catch {} }
+
+// Wipe the store, then pin roll-over OFF. Every test below that works on a FIXED past date needs
+// that: with roll-over on — the shipped default, asserted in its own test — reading any day moves
+// unfinished 2025 fixtures onto the real today, which is correct behaviour and would make those
+// assertions depend on the date the suite happens to run. The roll-over tests turn it back on.
+const reset = () => {
+  try { fs.rmSync(STORE) } catch {}
+  call('put', '/api/todos/settings', { body: { rollover: false } })
+}
+const resetRolling = () => {
+  try { fs.rmSync(STORE) } catch {}
+  call('put', '/api/todos/settings', { body: { rollover: true } })
+}
+
+test('roll-over is ON for a store that has never been written', () => {
+  try { fs.rmSync(STORE) } catch {}
+  assert.equal(call('get', '/api/todos/settings').body.rollover, true)
+})
 
 test('an empty store answers with the day, not an error', () => {
   reset()
@@ -192,7 +209,7 @@ test('with no transcript history at all, suggest explains itself instead of show
   reset()
   const app = {}
   const routes = new Map()
-  for (const m of ['get', 'post', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
+  for (const m of ['get', 'post', 'put', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
   mountTodos(app, { scanTranscripts: () => ({ sessions: [], edits: [], prompts: [] }), failStats: () => [] })
   let out
   routes.get('get /api/todos/suggest')({ query: { date: DAY }, params: {}, body: {} }, { status() { return this }, json(b) { out = b } })
@@ -205,7 +222,7 @@ test('writes go through the injected tracker when the host provides one', () => 
   reset()
   const app = {}
   const routes = new Map()
-  for (const m of ['get', 'post', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
+  for (const m of ['get', 'post', 'put', 'patch', 'delete']) app[m] = (p, h) => routes.set(m + ' ' + p, h)
   const tracked = []
   mountTodos(app, { scanTranscripts, failStats, track: (file, body, opts) => { tracked.push(opts.summary); fs.writeFileSync(file, body) } })
   routes.get('post /api/todos')({ query: {}, params: {}, body: { title: 'tracked write', date: DAY } }, { status() { return this }, json() {} })
@@ -223,3 +240,141 @@ test('a corrupt store degrades to an empty day instead of throwing', () => {
 })
 
 process.on('exit', () => { try { fs.rmSync(TMP, { recursive: true, force: true }) } catch {} })
+
+// ── roll-over ────────────────────────────────────────────────────────────────────────────────────
+// These use REAL today, because that is what the route rolls onto — the trigger is the calendar
+// advancing, not a parameter, and a test that could pass a fake today would not exercise the guard.
+
+const TODAY = dayKey()
+const YESTERDAY = shiftDay(TODAY, -1)
+
+test('reading any day rolls unfinished past work onto today, once', () => {
+  resetRolling()
+  const open = call('post', '/api/todos', { body: { title: 'unfinished yesterday', date: YESTERDAY } }).body
+  const done = call('post', '/api/todos', { body: { title: 'finished yesterday', date: YESTERDAY } }).body
+  call('patch', '/api/todos/:id', { params: { id: done.id }, body: { done: true } })
+
+  const today = call('get', '/api/todos', { query: { date: TODAY } }).body
+  assert.deepEqual(today.todos.map(t => t.title), ['unfinished yesterday'])
+  assert.equal(today.todos[0].firstDate, YESTERDAY, 'the day it was originally filed for is kept')
+  assert.equal(today.todos[0].rollovers, 1)
+  assert.equal(today.todos[0].carriedDays, 1)
+  assert.equal(today.rolledOverToday, true)
+
+  // the finished one stays on the day it was finished, and a second read moves nothing further
+  const yday = call('get', '/api/todos', { query: { date: YESTERDAY } }).body
+  assert.deepEqual(yday.todos.map(t => t.title), ['finished yesterday'])
+  const again = call('get', '/api/todos', { query: { date: TODAY } }).body
+  assert.equal(again.todos.length, 1)
+  assert.equal(again.todos[0].rollovers, 1, 'the guard stops it running twice in one day')
+})
+
+test('roll-over can be switched off, and then nothing moves on its own', () => {
+  reset()
+  call('post', '/api/todos', { body: { title: 'left where it was', date: YESTERDAY } })
+  const today = call('get', '/api/todos', { query: { date: TODAY } }).body
+  assert.equal(today.todos.length, 0)
+  assert.equal(today.carry.length, 1, 'it is still surfaced as carry-over — off means "do not move it", not "hide it"')
+  assert.equal(today.settings.rollover, false)
+})
+
+test('roll now moves overdue work on demand and reports what it moved', () => {
+  reset()   // roll-over off: "roll now" must work on demand even when the automatic pass is disabled
+  call('post', '/api/todos', { body: { title: 'a', date: YESTERDAY } })
+  call('post', '/api/todos', { body: { title: 'b', date: YESTERDAY } })
+  const r = call('post', '/api/todos/rollover', { body: { date: TODAY } })
+  assert.equal(r.body.moved.length, 2)
+  assert.deepEqual(r.body.moved.map(m => m.from), [YESTERDAY, YESTERDAY])
+  assert.equal(call('post', '/api/todos/rollover', { body: { date: TODAY } }).body.moved.length, 0)
+})
+
+// ── timing ───────────────────────────────────────────────────────────────────────────────────────
+
+test('every row carries its time-in-column with it', () => {
+  reset()
+  const t = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  call('patch', '/api/todos/:id', { params: { id: t.id }, body: { status: 'code-review' } })
+  const row = call('get', '/api/todos', { query: { date: TODAY } }).body.todos[0]
+  assert.ok(row.timing, 'timing travels with the row — no second round trip per card')
+  assert.equal(row.timing.current.status, 'code-review')
+  assert.equal(row.timing.current.open, true)
+  assert.equal(row.timing.leadMs, null, 'lead time only exists once it is finished')
+  // A stage moved through in under a millisecond accrues nothing and is NOT drawn — a 0ms bar in the
+  // card's split would be a stage the work never really sat in.
+  assert.ok(row.timing.ordered.every(s => s.ms > 0))
+  assert.ok(row.timing.total >= 0)
+})
+
+// ── JIRA ─────────────────────────────────────────────────────────────────────────────────────────
+
+test('a JIRA key is normalized, stored and echoed back', () => {
+  reset()
+  const t = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  const r = call('patch', '/api/todos/:id', { params: { id: t.id }, body: { jira: '  abc-123 ' } })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.jira.key, 'ABC-123')
+  assert.ok('url' in r.body.jira, 'the URL is resolved server-side from the configured host, or null')
+})
+
+test('a pasted browse URL links the ticket it points at', () => {
+  reset()
+  const t = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  const r = call('patch', '/api/todos/:id', { params: { id: t.id }, body: { jira: 'https://team.atlassian.net/browse/XYZ-77?filter=1' } })
+  assert.equal(r.body.jira.key, 'XYZ-77')
+})
+
+test('an unparseable key is refused rather than guessed at', () => {
+  reset()
+  const t = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  const r = call('patch', '/api/todos/:id', { params: { id: t.id }, body: { jira: '1234' } })
+  assert.equal(r.status, 400)
+  assert.match(r.body.error, /not a JIRA key/)
+  assert.equal(call('get', '/api/todos', { query: { date: TODAY } }).body.todos[0].jira, null)
+})
+
+test('a link can be cleared', () => {
+  reset()
+  const t = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  call('patch', '/api/todos/:id', { params: { id: t.id }, body: { jira: 'ABC-1' } })
+  const cleared = call('patch', '/api/todos/:id', { params: { id: t.id }, body: { jira: '' } })
+  assert.equal(cleared.body.jira, null)
+})
+
+// ── insights ─────────────────────────────────────────────────────────────────────────────────────
+
+test('insights answers for a day, a week and a month', () => {
+  reset()
+  const a = call('post', '/api/todos', { body: { title: 'a', date: TODAY } }).body
+  call('post', '/api/todos', { body: { title: 'b', date: TODAY } })
+  call('patch', '/api/todos/:id', { params: { id: a.id }, body: { done: true } })
+  for (const period of ['day', 'week', 'month']) {
+    const i = call('get', '/api/todos/insights', { query: { period, date: TODAY } }).body
+    assert.equal(i.available, true, period)
+    assert.equal(i.range.period, period)
+    assert.equal(i.counts.created, 2, period)
+    assert.equal(i.counts.completed, 1, period)
+    assert.equal(i.completionRate, 50, period)
+    assert.equal(i.stages.length, 7, period)
+  }
+})
+
+test('an unknown period falls back to the day rather than erroring', () => {
+  reset()
+  assert.equal(call('get', '/api/todos/insights', { query: { period: 'fortnight', date: TODAY } }).body.range.period, 'day')
+})
+
+test('an empty window says so in words instead of drawing a flat zero', () => {
+  reset()
+  const i = call('get', '/api/todos/insights', { query: { period: 'day', date: '2001-01-01' } }).body
+  assert.equal(i.available, false)
+  assert.equal(i.completionRate, null)
+  assert.match(i.detail, /which is not the same as/)
+})
+
+test('insights honours the repo filter but keeps unbound todos', () => {
+  reset()
+  call('post', '/api/todos', { body: { title: 'here', date: TODAY, root: REPO } })
+  call('post', '/api/todos', { body: { title: 'elsewhere', date: TODAY, root: '/other' } })
+  call('post', '/api/todos', { body: { title: 'unbound', date: TODAY } })
+  assert.equal(call('get', '/api/todos/insights', { query: { period: 'day', date: TODAY, root: REPO } }).body.counts.created, 2)
+})

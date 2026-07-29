@@ -4,7 +4,7 @@
 // checkbox and the same stage control at `compact` density. Sharing them here is what keeps a tick in
 // the drawer and a tick on the board from drifting into two behaviours.
 import React, { useState } from 'react'
-import { STATUSES, statusMeta, stepStatus, progressOf, todoApi } from '../lib/todos.js'
+import { STATUSES, statusMeta, stepStatus, progressOf, todoApi, humanMs, timeInStages } from '../lib/todos.js'
 import { toast } from '../lib/api.js'
 
 const MONO = 'var(--mono)'
@@ -88,6 +88,79 @@ export const PathChip = ({ todo }) => {
   )
 }
 
+/**
+ * Time in each column, as a proportional bar plus the numbers under it.
+ *
+ * The clock stops when the todo is ticked (see timeInStages), so a finished card's split is the
+ * record of how it was actually delivered, not a figure that keeps growing while it sits in the file.
+ * `timing` comes down with the row; recomputing locally is only the fallback for an optimistic render.
+ */
+function StageTime({ todo }) {
+  const t = todo.timing || timeInStages(todo)
+  if (!t.ordered.length || !t.total) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ font: `600 10px ${MONO}`, color: 'var(--text-secondary)' }}>TIME IN EACH COLUMN</span>
+        <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+          {t.current?.open ? `${humanMs(t.current.ms)} in ${statusMeta(t.current.status).label} now` : `finished in ${humanMs(t.leadMs)}`}
+        </span>
+      </div>
+      <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: 'var(--bg-inset)' }}>
+        {t.ordered.map(s => (
+          <div key={s.status} title={`${statusMeta(s.status).label} — ${humanMs(s.ms)} (${s.pct}%)`}
+            style={{ width: `${s.pct}%`, background: statusMeta(s.status).color, opacity: 0.85 }} />
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 12px' }}>
+        {t.ordered.map(s => (
+          <span key={s.status} style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+            <span style={{ color: statusMeta(s.status).color }}>●</span> {statusMeta(s.status).label} {humanMs(s.ms)}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Link this todo to the ticket it belongs to. The key is parsed server-side by the same normalizer
+ * the Ticket section uses, so a pasted browse URL works and a bare number is refused rather than
+ * guessed at. With no JIRA host configured the key is still stored — it just renders as text, and
+ * says why, instead of becoming a link to a hostname nobody configured.
+ */
+function JiraLink({ todo, config }) {
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const link = key => {
+    setBusy(true)
+    todoApi.linkJira(todo.id, key)
+      .then(() => setDraft(''))
+      .catch(e => toast(e.message, 'error'))
+      .finally(() => setBusy(false))
+  }
+  if (todo.jira?.key) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ font: `600 10px ${MONO}`, color: 'var(--text-secondary)' }}>JIRA</span>
+        {todo.jira.url
+          ? <a href={todo.jira.url} target="_blank" rel="noreferrer" style={{ font: `600 11px ${MONO}`, color: 'var(--text-link)' }}>{todo.jira.key} ↗</a>
+          : <span title="no JIRA host is configured — add one in Setup and this becomes a link"
+              style={{ font: `600 11px ${MONO}`, color: 'var(--text-primary)' }}>{todo.jira.key} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>· no host configured</span></span>}
+        <button className="ghost" style={{ marginTop: 0 }} title="unlink" disabled={busy} onClick={() => link('')}>✕</button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => e.key === 'Enter' && draft.trim() && link(draft)}
+        placeholder={config?.prefixes?.length ? `link a JIRA ticket — ${config.prefixes[0]}-123 or a URL` : 'link a JIRA ticket — ABC-123 or paste the ticket URL'}
+        style={{ flex: 1, font: `400 11px ${MONO}`, padding: '3px 6px' }} />
+      <button className="mini" style={{ marginTop: 0 }} disabled={!draft.trim() || busy} onClick={() => link(draft)}>link</button>
+    </div>
+  )
+}
+
 /** Sub-tasks: checkable, addable, removable. The second level of "checkable" the request asked for. */
 function Subtasks({ todo }) {
   const [draft, setDraft] = useState('')
@@ -126,7 +199,7 @@ function Subtasks({ todo }) {
  * Everything on the card is an action — tick it, move its stage, open its file's dossier, delete it —
  * because a row you can only look at is a row that goes stale.
  */
-export function TodoCard({ todo, compact, onOpenFile }) {
+export function TodoCard({ todo, compact, onOpenFile, jiraConfig }) {
   const [open, setOpen] = useState(false)
   const [notes, setNotes] = useState(todo.notes || '')
   const prog = progressOf(todo)
@@ -156,6 +229,25 @@ export function TodoCard({ todo, compact, onOpenFile }) {
                 ☑ {prog.done}/{prog.total}
               </span>
             )}
+            {todo.jira?.key && (
+              todo.jira.url
+                ? <a href={todo.jira.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                    style={{ font: `600 10px ${MONO}`, color: 'var(--text-link)' }}>{todo.jira.key}</a>
+                : <span style={{ font: `600 10px ${MONO}`, color: 'var(--text-secondary)' }}>{todo.jira.key}</span>
+            )}
+            {/* Carried work is marked on the face of the card. Rolling it forward silently is how a
+                to-do list quietly accumulates a week of things nobody intends to do. */}
+            {todo.carriedDays > 0 && !todo.done && (
+              <span title={`filed for ${todo.firstDate}, rolled forward ${todo.rollovers || 0}×`}
+                style={{ font: `500 10px ${MONO}`, color: todo.carriedDays >= 3 ? 'var(--red)' : 'var(--amber)' }}>
+                ↻ carried {todo.carriedDays}d
+              </span>
+            )}
+            {!compact && todo.timing?.current?.open && todo.timing.current.ms > 3_600_000 && (
+              <span title="time in the current stage" style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+                ⏱ {humanMs(todo.timing.current.ms)}
+              </span>
+            )}
             {todo.source === 'workingset' && (
               <span title="filed from what the agent actually edited that day" style={{ font: `400 10px ${MONO}`, color: 'var(--blue)' }}>◈ working set</span>
             )}
@@ -176,6 +268,8 @@ export function TodoCard({ todo, compact, onOpenFile }) {
               <StagePicker todo={todo} />
             </div>
           )}
+          <StageTime todo={todo} />
+          <JiraLink todo={todo} config={jiraConfig} />
           <Subtasks todo={todo} />
           {!compact && (
             <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)}

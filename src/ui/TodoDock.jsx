@@ -77,6 +77,7 @@ export default function TodoDock({ onNav }) {
                 <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
                   {humanDay(date)} · {data ? `${data.stats.done}/${data.stats.total} done` : '…'}
                   {data?.carry.length ? ` · ${data.carry.length} carried over` : ''}
+                  {data?.settings?.rollover === false ? ' · roll-over off' : ''}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
@@ -113,7 +114,7 @@ export default function TodoDock({ onNav }) {
                         <span style={{ font: `600 11px ${HEAD}`, color: 'var(--text-secondary)' }}>{s.label}</span>
                         <span style={{ font: `500 10px ${MONO}`, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{col.length}</span>
                       </div>
-                      {col.map(t => <TodoCard key={t.id} todo={t} compact />)}
+                      {col.map(t => <TodoCard key={t.id} todo={t} compact jiraConfig={data.jiraConfig} />)}
                     </div>
                   )
                 })}

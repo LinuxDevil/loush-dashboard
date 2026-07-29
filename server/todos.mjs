@@ -24,17 +24,52 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import {
-  STATUSES, STATUS_IDS, isStatus, dayKey, isDayKey, dayStart, dayEnd,
+  STATUSES, STATUS_IDS, PERIODS, isStatus, dayKey, isDayKey, dayStart, dayEnd,
   normalizeTodo, applyPatch, partitionByDate, dayStats, groupByPath, suggestFromActivity, normalizeRel,
+  rollForward, insights, timeInStages, carriedDays,
 } from '../lib/todos.mjs'
+// The Ticket section already owns "what counts as a JIRA key" — it accepts every form a human pastes,
+// including a full browse URL, and REFUSES a bare number rather than guessing a prefix. Re-implementing
+// that here would be a second, subtly different answer to the same question.
+import { normalizeKey } from './ticket.mjs'
+import { loadEngConfig } from '../lib/eng-config.mjs'
+import { PROJECTS_FILE } from '../lib/paths.mjs'
 
 const STORE = path.join(os.homedir(), '.claude', 'dashboard-todos.json')
+const DEFAULT_SETTINGS = { rollover: true }
 
 const readStore = () => {
   try {
     const j = JSON.parse(fs.readFileSync(STORE, 'utf8'))
-    return { version: 1, todos: Array.isArray(j.todos) ? j.todos : [] }
-  } catch { return { version: 1, todos: [] } }
+    return {
+      version: 1,
+      todos: Array.isArray(j.todos) ? j.todos : [],
+      settings: { ...DEFAULT_SETTINGS, ...(j.settings || {}) },
+      lastRollover: typeof j.lastRollover === 'string' ? j.lastRollover : null,
+    }
+  } catch { return { version: 1, todos: [], settings: { ...DEFAULT_SETTINGS }, lastRollover: null } }
+}
+
+/**
+ * Resolve the browse URL for a JIRA key from the CONFIGURED host — the per-board host when the key's
+ * prefix matches a configured board, the global one otherwise. No host configured means `url: null`,
+ * and the UI says so: a link built from a guessed hostname 404s, which is worse than a plain key.
+ */
+function jiraFor(key) {
+  let cfg
+  try { cfg = loadEngConfig(PROJECTS_FILE) } catch { cfg = { jiraHost: null, projects: [] } }
+  const prefix = String(key).split('-')[0].toUpperCase()
+  const proj = (cfg.projects || []).find(p => String(p.jiraProjectKey || p.key || '').toUpperCase() === prefix)
+  const host = proj?.jiraHost || cfg.jiraHost || null
+  return { key, host, url: host ? `https://${host}/browse/${key}` : null }
+}
+
+/** Hosts + known prefixes, so the client can explain what a key will link to before one is typed. */
+function jiraConfig() {
+  let cfg
+  try { cfg = loadEngConfig(PROJECTS_FILE) } catch { cfg = { jiraHost: null, projects: [] } }
+  const prefixes = [...new Set((cfg.projects || []).map(p => String(p.jiraProjectKey || p.key || '').toUpperCase()).filter(Boolean))]
+  return { host: cfg.jiraHost || null, prefixes, configured: !!(cfg.jiraHost || prefixes.length) }
 }
 
 export default function mountTodos(app, deps = {}) {
@@ -88,26 +123,54 @@ export default function mountTodos(app, deps = {}) {
 
   const dateOf = req => (isDayKey(req.query.date) ? req.query.date : dayKey())
 
+  /**
+   * Carry unfinished work onto today, at most once per calendar day.
+   *
+   * Guarded by `lastRollover` rather than run per request: this is a WRITE, and a write that fires on
+   * every read of a polled endpoint would rewrite the store several times a minute and bury the
+   * versioned history under noise. Reading a PAST day never triggers it either — the trigger is the
+   * calendar advancing, not which day you happen to be looking at.
+   */
+  const maybeRollover = () => {
+    const store = readStore()
+    const today = dayKey()
+    if (!store.settings.rollover || store.lastRollover === today) return store
+    const { todos, moved, changed } = rollForward(store.todos, today)
+    store.todos = todos
+    store.lastRollover = today
+    // The stamp is written even when nothing moved, so an empty morning does not re-scan all day.
+    writeStore(store, changed ? `todos rolled forward to ${today}: ${moved.length}` : `todo roll-over checked for ${today}`)
+    if (changed) console.log(`[claude-dashboard] rolled ${moved.length} unfinished todo(s) forward to ${today}`)
+    return store
+  }
+
   // ---------------- read ----------------
 
   app.get('/api/todos', (req, res) => {
     try {
       const date = dateOf(req)
-      const store = readStore()
+      const store = maybeRollover()
       const rootFilter = req.query.root ? String(req.query.root) : null
       // A repo filter hides todos bound to OTHER repos but never hides unbound ones: a plain "call
       // the designer" todo belongs to the day, not to a checkout, and must not disappear behind a
       // scope selector the user set for something else.
       const scoped = rootFilter ? store.todos.filter(t => !t.root || t.root === rootFilter) : store.todos
       const { onDate, carry, later } = partitionByDate(scoped, date)
+      const now = Date.now()
+      // Timing travels WITH the row rather than as a second request: every card shows how long it has
+      // been sitting where it is, and a card that has to wait for another round trip shows nothing.
+      const withTime = t => ({ ...t, timing: timeInStages(t, now), carriedDays: carriedDays(t, date) })
       res.json({
         date,
         statuses: STATUSES,
-        todos: onDate,
-        carry,
+        settings: store.settings,
+        jiraConfig: jiraConfig(),
+        rolledOverToday: store.lastRollover === dayKey(),
+        todos: onDate.map(withTime),
+        carry: carry.map(withTime),
         ahead: later.filter(t => !t.done).length,
         stats: dayStats(onDate),
-        tree: groupByPath(onDate),
+        tree: groupByPath(onDate.map(withTime)),
         roots: roots(),
         // Days that already hold something — the date strip marks them so the user can find the day
         // they were working on instead of clicking backwards through empty ones.
@@ -122,7 +185,7 @@ export default function mountTodos(app, deps = {}) {
   app.get('/api/todos/count', (req, res) => {
     try {
       const date = dateOf(req)
-      const { onDate, carry } = partitionByDate(readStore().todos, date)
+      const { onDate, carry } = partitionByDate(maybeRollover().todos, date)
       const open = onDate.filter(t => !t.done)
       res.json({ date, open: open.length, total: onDate.length, carry: carry.length, inProgress: open.filter(t => t.status === 'in-progress').length })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
@@ -150,7 +213,60 @@ export default function mountTodos(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
+  /**
+   * Daily / weekly / monthly insights, computed from the store alone — no LLM, no external service,
+   * no cost. Every number here is derived from timestamps this app wrote itself, which is why the
+   * per-stage figures can be trusted: they are not a self-report of how long review "felt".
+   */
+  app.get('/api/todos/insights', (req, res) => {
+    try {
+      const period = PERIODS.includes(req.query.period) ? req.query.period : 'day'
+      const date = dateOf(req)
+      const store = readStore()
+      const rootFilter = req.query.root ? String(req.query.root) : null
+      const scoped = rootFilter ? store.todos.filter(t => !t.root || t.root === rootFilter) : store.todos
+      const out = insights(scoped, { period, date })
+      res.json({
+        ...out,
+        statuses: STATUSES,
+        // Stated rather than implied: with an empty window the UI must say "nothing in this window",
+        // not draw a flat line that reads as a real zero.
+        available: !out.empty,
+        detail: out.empty ? `No todos were open or created in ${out.range.label}. Insights are computed from the todos you file here — this window is empty, which is not the same as a week with no work.` : null,
+      })
+    } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
+  })
+
   // ---------------- write ----------------
+
+  // Roll-over is the one behaviour here that changes data without the user asking, so it is a setting
+  // with a visible toggle rather than a hidden policy.
+  app.get('/api/todos/settings', (req, res) => {
+    const store = readStore()
+    res.json({ ...store.settings, lastRollover: store.lastRollover, jira: jiraConfig() })
+  })
+  app.put('/api/todos/settings', (req, res) => {
+    try {
+      const store = readStore()
+      if (req.body?.rollover !== undefined) store.settings.rollover = !!req.body.rollover
+      writeStore(store, `todo settings: rollover ${store.settings.rollover ? 'on' : 'off'}`)
+      res.json(store.settings)
+    } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
+  })
+
+  // Roll the day forward on demand — the button next to the toggle, for when you want it now rather
+  // than at the next calendar flip (and the only way to get it at all with the setting off).
+  app.post('/api/todos/rollover', (req, res) => {
+    try {
+      const store = readStore()
+      const today = isDayKey(req.body?.date) ? req.body.date : dayKey()
+      const { todos, moved, changed } = rollForward(store.todos, today)
+      store.todos = todos
+      store.lastRollover = today
+      if (changed) writeStore(store, `todos rolled forward to ${today}: ${moved.length}`)
+      res.json({ moved, date: today })
+    } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
+  })
 
   app.post('/api/todos', (req, res) => {
     try {
@@ -203,10 +319,23 @@ export default function mountTodos(app, deps = {}) {
       if (i === -1) return res.status(404).json({ error: 'no such todo' })
       if (req.body?.status !== undefined && !isStatus(req.body.status))
         return res.status(400).json({ error: `status must be one of: ${STATUS_IDS.join(', ')}` })
-      const next = applyPatch(store.todos[i], req.body || {})
+      const patch = { ...(req.body || {}) }
+      // `jira: "abc-123"` / a pasted browse URL / "" to unlink. Refusing an unparseable key is the
+      // point: normalizeKey will not guess a prefix for a bare number, and a todo linked to the wrong
+      // ticket is worse than one linked to none.
+      if (patch.jira !== undefined) {
+        const raw = typeof patch.jira === 'object' && patch.jira ? patch.jira.key : patch.jira
+        if (!raw) patch.jira = null
+        else {
+          const key = normalizeKey(raw)
+          if (!key) return res.status(400).json({ error: `"${String(raw).slice(0, 40)}" is not a JIRA key — use ABC-123, or paste the ticket URL` })
+          patch.jira = jiraFor(key)
+        }
+      }
+      const next = applyPatch(store.todos[i], patch)
       store.todos[i] = next
       writeStore(store, `todo updated: ${next.title.slice(0, 60)}`)
-      res.json(next)
+      res.json({ ...next, timing: timeInStages(next), carriedDays: carriedDays(next, next.date) })
     } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
   })
 

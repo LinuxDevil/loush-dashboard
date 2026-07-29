@@ -48,7 +48,7 @@ to `App.jsx` films itself with no edit to the script.
 
 - [The tour](#the-tour) — the whole app moving, every section, real data
 - [Working Set](#working-set--what-the-agent-did-to-your-code) — the flagship, zero config
-- [Todos](#todos--one-day-seven-stages-filed-by-file) — the day list, from what the agent actually touched
+- [Todos](#todos--one-day-seven-stages-filed-by-file) — the day list, roll-over, time-in-column, insights
 - [Setup](#setup--every-config-and-credential-visually) — projects, credentials, work week
 - [Capabilities](#capabilities--what-you-pay-for-and-what-actually-fires) — the ROI ledger
 - [Harness](#harness--sessions-forensics-and-usage) — sessions, forensics, usage
@@ -142,15 +142,39 @@ Live** — with every row optionally filed under the **directory and file** it b
   every other screen reads and lists **the files the agent edited on that day, in that repo**, grouped
   directory → file, with edit counts, `+/-` line volume, sessions and the tool errors hit on each one.
   One click files them as Draft todos already bound to their path, carrying that evidence on the card.
-- **Nothing is lost to the date scope.** Unfinished todos from earlier days surface in a carry-over
-  strip with a one-click _pull into today_ — a date-scoped list that hides yesterday is a to-do app
-  that loses to-dos.
+- **Unfinished work follows you.** At the first read of a new day, every open todo dated earlier
+  **moves onto today** — once per day, guarded, and switchable from the header (plus a _roll now_
+  button for when you want it immediately). It **moves rather than copies**: one open piece of work is
+  one row, not one per day it survived, which is the difference between a completion rate that means
+  something and one inflated by every day you failed to finish. What it keeps makes the move honest —
+  `firstDate` never changes, each move is recorded, and the card says **"↻ carried 4d"** to your face.
+  Finished todos never move: they are the record of the day they were finished on. With roll-over off,
+  earlier work still surfaces in a carry-over strip with a one-click _pull_ — the date scope never
+  hides a to-do either way.
+- **How long each task sat in each column.** Every stage change is timestamped, so each card shows a
+  proportional split — _Draft 3h · In progress 1d 15h · Code review 1d 6h_ — and how long it has been
+  in its current column right now. The clock **stops when the todo is ticked**, so a finished card is
+  the record of how it was actually delivered rather than a number that grows while it sits in a file.
+- **Daily, weekly and monthly insights**, computed from those same timestamps — no LLM, no external
+  service, no cost. Created vs completed, completion rate, median lead time, roll-over pressure, time
+  in each column with the **bottleneck stage named**, throughput by hour (day) or by day (week/month),
+  the work carried forward the longest, and the whole thing broken down by directory and by ticket.
+  Per-stage time is **clipped to the window**, so a ticket spanning two months is not counted into
+  both; every aggregate carries its `n`; and no bottleneck is named below two samples, because one
+  card is not a trend.
+- **Linked to the ticket it belongs to.** Paste a JIRA key or a browse URL on any card. The key is
+  parsed by the same normalizer the Ticket section uses — it accepts every form a human pastes and
+  **refuses a bare number rather than guessing a prefix**. The link is resolved server-side from the
+  configured host (per-board first, global second); with no host configured the key is still stored and
+  rendered as text that says why, instead of becoming a link to a hostname nobody configured. Insights
+  then roll up per ticket, including how long that ticket's work spent in each column.
 - **Honest when empty.** With no agent history the panel says so, in words, and explains that
   hand-typed todos still work — it does not render an empty board as if there were nothing to do.
 
 State lives in `~/.claude/dashboard-todos.json` and is written through the same versioned `track()`
 path as every other write in this app, so a todo edit is backed up and rollback-able like a config
-change. The stage model is one module (`lib/todos.mjs`) imported by both the server and the browser:
+change. Roll-over is the one thing here that writes without being asked, which is why it is guarded by
+a once-per-day stamp rather than firing on every read of a polled endpoint. The stage model is one module (`lib/todos.mjs`) imported by both the server and the browser:
 a second copy is exactly how a stage rename produces cards that render in no column.
 
 ---
@@ -543,7 +567,9 @@ calls onExit exactly once"_, where `onExit` never fires for a spawn of a missing
 | Endpoint                                                                                                                                                    | What                                                                                                               |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `GET /api/fe/workingset?root=&days=` · `GET /api/fe/dossier?root=&file=` · `POST /api/fe/mute`                                                              | Working Set: rework rank, import graph, coverage; per-file prompt→diff→error timeline and context bundle           |
-| `GET /api/todos?date=&root=` · `GET /api/todos/count?date=` · `GET /api/todos/suggest?date=&root=` · `POST /api/todos` · `POST /api/todos/{import,move}` · `PATCH\|DELETE /api/todos/:id` | Todos: one day's list with its carry-over and directory→file tree; the dock's badge count; the day's real agent activity to file from; create / bulk-file / move / patch (stage, done, sub-tasks) |
+| `GET /api/todos?date=&root=` · `GET /api/todos/count?date=` · `GET /api/todos/suggest?date=&root=` · `POST /api/todos` · `POST /api/todos/{import,move}` · `PATCH\|DELETE /api/todos/:id` | Todos: one day's list with its carry-over, directory→file tree and per-row time-in-column; the dock's badge count; the day's real agent activity to file from; create / bulk-file / move / patch (stage, done, sub-tasks, JIRA key) |
+| `GET /api/todos/insights?period=day\|week\|month&date=&root=`                                                                                             | Created vs completed, completion rate, median lead time, per-stage time **clipped to the window** with `n` and a named bottleneck, roll-over pressure, aging, by-directory and by-JIRA rollups. `available:false` with a reason when the window is empty |
+| `GET\|PUT /api/todos/settings` · `POST /api/todos/rollover`                                                                                                | The roll-over switch (on by default, `lastRollover` stamped per day) and the on-demand "roll now" pass that moves unfinished work onto a day |
 | `GET /api/features`                                                                                                                                         | Which optional bundles are mounted (`companyTools`). The client reads this before deciding which nav entries exist |
 | `GET /api/constitution/*` · `GET /api/atoms/*` · `/api/figma-capture/*`                                                                                     | Only mounted when `Company_Tools` allows — otherwise these routes do not exist                                     |
 | `GET /api/setup` · `PUT /api/setup/{eng,project,credentials,notify}` · `DELETE /api/setup/project` · `POST /api/setup/test/jira` · `GET /api/setup/test/gh` | Visual config. **`GET /api/setup` never returns a secret value** — only `set: true\|false`                         |

@@ -16,7 +16,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 import { TodoCard, Check, StageChip } from '../ui/todoParts.jsx'
 import {
   STATUSES, useTodoDay, useSelectedDay, todoApi, dayKey, shiftDay, humanDay, dottedDay,
-  groupByPath, statusMeta,
+  groupByPath, statusMeta, humanMs, PERIODS,
 } from '../lib/todos.js'
 
 const MONO = 'var(--mono)'
@@ -27,7 +27,7 @@ const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border
 // day header
 // ---------------------------------------------------------------------------
 
-function DayBar({ date, setDate, stats, carry, ahead, days }) {
+function DayBar({ date, setDate, stats, carry, ahead, days, settings, onRollNow }) {
   const today = dayKey()
   const has = new Set(days || [])
   // Seven days ending on the selected one — enough to see the week without a calendar widget, and
@@ -53,7 +53,18 @@ function DayBar({ date, setDate, stats, carry, ahead, days }) {
           {ahead > 0 && <span> · {ahead} ahead</span>}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 3, marginLeft: 'auto' }}>
+      {/* Roll-over changes data without the user asking, so it is stated and switchable here rather
+          than being a hidden policy someone discovers when yesterday's list appears on today's. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+        <label title="unfinished todos move to the current day automatically, once per day"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={!!settings?.rollover} style={{ width: 13, height: 13 }}
+            onChange={e => todoApi.saveSettings({ rollover: e.target.checked }).catch(err => toast(err.message, 'error'))} />
+          roll unfinished forward
+        </label>
+        <button className="mini" style={{ marginTop: 0 }} onClick={onRollNow} title="move every unfinished todo from earlier days onto this day now">roll now</button>
+      </div>
+      <div style={{ display: 'flex', gap: 3, width: '100%', justifyContent: 'flex-end' }}>
         {strip.map(d => (
           <button key={d} onClick={() => setDate(d)} title={dottedDay(d)}
             style={{
@@ -113,7 +124,7 @@ function QuickAdd({ date, root, dirs }) {
 // views
 // ---------------------------------------------------------------------------
 
-function Board({ todos, onOpenFile }) {
+function Board({ todos, onOpenFile, jiraConfig }) {
   return (
     <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6, alignItems: 'flex-start' }}>
       {STATUSES.map(s => {
@@ -128,7 +139,7 @@ function Board({ todos, onOpenFile }) {
               <span style={{ font: `600 11px ${HEAD}`, color: 'var(--text-primary)' }}>{s.label}</span>
               <span style={{ font: `500 11px ${MONO}`, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{col.length}</span>
             </div>
-            {col.map(t => <TodoCard key={t.id} todo={t} compact onOpenFile={onOpenFile} />)}
+            {col.map(t => <TodoCard key={t.id} todo={t} compact onOpenFile={onOpenFile} jiraConfig={jiraConfig} />)}
             {!col.length && <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', padding: '6px 2px' }}>—</div>}
           </div>
         )
@@ -151,7 +162,7 @@ const Group = ({ open, onToggle, head, children }) => (
   </div>
 )
 
-function Tree({ todos, onOpenFile }) {
+function Tree({ todos, onOpenFile, jiraConfig }) {
   const { dirs, loose } = useMemo(() => groupByPath(todos), [todos])
   const [closed, setClosed] = useState({})
   const toggle = id => () => setClosed(c => ({ ...c, [id]: !c[id] }))
@@ -168,14 +179,14 @@ function Tree({ todos, onOpenFile }) {
           </>
         }>
           {/* directory-level todos first — they are not "in" any one file */}
-          {d.todos.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} />)}
+          {d.todos.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} jiraConfig={jiraConfig} />)}
           {d.files.map(f => (
             <div key={f.file} style={{ borderLeft: '1px solid var(--border-subtle)', paddingLeft: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ font: `500 11px ${MONO}`, color: 'var(--accent-light)' }}>▤ {f.name}</span>
                 <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>{f.done}/{f.count}</span>
               </div>
-              {f.todos.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} />)}
+              {f.todos.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} jiraConfig={jiraConfig} />)}
             </div>
           ))}
         </Group>
@@ -187,8 +198,189 @@ function Tree({ todos, onOpenFile }) {
             <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginLeft: 'auto' }}>{loose.length}</span>
           </>
         }>
-          {loose.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} />)}
+          {loose.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} jiraConfig={jiraConfig} />)}
         </Group>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// insights — day / week / month
+// ---------------------------------------------------------------------------
+
+const KPI = ({ label, value, sub, tone }) => (
+  <div style={{ ...PANEL, padding: '10px 12px', flex: '1 1 140px' }}>
+    <div style={{ font: `400 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>{label}</div>
+    <div style={{ font: `600 20px ${HEAD}`, color: tone || 'var(--text-primary)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+    {sub && <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 2 }}>{sub}</div>}
+  </div>
+)
+
+function Insights({ date, root }) {
+  const [period, setPeriod] = useState('day')
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState(null)
+  const load = () => todoApi.insights(period, date, root).then(x => { setD(x); setErr(null) }).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [period, date, root])
+  useEffect(() => {
+    const on = () => load()
+    window.addEventListener('todos-changed', on)
+    return () => window.removeEventListener('todos-changed', on)
+  }, [period, date, root])
+
+  const Switch = (
+    <div className="tabs" style={{ border: 'none' }}>
+      {PERIODS.map(p => (
+        <button key={p} className={period === p ? 'active' : ''} onClick={() => setPeriod(p)}>
+          {p === 'day' ? 'Daily' : p === 'week' ? 'Weekly' : 'Monthly'}
+        </button>
+      ))}
+    </div>
+  )
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton tiles={0} rows={4} />
+
+  const maxBucket = Math.max(1, ...d.series.map(b => Math.max(b.created, b.completed)))
+  const maxStage = Math.max(1, ...d.stages.map(s => s.totalMs))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        {Switch}
+        <span style={{ font: `500 12px ${MONO}`, color: 'var(--text-secondary)' }}>{d.range.label}</span>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
+          {dottedDay(d.range.from)} → {dottedDay(shiftDay(d.range.to, -1))}
+        </span>
+      </div>
+
+      {!d.available ? (
+        <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ font: `600 13px ${HEAD}` }}>Nothing in this window</div>
+          <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{d.detail}</div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <KPI label="created" value={d.counts.created} sub={`${d.counts.active} active in window`} />
+            <KPI label="completed" value={d.counts.completed} tone={d.counts.completed ? 'var(--green)' : undefined}
+              sub={d.completionRate == null ? 'nothing created — rate n/a' : `${d.completionRate}% of what was created`} />
+            <KPI label="still open" value={d.counts.open} tone={d.counts.open ? 'var(--amber)' : undefined} />
+            <KPI label="rolled forward" value={d.counts.rollovers} tone={d.counts.rollovers ? 'var(--amber)' : undefined}
+              sub="times work moved to another day" />
+            <KPI label="median lead time" value={d.leadTime.medianMs == null ? '—' : humanMs(d.leadTime.medianMs)}
+              sub={d.leadTime.n ? `${d.leadTime.n} completed` : 'no completed todos yet'} />
+            <KPI label="linked to JIRA" value={d.counts.linkedToJira} sub={`${d.byJira.length} ticket${d.byJira.length === 1 ? '' : 's'}`} />
+          </div>
+
+          {/* time in each column — the answer to "where does the work actually sit" */}
+          <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ font: `600 13px ${HEAD}` }}>Time in each column</div>
+              <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+                clipped to this window — a ticket spanning two months is not counted twice
+              </span>
+              {d.bottleneck && (
+                <span style={{ marginLeft: 'auto', font: `500 11px ${MONO}`, color: 'var(--amber)' }}>
+                  bottleneck: {statusMeta(d.bottleneck.status).label} · {humanMs(d.bottleneck.totalMs)} across {d.bottleneck.n}
+                </span>
+              )}
+            </div>
+            {d.stages.map(s => (
+              <div key={s.status} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ font: `500 11px ${MONO}`, color: statusMeta(s.status).color, width: 120, flexShrink: 0 }}>{statusMeta(s.status).label}</span>
+                <div style={{ flex: 1, height: 8, background: 'var(--bg-inset)', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.round((s.totalMs / maxStage) * 100)}%`, height: '100%', background: statusMeta(s.status).color, opacity: 0.8 }} />
+                </div>
+                {/* n travels with every aggregate — a 3-day median built from one card must look like one card */}
+                <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', width: 210, textAlign: 'right', flexShrink: 0 }}>
+                  {s.n ? `${humanMs(s.totalMs)} total · median ${humanMs(s.medianMs)} · n=${s.n}` : '—'}
+                </span>
+              </div>
+            ))}
+            {!d.bottleneck && (
+              <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+                No stage has {d.minSample}+ todos in this window yet, so no bottleneck is named — one card is not a trend.
+              </div>
+            )}
+          </div>
+
+          {/* throughput */}
+          <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ font: `600 13px ${HEAD}` }}>Created vs completed{d.range.period === 'day' ? ', by hour' : ', by day'}</div>
+            {/* An axis with no bars reads as a broken chart. When the window genuinely holds no
+                create/complete events — work in flight from earlier days, which is a normal state —
+                say that, and keep the (empty) axis below it rather than implying a rendering failure. */}
+            {!d.series.some(b => b.created || b.completed) && (
+              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
+                Nothing was created or completed in this window — the {d.counts.active} active todo
+                {d.counts.active === 1 ? '' : 's'} above {d.counts.active === 1 ? 'was' : 'were'} started
+                on an earlier day and {d.counts.active === 1 ? 'is' : 'are'} still open.
+              </div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 90 }}>
+              {d.series.map(b => (
+                <div key={b.key} title={`${b.label || b.key}: ${b.created} created, ${b.completed} completed`}
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1, height: '100%' }}>
+                  <div style={{ height: `${(b.created / maxBucket) * 45}%`, background: 'var(--blue)', opacity: 0.75, borderRadius: '2px 2px 0 0', minHeight: b.created ? 2 : 0 }} />
+                  <div style={{ height: `${(b.completed / maxBucket) * 45}%`, background: 'var(--green)', opacity: 0.85, borderRadius: '0 0 2px 2px', minHeight: b.completed ? 2 : 0 }} />
+                  <span style={{ font: `400 8px ${MONO}`, color: 'var(--text-tertiary)', textAlign: 'center' }}>{b.label || b.key}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 12, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+              <span><span style={{ color: 'var(--blue)' }}>■</span> created</span>
+              <span><span style={{ color: 'var(--green)' }}>■</span> completed</span>
+            </div>
+          </div>
+
+          <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {/* aging — the honest cost of roll-over */}
+            <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ font: `600 13px ${HEAD}` }}>Carried forward the longest</div>
+              {!d.aging.length ? (
+                <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>Nothing has been rolled forward — every open todo was filed for the day it sits on.</div>
+              ) : d.aging.map(a => (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ font: `600 11px ${MONO}`, color: a.days >= 3 ? 'var(--red)' : 'var(--amber)', width: 46 }}>{a.days}d</span>
+                  <StageChip status={a.status} small />
+                  <span style={{ font: '400 12px var(--body)', color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
+                  {a.jira && <span style={{ font: `500 10px ${MONO}`, color: 'var(--text-tertiary)' }}>{a.jira}</span>}
+                </div>
+              ))}
+            </div>
+
+            {/* where the work lives, in the code and on the board */}
+            <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ font: `600 13px ${HEAD}` }}>By directory</div>
+              {!d.byDir.length ? (
+                <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>No todo in this window is bound to a path yet.</div>
+              ) : d.byDir.map(x => (
+                <div key={x.dir} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ font: `500 11px ${MONO}`, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>▸ {x.dir}</span>
+                  <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>{x.done}/{x.total} done{x.open ? ` · ${x.open} open` : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {d.byJira.length > 0 && (
+            <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ font: `600 13px ${HEAD}` }}>By JIRA ticket</div>
+              {d.byJira.map(j => (
+                <div key={j.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {j.url ? <a href={j.url} target="_blank" rel="noreferrer" style={{ font: `600 11px ${MONO}`, color: 'var(--text-link)', width: 110 }}>{j.key} ↗</a>
+                    : <span style={{ font: `600 11px ${MONO}`, color: 'var(--text-primary)', width: 110 }}>{j.key}</span>}
+                  <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', width: 130 }}>{j.done}/{j.total} done{j.open ? ` · ${j.open} open` : ''}</span>
+                  <span style={{ display: 'flex', gap: 10, flexWrap: 'wrap', font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
+                    {STATUSES.filter(s => j.msByStage[s.id] > 0).map(s => (
+                      <span key={s.id}><span style={{ color: s.color }}>●</span> {s.label} {humanMs(j.msByStage[s.id])}</span>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -308,7 +500,11 @@ export default function TodosSection() {
   const dirs = sug?.dirs || []
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingBottom: 56 }}>
-      <DayBar date={date} setDate={setDate} stats={data.stats} carry={data.carry.length} ahead={data.ahead} days={data.days} />
+      <DayBar date={date} setDate={setDate} stats={data.stats} carry={data.carry.length} ahead={data.ahead} days={data.days}
+        settings={data.settings}
+        onRollNow={() => todoApi.rollover(date)
+          .then(r => toast(r.moved.length ? `${r.moved.length} unfinished todo(s) moved to ${dottedDay(r.date)}` : 'nothing to roll forward', r.moved.length ? 'success' : 'info'))
+          .catch(e => toast(e.message, 'error'))} />
       <QuickAdd date={date} root={root} dirs={dirs} />
 
       {/* Unfinished work from earlier days. Visible and movable, never silently hidden by the date scope. */}
@@ -341,23 +537,27 @@ export default function TodosSection() {
         <div className="tabs" style={{ border: 'none' }}>
           <button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>Board — by stage</button>
           <button className={view === 'tree' ? 'active' : ''} onClick={() => setView('tree')}>Tree — by directory & file</button>
+          <button className={view === 'insights' ? 'active' : ''} onClick={() => setView('insights')}>Insights — daily · weekly · monthly</button>
         </div>
-        <button className="mini" style={{ marginTop: 0, marginLeft: 'auto' }} onClick={() => setShowSug(s => !s)}>
-          {showSug ? 'hide' : 'show'} working-set suggestions
-        </button>
+        {view !== 'insights' && (
+          <button className="mini" style={{ marginTop: 0, marginLeft: 'auto' }} onClick={() => setShowSug(s => !s)}>
+            {showSug ? 'hide' : 'show'} working-set suggestions
+          </button>
+        )}
       </div>
 
-      {data.todos.length === 0 ? (
+      {view === 'insights' ? <Insights date={date} root={root} />
+        : data.todos.length === 0 ? (
         <div style={{ ...PANEL, textAlign: 'center', padding: 24 }}>
           <div style={{ font: `600 14px ${HEAD}` }}>Nothing filed for {dottedDay(date)}</div>
           <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.6 }}>
             Type a line above, or file what the agent already touched that day from the panel below.
           </div>
         </div>
-      ) : view === 'board' ? <Board todos={data.todos} onOpenFile={openFile} />
-        : <Tree todos={data.todos} onOpenFile={openFile} />}
+      ) : view === 'board' ? <Board todos={data.todos} onOpenFile={openFile} jiraConfig={data.jiraConfig} />
+        : <Tree todos={data.todos} onOpenFile={openFile} jiraConfig={data.jiraConfig} />}
 
-      {showSug && <Suggest date={date} root={root || sug?.root || ''} sug={sug} onRoot={setRoot} />}
+      {showSug && view !== 'insights' && <Suggest date={date} root={root || sug?.root || ''} sug={sug} onRoot={setRoot} />}
     </div>
   )
 }

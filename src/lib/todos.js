@@ -89,4 +89,10 @@ export const todoApi = {
   move: (ids, date) => after(api.post('/api/todos/move', { ids, date })),
   suggest: (date, root) => api.get('/api/todos/suggest?' + new URLSearchParams(root ? { date, root } : { date })),
   count: date => api.get('/api/todos/count?date=' + date),
+  insights: (period, date, root) => api.get('/api/todos/insights?' + new URLSearchParams(root ? { period, date, root } : { period, date })),
+  settings: () => api.get('/api/todos/settings'),
+  saveSettings: body => after(api.put('/api/todos/settings', body)),
+  rollover: date => after(api.post('/api/todos/rollover', { date })),
+  // A JIRA key, a pasted browse URL, or '' to unlink. The server owns what counts as a key.
+  linkJira: (id, jira) => after(api.patch('/api/todos/' + id, { jira })),
 }
