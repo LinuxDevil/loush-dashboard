@@ -23,6 +23,7 @@ import { computeUsageHealth, computeRegression } from '../lib/harness-health.mjs
 import { localCloneOf } from '../lib/clone.mjs'
 import { runAgent } from '../lib/agent.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
+import { PRICE_PER_M, isPriced, entryCost, dedupeTurns } from '../lib/pricing.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -664,10 +665,14 @@ function collectUsage() {
     const st = fs.statSync(f)
     const proj = path.relative(base, f).split(path.sep)[0]
     let rec = usageCache.get(f)
-    if (!rec || rec.v !== 2 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+    if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
       // v2: also keeps cwd + gitBranch + per-file $ / token / span totals (session ledger + /api/roi)
-      rec = { v: 2, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
+      // v3: dedups streamed turns by message.id (see below) — v2 caches over-count and must be rebuilt
+      rec = { v: 3, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
       try {
+        // Streamed turns repeat across records sharing one message.id — dedupeTurns() keeps the
+        // last of each. Collected first, folded into the totals below.
+        const records = []
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (line.includes('"usage"')) {
             try {
@@ -675,18 +680,12 @@ function collectUsage() {
               const u = j.message?.usage, model = j.message?.model
               if (!u || !model || model === '<synthetic>' || !j.timestamp) continue
               let tc = 0
+              const tools = {}
               if (Array.isArray(j.message.content))
-                for (const c of j.message.content) if (c.type === 'tool_use') { tc++; rec.tools[c.name] = (rec.tools[c.name] || 0) + 1 }
+                for (const c of j.message.content) if (c.type === 'tool_use') { tc++; tools[c.name] = (tools[c.name] || 0) + 1 }
               const t = Date.parse(j.timestamp)
               const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0, tc }
-              rec.entries.push(e)
-              rec.out += e.out; rec.in += e.in; rec.cc += e.cc; rec.cr += e.cr; rec.msgs++; rec.toolCalls += tc
-              rec.cost += entryCost(e)
-              rec.first ||= t; rec.last = Math.max(rec.last, t)
-              if (j.cwd) rec.cwd = j.cwd
-              const br = j.gitBranch || ''
-              const b = (rec.branches[br] ||= { cost: 0, out: 0, msgs: 0, first: 0, last: 0, cwd: j.cwd || '' })
-              b.cost += entryCost(e); b.out += e.out; b.msgs++; b.first ||= t; b.last = Math.max(b.last, t)
+              records.push({ id: j.message?.id, e, tools, cwd: j.cwd || '', br: j.gitBranch || '' })
             } catch {}
           } else if (line.includes('"structuredPatch"')) {
             try {
@@ -698,6 +697,17 @@ function collectUsage() {
               if (add + del) rec.lines.push({ t: Date.parse(j.timestamp), proj, add, del })
             } catch {}
           }
+        }
+        // Fold the deduped turns into the file totals.
+        for (const { e, tools, cwd, br } of dedupeTurns(records)) {
+          rec.entries.push(e)
+          rec.out += e.out; rec.in += e.in; rec.cc += e.cc; rec.cr += e.cr; rec.msgs++; rec.toolCalls += e.tc
+          rec.cost += entryCost(e)
+          rec.first ||= e.t; rec.last = Math.max(rec.last, e.t)
+          for (const [name, n] of Object.entries(tools)) rec.tools[name] = (rec.tools[name] || 0) + n
+          if (cwd) rec.cwd = cwd
+          const b = (rec.branches[br] ||= { cost: 0, out: 0, msgs: 0, first: 0, last: 0, cwd })
+          b.cost += entryCost(e); b.out += e.out; b.msgs++; b.first ||= e.t; b.last = Math.max(b.last, e.t)
         }
       } catch {}
       usageCache.set(f, rec)
@@ -715,7 +725,7 @@ function collectUsage() {
   return all
 }
 // est. $ saved by prompt caching: cache reads cost ~10% of input price → 90% saved
-const PRICE_PER_M = m => (/opus|fable/.test(m) ? 15 : /haiku/.test(m) ? 0.8 : 3)
+// PRICE_PER_M / isPriced / entryCost / dedupeTurns live in lib/pricing.mjs — see the notes there.
 const HOUR = 3600_000, BLOCK = 5 * HOUR
 app.get('/api/usage', (req, res) => {
   const { entries, lineEvents, toolTotals, files } = collectUsage()
@@ -761,7 +771,9 @@ app.get('/api/usage', (req, res) => {
   const todayKey = dayOf(now)
   let lines7Add = 0, lines7Del = 0
   for (const l of lineEvents) if (l.t >= d7) { lines7Add += l.add; lines7Del += l.del }
-  const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * PRICE_PER_M(e.model) * 0.9, 0)
+  const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * (PRICE_PER_M(e.model) || 0) * 0.9, 0)
+  // Models we saw traffic for but hold no rate for — every $ figure below excludes them.
+  const unpricedModels = [...new Set(entries.filter(e => !isPriced(e.model)).map(e => e.model))]
   const sessions30 = files.filter(f => !f.isAgent && f.mtime >= d30).length
   const projNames = {}
   try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
@@ -772,7 +784,7 @@ app.get('/api/usage', (req, res) => {
   // cache TTL waste + daily anomalies + month-end projection — all pure trend reads over `entries`
   const { map: cacheMap, sortedDates: cacheDates } = buildDailyCacheMap(entries)
   const rollingEff = rollingCacheEfficiency(cacheMap, cacheDates)
-  const waste = cacheWasteCost(entries, PRICE_PER_M, rollingEff.bestEffPct / 100)
+  const waste = cacheWasteCost(entries, m => PRICE_PER_M(m) || 0, rollingEff.bestEffPct / 100)
   const { map: usageMap, sortedDates: usageDates } = buildDailyUsage(entries, entryCost)
   const anomalies = detectDailyAnomalies(usageMap, usageDates)
   const dailyCostMap = {}; for (const d of usageDates) dailyCostMap[d] = usageMap[d].cost
@@ -780,7 +792,7 @@ app.get('/api/usage', (req, res) => {
   const projection = projectMonthEnd(dailyCostMap, dayOf(now), budget)
   res.json({
     perModel, activeBlock: active, totalMsgs: entries.length, since: entries[0]?.t || null,
-    daily: series, streak, activeDays: days.length, tools, recentSessions,
+    daily: series, streak, activeDays: days.length, tools, recentSessions, unpricedModels,
     health: computeUsageHealth(entries, entryCost, hiddenPerTurn, now),
     regression: computeRegression(entries, now),
     cacheTtl: { ...rollingEff, ...waste },
@@ -1983,8 +1995,7 @@ app.post('/api/gov/evals/run', (req, res) => {
 })
 
 // ---------- costs, budgets, alerts ----------
-// anthropic-ish price ratios off PRICE_PER_M (input price): out=5x, cache-write=1.25x, cache-read=0.1x
-const entryCost = e => { const P = PRICE_PER_M(e.model); return (e.in * P + e.out * P * 5 + e.cc * P * 1.25 + e.cr * P * 0.1) / 1e6 }
+// price ratios and the unpriced-model rule now live in lib/pricing.mjs
 function costAlerts() {
   const { entries } = collectUsage()
   const today = new Date().toISOString().slice(0, 10)
