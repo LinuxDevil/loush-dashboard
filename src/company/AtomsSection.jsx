@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api.js'
 import { Ring, StackedBar, Bars, Stepper, CoverageTreemap, DataTable, Facts } from '../ui/charts.jsx'
 
-// Ask-the-project atoms explorer — feature catalog, grounded search, attestation triage.
-// Rendered as tabs inside ConstitutionSection, so both the Claude and Cursor shells get it.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
@@ -14,7 +12,6 @@ const TONE_COLOR = { must: 'var(--green)', 'must-not': 'var(--red)', should: 'va
 const toneSegments = atoms => Object.entries(TONE_COLOR)
   .map(([tone, color]) => ({ label: tone, value: atoms.filter(a => a.tone === tone).length, color }))
 
-// shared table columns for atom lists — tone | claim(+context) | flags | citation
 const atomClaimCell = (a, accent) => (
   <div style={{ minWidth: 240 }}>
     <div style={{ font: `400 12px ${SANS}`, color: 'var(--text-primary)' }}>{a.claim}</div>
@@ -48,7 +45,6 @@ const Chip = ({ text, color = 'var(--text-tertiary)', title }) => (
 const Dim = ({ children, style }) => <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', ...style }}>{children}</div>
 const pct = r => (r == null ? '—' : Math.round(r * 100) + '%')
 
-// module-level index cache per repo — survives tab switches, server rebuilds on constitution mtime change
 const idxCache = new Map()
 function useIndex(repo) {
   const [state, setState] = useState({ idx: null, err: null })
@@ -207,7 +203,7 @@ function Ask({ idx, repo, accent }) {
   const [q, setQ] = useState('')
   const [submitted, setSubmitted] = useState('')
   const [f, setF] = useState({ type: 'all', source: 'all', tone: 'all', origin: 'all', attest: 'all' })
-  const [explain, setExplain] = useState(null) // {busy, answer, err, ids}
+  const [explain, setExplain] = useState(null)
 
   const allAtoms = useMemo(() => idx.sources.flatMap(s => s.atoms), [idx])
   const filtered = allAtoms.filter(a =>
@@ -232,7 +228,7 @@ function Ask({ idx, repo, accent }) {
       .catch(e => setExplain({ err: e.message, ids: atoms.map(a => a.id) }))
   }
 
-  const shown = submitted ? results : filtered.slice(0, 50).map(a => ({ a })) // no query yet → browse filtered atoms
+  const shown = submitted ? results : filtered.slice(0, 50).map(a => ({ a }))
   const maxScore = submitted && results.length ? results[0].score : 1
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -363,7 +359,6 @@ function Triage({ idx, repo, accent }) {
   )
 }
 
-// tiny group-count without importing d3 here
 function d3GroupCount(arr, key) {
   const m = new Map()
   for (const x of arr) m.set(key(x), (m.get(key(x)) || 0) + 1)

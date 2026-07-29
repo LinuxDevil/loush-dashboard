@@ -2,13 +2,9 @@ import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, Card, CardHead, Empty, H1, DataTable, Kpi, miniBtn, useCopy, fdt, fx } from './ui.jsx'
 import { api, toast } from '../lib/api.js'
 
-// §11 — a red main blocks all six of the Lead's engineers at once and was 100% invisible. Flaky = the SAME
-// head SHA produced both a failure and a success. Red main also feeds a severity-0 row into the Attention Queue.
 export default function CI({ snap }) {
   const [copy, copied] = useCopy()
   const [busy, setBusy] = useState(null)
-  // POST /api/ci/rerun shells `gh run rerun`. It was built, documented in the README, and had ZERO
-  // callers anywhere in the UI — the panel that shows you the red run could not re-run it.
   const rerun = async (repo, runId, failedOnly) => {
     if (!runId) return toast('no run id on this row', 'error')
     setBusy(repo)

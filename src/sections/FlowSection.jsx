@@ -16,7 +16,6 @@ const KIND = {
 const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0))
 const ago = t => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
 
-// per-column cap so 100+ skills don't become a hairball — top by usage, then defined-edge presence
 const COL_CAP = 14
 
 export default function FlowSection() {
@@ -54,14 +53,12 @@ export default function FlowSection() {
     }
     const shown = new Set(Object.values(cols).flat().map(n => n.id))
     const vEdges = edges.filter(e => shown.has(e.from) && shown.has(e.to))
-    // layout: fixed columns, vertical spread
-    const X = { entry: 70, skill: 300, agent: 560, mcp: 800 } // command nodes merge into the skill column
+    const X = { entry: 70, skill: 300, agent: 560, mcp: 800 }
     const mid = [...cols.skill, ...cols.command]
     const H = Math.max(420, (Math.max(mid.length, cols.agent.length, cols.mcp.length) + 1) * 44)
     const pos = {}
     const place = (list, x) => list.forEach((n, i) => { pos[n.id] = { x, y: 40 + ((i + 0.5) / list.length) * (H - 80) } })
     place(cols.entry, X.entry); place(mid, X.skill); place(cols.agent, X.agent); place(cols.mcp, X.mcp)
-    // isolate: nodes reachable from/to the selected one over visible edges
     let lit = null
     if (sel && shown.has(sel)) {
       lit = new Set([sel])
@@ -87,7 +84,7 @@ export default function FlowSection() {
     const p = view.pos[n.id]
     if (!p) return null
     const c = KIND[n.kind].color
-    const r = 9 + Math.min(9, Math.sqrt(n.count || 0) * 1.6) // size by usage frequency
+    const r = 9 + Math.min(9, Math.sqrt(n.count || 0) * 1.6)
     const on = nodeOn(n)
     const isSel = sel === n.id
     return (

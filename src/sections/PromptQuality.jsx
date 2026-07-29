@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate, toast } from '../lib/api.js'
 
-// Prompt Quality — how *you* prompt, rated across 8 fixed dimensions. Server caches a `claude -p`
-// analysis of your real prompts (Claude Code or Cursor); Refresh recomputes it (costs a call).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }

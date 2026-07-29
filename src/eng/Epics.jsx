@@ -1,13 +1,11 @@
 import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, Card, Empty, H1, DataTable, TicketLink, Kpi, miniBtn, inp, useCopy, fdate, fx } from './ui.jsx'
 
-// §10 — the PM plans in epics and dates; the dashboard only knew tickets and months. One row per epic in
-// flight, with a FORECAST from trailing-8-week velocity against the committed date, sorted by risk.
 const RISK = { red: RED, amber: GOLD, green: GREEN, unknown: DIM }
 
 export default function Epics({ snap, reload, onOpenTicket }) {
   const [copy, copied] = useCopy()
-  const [edit, setEdit] = useState(null) // {key, date}
+  const [edit, setEdit] = useState(null)
   const epics = snap.epics || []
   const save = () => {
     const { key, date } = edit

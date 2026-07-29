@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 
-// usePager(items, perPage) → { slice, pager } — page auto-clamps when the filtered list shrinks
 export function usePager(items, perPage) {
   const [page, setPage] = useState(0)
   const pages = Math.max(1, Math.ceil(items.length / perPage))

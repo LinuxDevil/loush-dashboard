@@ -23,7 +23,6 @@ export default function HooksSection() {
   )
 }
 
-// matcher tester: same semantics Claude Code uses — empty = all, else anchored regex
 function MatcherTest() {
   const [matcher, setMatcher] = useState('Edit|Write')
   const [tool, setTool] = useState('Edit')

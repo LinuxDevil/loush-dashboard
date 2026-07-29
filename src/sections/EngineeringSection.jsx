@@ -5,12 +5,6 @@ const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
-// Everything here reads snapshot.quality, which server/eng.mjs already computes — escape rate,
-// area hotspots, ownership concentration and bus factor. None of it was reachable before.
-//
-// Gated behind the Engineering flag in projects.json, and off by default, because every figure
-// depends on the JIRA/GitHub snapshot: without credentials this renders an empty frame rather
-// than anything worth reading.
 export default function EngineeringSection() {
   const [snap, setSnap] = useState(null)
   const [err, setErr] = useState('')
@@ -57,10 +51,6 @@ function Totals({ totals }) {
   )
 }
 
-// Escape rate is cohort-correct upstream: an escaped bug counts against the month its PARENT
-// shipped, so numerator and denominator describe the same release. It is also the metric most
-// likely to be unmeasurable, because it needs bugs linked to the work that caused them — so the
-// linkable percentage is shown next to it rather than buried.
 function EscapeRate({ series, meta }) {
   if (!series?.length) {
     return (
@@ -82,9 +72,6 @@ function EscapeRate({ series, meta }) {
       </div>
       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', height: 90 }}>
         {series.map(p => (
-          // A month with no measurable data draws nothing and says so on hover — it is not
-          // the same as a month with an escape rate of zero, and drawing it as a zero bar
-          // would make an absence look like a success.
           <div key={p.month} title={p.rate == null ? `${p.month}: not measurable` : `${p.month}: ${p.rate}% (${p.escaped}/${p.shipped})`}
             style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
             {p.rate == null
@@ -117,8 +104,7 @@ function Hotspots({ rows }) {
               <td className="num">{r.bugs}</td>
               <td className="num" style={{ color: r.escaped ? 'var(--red)' : undefined }}>{r.escaped}</td>
               <td className="num">{r.shipped}</td>
-              {/* Null when nothing shipped from this area — a ratio with a zero denominator is
-                  undefined, not zero, and rendering it as 0.00 would read as "very healthy". */}
+              {}
               <td className="num">{r.bugsPerShipped == null ? <span className="muted">—</span> : r.bugsPerShipped}</td>
             </tr>
           ))}
@@ -128,11 +114,6 @@ function Hotspots({ rows }) {
   )
 }
 
-// Ownership concentration, per engineer. This is the one panel here that names individuals, so
-// the framing is deliberate: rows are AREAS, and the question is "what happens to this area if
-// its main contributor is unavailable" — a delivery-risk question about the codebase. Sorting is
-// by area volume, never by person, because a table sorted by people is a ranking of people
-// whatever it is captioned.
 function Ownership({ rows }) {
   const [open, setOpen] = useState(() => new Set())
   if (!rows?.length) return null
@@ -157,8 +138,7 @@ function Ownership({ rows }) {
                 <td style={{ color: 'var(--text-secondary)' }}>{r.area}</td>
                 <td className="num">{r.total}</td>
                 <td className="num">{r.contributors}</td>
-                {/* null below the minimum sample is "unknown", not "safe" — an area with three
-                    tickets has one contributor because it has three tickets. */}
+                {}
                 <td className="num" title={r.busFactorReason || ''} style={{ color: r.busFactor === 1 ? 'var(--red)' : undefined }}>
                   {r.busFactor == null ? <span className="muted">— (n&lt;{r.busFactorMinN})</span> : r.busFactor}
                 </td>

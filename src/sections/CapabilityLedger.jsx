@@ -5,15 +5,9 @@ import { usePager } from '../ui/Pager.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 5: capability ROI ledger — fires × always-on cost ----------
-// This REPLACES Overview's Inventory static-score columns. A "perfect" 92-scored skill that has never
-// fired is worthless; a scruffy 41-scored skill invoked ten times a day is the most valuable file on
-// disk. So the metric is fires × cost, not frontmatter completeness.
-// Plane B (this machine's own transcripts), self-only by construction.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', DIM = 'var(--text-secondary)'
-// NEW exists so a capability installed this morning is not labelled DEAD alongside one abandoned a
-// year ago — it has not had a chance to fire yet, which is not the same as never firing.
 const VERDICT = {
   DEAD: { c: RED, hint: 'never fired, and old enough that it has had the chance — in your context every session, for nothing' },
   COLD: { c: GOLD, hint: 'fired at some point, but not in the last 30 days' },
@@ -32,11 +26,11 @@ const ARCHIVABLE = new Set(['skills', 'commands', 'agents'])
 
 export default function CapabilityLedger() {
   const [d, setD] = useState(null)
-  const [sel, setSel] = useState({})       // "kind:name:scope" -> item
+  const [sel, setSel] = useState({})
   const [verdicts, setVerdicts] = useState({ DEAD: true, COLD: true, NEW: true, HOT: true })
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'alwaysOnTokens', dir: -1 })
-  const [plan, setPlan] = useState(null)   // dry-run result awaiting confirmation
+  const [plan, setPlan] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const load = () => api.get('/api/capabilities').then(setD).catch(() => {})
@@ -189,15 +183,9 @@ export default function CapabilityLedger() {
 }
 
 // ---------- the static frontmatter linter, DEMOTED out of Overview and reframed ----------
-// It used to be "Setup health: 68/100" on the landing page — three panels rendering one static heuristic,
-// a linter cosplaying as a metric. It is a perfectly good AUTHORING AID. It is not a measure of value.
-// That is now the ledger above.
 const LEVEL_COLOR = { poor: RED, good: GOLD, excellent: GREEN, perfect: 'var(--violet)' }
 const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['origin', 'From'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.'], ['health', 'Health']]
 
-// A capability whose frontmatter does not parse still runs — it is just invisible to the
-// selector, so its description never reaches the model. That is a quiet failure worth a column.
-// A declared MCP server that is not installed is the same class of problem.
 function HealthCell({ it }) {
   const bad = (it.fm && it.fm.ok === false) ? it.fm.findings || [] : []
   const missing = it.deps?.missing || []
@@ -218,8 +206,6 @@ function HealthCell({ it }) {
   )
 }
 
-// null origin means we could not attribute the file, which is NOT the same as "the user wrote
-// it" — so it renders blank rather than claiming authorship in either direction.
 function OriginCell({ origin }) {
   if (!origin?.framework) return <span className="muted">—</span>
   return (

@@ -4,10 +4,6 @@ import { MIN_N, fx } from './stats.js'
 import { metricsFor, buildRadars } from './memberMetrics.mjs'
 
 // ---------- Per-member insight cards + charts (Members tab) ----------
-// The pure aggregation + relative-radar maths live in ./memberMetrics.mjs (tested under node). This file is
-// only the visuals. House rule holds: every number is a JIRA ticket or GitHub PR the subject can open about
-// themselves, scoped to the selected window; the radar is RELATIVE (rank inside this team), flagged low-
-// confidence below MIN_N shipped tickets; cards are alphabetical because a sort order is a scoreboard.
 export { metricsFor, buildRadars } from './memberMetrics.mjs'
 
 // ---------- Radar (hexagon) — 0.5 ring = the median teammate ----------
@@ -39,7 +35,6 @@ function Radar({ axes, size = 210, lowN }) {
   )
 }
 
-// tiny weekly throughput bars over the window — the trend, not a single number
 function Throughput({ shipped, reopened, win }) {
   const bars = useMemo(() => {
     const WK = 7 * 86400000, out = []
@@ -63,7 +58,6 @@ function Throughput({ shipped, reopened, win }) {
   )
 }
 
-// one rule-based recommended next move per sprint ticket — same rules the ticket detail uses, distilled
 function recFor(i) {
   if (i.rec?.atRisk) return { c: RED, t: `Overdue in ${i.status} — move to ${i.rec.next} now (${fx(Math.abs(i.rec.remaining))}d over budget)` }
   if (i.active && !(i.prNums || []).length) return { c: BB, t: 'No PR yet — open one to unblock review' }
@@ -81,7 +75,6 @@ const Tile = ({ label, v, c = HI, sub }) => (
   </div>
 )
 
-// compact card in the grid — the who-owns-what glance
 export function MemberCard({ name, m, radar, active, onClick }) {
   const top = m.focus[0] || m.inFlight[0]
   return (
@@ -107,7 +100,6 @@ export function MemberCard({ name, m, radar, active, onClick }) {
   )
 }
 
-// the expanded detail: radar (strengths/weaknesses) + trend + this-sprint recommendations
 export function MemberDetail({ name, m, radar, win }) {
   const strong = radar.filter(a => a.pct != null && a.pct >= 0.66).sort((a, b) => b.pct - a.pct)
   const weak = radar.filter(a => a.pct != null && a.pct <= 0.34).sort((a, b) => a.pct - b.pct)

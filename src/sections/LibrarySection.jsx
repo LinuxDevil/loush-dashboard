@@ -31,7 +31,7 @@ export default function LibrarySection() {
 function Profiles() {
   const scopes = useScopes()
   const [profiles, setProfiles] = useState([])
-  const [editing, setEditing] = useState(null) // {index, text}
+  const [editing, setEditing] = useState(null)
   const [applyScope, setApplyScope] = useState('global')
   const load = () => api.get('/api/gov/profiles').then(setProfiles)
   useEffect(() => { load() }, [])
@@ -153,7 +153,6 @@ function Bundles() {
   )
 }
 
-// feature 22: named sets of files/docs/rules to load into a session in one go
 export const bundlePrompt = b =>
   `Load this context before we start — "${b.name}"${b.description ? ` (${b.description})` : ''}:\n` +
   (b.refs || []).map(r => `- read ${r.startsWith('http') ? r : '@' + r}`).join('\n') +
@@ -161,7 +160,7 @@ export const bundlePrompt = b =>
 
 function CtxBundles() {
   const [bundles, setBundles] = useState([])
-  const [edit, setEdit] = useState(null) // {index|-1, name, description, refs (textarea), notes}
+  const [edit, setEdit] = useState(null)
   const load = () => api.get('/api/ctxbundles').then(setBundles)
   useEffect(() => { load() }, [])
   const save = async list => { await api.put('/api/ctxbundles', { bundles: list }).catch(e => toast(e.message, 'error')); load() }

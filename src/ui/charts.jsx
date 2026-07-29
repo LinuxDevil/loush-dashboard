@@ -1,14 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as d3 from 'd3'
 
-// Small chart kit for the Constitution section — glanceable visuals chosen per data type:
-// ranking → Bars (horizontal), part-to-whole → StackedBar, progress → Ring,
-// sequence → Stepper (step graph), hierarchy → Treemap. Plain SVG + CSS animations,
-// d3 only for the treemap layout (already a dependency).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 
-// one-time keyframes for mount animations
 if (typeof document !== 'undefined' && !document.getElementById('atoms-chart-anim')) {
   const s = document.createElement('style')
   s.id = 'atoms-chart-anim'
@@ -24,9 +19,8 @@ if (typeof document !== 'undefined' && !document.getElementById('atoms-chart-ani
 }
 
 // ---------- DataTable: sortable dark table — the structured replacement for text lists ----------
-// columns: [{ key, label, render?(row), sortValue?(row), width?, align? }]
 export function DataTable({ columns, rows, sort: initialSort, maxHeight = '60vh', onRowClick }) {
-  const [sort, setSort] = useState(initialSort || null) // { key, dir: 1|-1 }
+  const [sort, setSort] = useState(initialSort || null)
   const sorted = useMemo(() => {
     if (!sort) return rows
     const col = columns.find(c => c.key === sort.key)
@@ -170,7 +164,6 @@ export function Stepper({ steps, accent = 'var(--blue)' }) {
 }
 
 // ---------- Treemap: folder hierarchy, color = coverage ----------
-// dirs: [{dir: 'packages/app/...', sources: [ids]}] — leaf size 1, color by artifact count.
 export function CoverageTreemap({ dirs, height = 380 }) {
   const ref = useRef(null)
   const [tip, setTip] = useState(null)
@@ -178,7 +171,6 @@ export function CoverageTreemap({ dirs, height = 380 }) {
     const el = ref.current
     if (!el) return
     const width = el.clientWidth || 900
-    // build hierarchy from flat dir list — only leaves (dirs with no scanned child) get size
     const set = new Set(dirs.map(d => d.dir))
     const byDir = new Map(dirs.map(d => [d.dir, d.sources.length]))
     const leaves = dirs.filter(d => ![...set].some(o => o !== d.dir && o.startsWith(d.dir + '/')))
@@ -190,7 +182,6 @@ export function CoverageTreemap({ dirs, height = 380 }) {
     const color = n => n === 0 ? 'var(--red)' : n === 1 ? 'var(--amber)' : n <= 3 ? 'var(--green)' : 'var(--green)'
     const svg = d3.select(el).html('').append('svg').attr('width', width).attr('height', height).style('border-radius', '10px')
 
-    // group headers
     svg.selectAll('.hdr').data(root.descendants().filter(d => d.depth === 1)).join('text')
       .attr('x', d => d.x0 + 4).attr('y', d => d.y0 + 12)
       .attr('font-size', 9).attr('font-family', 'var(--mono)').style('fill', 'var(--text-secondary)')

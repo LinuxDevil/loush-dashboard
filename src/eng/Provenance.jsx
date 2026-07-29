@@ -1,11 +1,6 @@
 import React, { useState } from 'react'
 import { BODY, MONO, HEAD, GREEN, GOLD, RED, DIM, HI, miniBtn, useCopy, Spinner } from './ui.jsx'
 
-// §3 — "JIRA 412 issues · GitHub 288 PRs · built 14m ago · [refresh]".
-// Amber when the 2h cache is stale. RED with the REAL error text when a source failed — today an expired
-// gh auth renders a perfectly confident dashboard with zero PRs and says nothing.
-// §13 — "Copy the JQL" / "Copy the gh command": an engineer who can reproduce a number in a terminal in
-// ten seconds argues with the data instead of dismissing the dashboard.
 const ago = t => {
   const m = Math.round((Date.now() - Date.parse(t)) / 60000)
   return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ${m % 60}m ago`

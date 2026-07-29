@@ -3,32 +3,10 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { CountUp, Draw } from '../ui/anim.jsx'
 
-// A number that counts up on mount — but ONLY when it is a real number. This app renders honest nulls
-// (a suppressed / not-configured / stale value is '—', never a fake 0), so anything non-numeric is passed
-// straight through to its null state and never animated toward zero.
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-// Overview — the landing page answers ONE question: what needs a human today?
-//
-// DELETED (all four personas asked for this, independently):
-//   · the gamification layer — Pilot Level, XP bar, 🔥 streak, the 10 achievement badges. XP was
-//     literally all-time assistant MESSAGE COUNT: the fastest way to level up was a long, thrashing,
-//     unproductive conversation. It rewarded exactly the behaviour the tool exists to reduce.
-// DEMOTED (moved, not deleted):
-//   · Setup-health ring / Level / Specificity / Quality distribution → Capabilities, as an authoring
-//     aid. All three rendered the same static frontmatter heuristic: a linter cosplaying as a metric.
-//     The metric that replaced it is fires × always-on cost (Capabilities → ROI ledger).
-//   · "cache saved $" → Harness → Sessions. An estimate × an estimate against a counterfactual that
-//     never happened, that only ever goes up. No decision hangs on it.
-//   · Inventory table → Capabilities. Tool-usage bars / model bars / the 18-week output-token heatmap
-//     → Harness → Usage (the heatmap is a green-squares clone measuring "was he typing").
-// RERANKED: Top projects sorted by SESSIONS, not by output tokens (which rewarded whichever project
-//   made Claude write the most text).
 const A = 'var(--accent)'
-// The category rotation is three non-semantic colours — blue, purple, green — and nothing else. The old
-// six-entry list reached for --accent, which is the ONE brand/interactive colour: a project dot painted
-// baby blue reads as "click me".
 const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)'
 const MONO = "var(--mono)"
@@ -49,14 +27,10 @@ const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   </svg>
 )
 
-// `risk` escalates the hairline to a danger-tinted border — reserved for a card that IS a risk metric,
-// never used to decorate. Everything else keeps the default --line.
 function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint, risk }) {
   return (
     <div className={`kpi${onClick ? ' press' : ''}${risk ? ' risk' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
-      {/* A semantic tag is bare coloured mono text, not a tinted pill: `tag.color` is a var(), and the
-          old `tag.color + '22'` produced `var(--red)22` — invalid CSS that the browser dropped, so the
-          fill was never rendering anyway. Only the neutral `dim` tag gets a fill. */}
+      {}
       <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: 'transparent', padding: 0 } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
       <div className="kpi-value"><Num value={value} /></div>
       <div className="kpi-sub">{sub}</div>
@@ -77,7 +51,6 @@ function DeliveryTiles({ snap, onNav }) {
     const atRisk = active.filter(i => i.rec?.atRisk)
     const closedIn = (from, to) => issues.filter(i => i.live && i.closedAt && Date.parse(i.closedAt) >= from && Date.parse(i.closedAt) < to)
     const shipped30 = closedIn(D(30), now)
-    // 12-week shipped sparkline
     const wks = {}
     for (let w = 11; w >= 0; w--) wks[weekKey(D(w * 7))] = 0
     for (const i of closedIn(D(84), now)) { const k = weekKey(Date.parse(i.closedAt)); if (k in wks) wks[k]++ }
@@ -132,8 +105,6 @@ function CiStrip({ onNav }) {
   useEffect(() => { api.get('/api/ci/health?days=14').then(setCi).catch(() => {}) }, [])
   if (!ci || !ci.repos?.length) return null
   const red = ci.repos.filter(r => r.mainRed)
-  // A callout banner, not a card, and only while something is actually red: the tinted background is
-  // reserved for the single most urgent item on the page. Green CI is just a panel.
   return (
     <div className={`panel${red.length ? ' callout danger' : ''}`} style={{ animationDelay: '.22s' }}>
       <div className="panel-head">
@@ -172,7 +143,7 @@ export default function Overview({ onNav }) {
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
   const [cap, setCap] = useState(null)
-  const [pq, setPq] = useState(null)   // prompt-quality rating (from main); showAch went with the deleted achievement wall
+  const [pq, setPq] = useState(null)
 
   useEffect(() => {
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
@@ -190,15 +161,13 @@ export default function Overview({ onNav }) {
   const ab = usage?.activeBlock
   const d = usage?.daily || []
   const last10 = key => d.slice(-10).map(x => x[key])
-  // RERANKED: sessions, not output tokens. Ranking by tokens rewarded whichever project made Claude type most.
   const top = useMemo(() => [...projects.filter(p => p.usage)].sort((a, b) => (b.sessions || 0) - (a.sessions || 0) || (b.commits || 0) - (a.commits || 0)).slice(0, 4), [projects])
 
   if (!usage && !usageErr && !snap) return <Skeleton tiles={5} rows={6} />
 
   return (
     <div className="overview">
-      {/* Section labels, not headings: a small uppercase mono line coloured by INTENT, so the page reads
-          top-to-bottom by priority rather than by layout position. */}
+      {}
       <div className="sect-label danger"><span className="live-dot" />Attention</div>
       <DeliveryTiles snap={snap} onNav={onNav} />
       <CiStrip onNav={onNav} />
@@ -215,7 +184,7 @@ export default function Overview({ onNav }) {
               <span className="mono" style={{ fontSize: 12 }}>({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot</span>
             </div>
           </div>
-          {/* the one primary action in this section — the only accent-outline button on the page */}
+          {}
           <button className="primary" onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
         </div>
       )}
@@ -310,9 +279,7 @@ export default function Overview({ onNav }) {
               <h3>✍︎ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
               <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('authoring')}>open →</button>
             </div>
-            {/* Score bar: equal-width FULL-height blocks coloured green→amber→red by each dimension's own
-                score. The old variable-height version read as a chart with no axis — this reads as a
-                status strip, which is what a per-dimension score actually is. */}
+            {}
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
               <div className="seg-score" style={{ color: c }}>{pq.avg}<span>/10</span></div>
               <div className="seg-bar">
@@ -328,9 +295,7 @@ export default function Overview({ onNav }) {
         )
       })()}
 
-      {/* The reward, deliberately at the foot of the page — after the work that needs a human, not above it.
-          Your own body of work over your own past: level, XP, streak, closest badge. Self-only, no leaderboard.
-          The full wall lives one click away so it never competes with the delivery tiles for the fold. */}
+      {}
     </div>
   )
 }

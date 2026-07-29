@@ -46,7 +46,7 @@ function parseCSV(text) {
 }
 
 export function DataTable({ header, rows }) {
-  const [sort, setSort] = useState(null) // {col, dir}
+  const [sort, setSort] = useState(null)
   const sorted = useMemo(() => {
     if (!sort) return rows
     const s = [...rows].sort((a, b) => {
@@ -85,7 +85,6 @@ function JsonView({ content, ext }) {
   }
 }
 
-// Live-mount a self-contained JSX/TSX component in a sandboxed iframe.
 // ponytail: needs internet (react + babel from CDN inside the iframe); on failure the user flips to source view.
 function JsxLive({ content }) {
   const srcdoc = `<!doctype html><html><head>

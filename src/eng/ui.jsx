@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { CountUp, Stagger } from '../ui/anim.jsx'
 
-// Design tokens + primitives lifted out of EngDashboard.jsx unchanged, so every src/eng/ panel is
-// pixel-identical to the shell that hosts it. Nothing here is new styling — it is the existing system.
 export const HEAD = "var(--head)"
 export const BODY = "var(--body)"
 export const MONO = "var(--mono)"
@@ -41,18 +39,12 @@ export const Legend = ({ c, label, v }) => <div style={{ display: 'flex', alignI
   <span style={{ font: `400 12px ${BODY}`, color: 'var(--text-secondary)' }}>{label}{v != null && <b style={{ color: HI, fontWeight: 600 }}> {v}</b>}</span></div>
 export const Spinner = ({ size = 14 }) => <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid var(--border-default)', borderTopColor: BB, borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
 
-// AnimatedValue — the ONE null-vs-zero guard for every stat in the dashboard. It takes the ALREADY
-// FORMATTED string a tile would have rendered ("3.2d", "85%", "1,204", "—", "FLAG", "green") and only
-// counts up the leading number, preserving prefix + suffix. Anything with NO number in it — the em-dash
-// null, "FLAG", "ok", "RED" — is returned verbatim and NEVER animated. This is deliberate: because the
-// suppressed / never-started / no-data states are all rendered as '—' upstream, routing them all through
-// here means a null can never count up to 0 anywhere a KPI is shown (§ hard constraint).
 const NUM_RE = /^([^\d-]*)(-?[\d,]+(?:\.\d+)?)(.*)$/
 export function AnimatedValue({ value, duration }) {
   if (value == null) return '—'
   const s = String(value)
   const m = s.match(NUM_RE)
-  if (!m) return s // '—', 'FLAG', 'ok', 'RED', 'green' — no digits, render as-is, no count
+  if (!m) return s
   const [, prefix, numStr, suffix] = m
   const decimals = numStr.includes('.') ? numStr.split('.')[1].length : 0
   const grouped = numStr.includes(',')
@@ -62,7 +54,6 @@ export function AnimatedValue({ value, duration }) {
     format={grouped ? n => n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : undefined} />
 }
 
-// KPI tile with percentiles instead of a mean. n is always shown; n<5 goes grey (§2 hard rule).
 export function Kpi({ label, value, color = HI, sub, n, thin, delta, onCopy }) {
   const c = thin ? 'var(--text-secondary)' : color
   return <div title={thin ? `n=${n} — below the n≥5 floor, treat as anecdote` : undefined}
@@ -86,9 +77,6 @@ export const MiniStat = ({ label, v, c = HI, sub }) => <div style={{ flex: 1, mi
 // ---------- deep links ----------
 const linkStyle = c => ({ color: c, textDecoration: 'none', borderBottom: `1px dotted ${c}66`, cursor: 'pointer' })
 export function TicketLink({ i, color = BB, children, style }) {
-  // No hardcoded fallback host. This used to default to one specific company's Atlassian site, so a
-  // ticket that arrived without a host silently linked every user to a JIRA they cannot open.
-  // Render plain text instead of a link we know is wrong — same rule as PRLink below.
   const url = i.url || (i.host ? `https://${i.host}/browse/${i.key}` : null)
   if (!url) return <span style={style} title="no JIRA host configured for this project — see projects.json">{children || i.key}</span>
   return <a href={url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ ...linkStyle(color), ...style }}>{children || i.key}</a>
@@ -102,7 +90,6 @@ export function PrBadge({ state }) {
   const bg = state === 'Merged' || state === 'Approved' ? 'var(--green-bg)' : state === 'Closed' ? 'var(--red-bg)' : 'var(--amber-bg)'
   return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: `600 10px ${MONO}`, padding: '2px 8px', borderRadius: 5, background: bg, color: c }}>{state}</span>
 }
-// §11 — a red PR must be visibly red, on every PR row in the app
 export function Checks({ state }) {
   if (!state) return <span style={{ font: `500 11px ${MONO}`, color: 'var(--bg-surface-active)' }}>—</span>
   const m = { SUCCESS: ['✓', GREEN], FAILURE: ['✕', RED], ERROR: ['✕', RED], PENDING: ['◔', GOLD], EXPECTED: ['◔', GOLD] }[state] || ['?', DIM]

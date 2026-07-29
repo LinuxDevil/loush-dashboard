@@ -4,8 +4,6 @@ import { api, tildify } from '../lib/api.js'
 import AtomsSection from './AtomsSection.jsx'
 import { StackedBar, Bars, DataTable, Facts } from '../ui/charts.jsx'
 
-// Constitution — .wakeel/constitution knowledge-base explorer. Shared by both dashboards;
-// pass accent to match the shell (claude amber vs cursor blue).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }
@@ -22,7 +20,7 @@ const Stat = ({ label, val }) => (
 
 function ForceGraph({ graph, accent }) {
   const ref = useRef(null)
-  const [minDeg, setMinDeg] = useState(2) // hide files cited by fewer artifacts — declutters by default
+  const [minDeg, setMinDeg] = useState(2)
   const [focus, setFocus] = useState(null)
 
   useEffect(() => {
@@ -72,7 +70,6 @@ function ForceGraph({ graph, accent }) {
       .on('drag', (e, n) => { n.fx = e.x; n.fy = e.y })
       .on('end', (e, n) => { if (!e.active) sim.alphaTarget(0); n.fx = null; n.fy = null }))
 
-    // click to spotlight a node + its neighborhood; click background to reset
     const neighbors = id => {
       const s = new Set([id])
       for (const l of links) { if (l.source.id === id) s.add(l.target.id); if (l.target.id === id) s.add(l.source.id) }
@@ -120,15 +117,13 @@ function ForceGraph({ graph, accent }) {
   )
 }
 
-// browse one artifact kind: list → click → detail with governed paths, cited files,
-// and connected artifacts (share ≥1 cited code file). Connections derive from graph.links.
 function ArtifactBrowser({ kind, data, accent, repo }) {
-  const [open, setOpen] = useState(null) // label
+  const [open, setOpen] = useState(null)
   const [md, setMd] = useState(null)
   const rows = data.artifacts.filter(a => a.kind === kind)
 
   const { filesOf, artsOf } = React.useMemo(() => {
-    const filesOf = new Map(), artsOf = new Map() // label -> [{file,n}] / file -> [{label,n}]
+    const filesOf = new Map(), artsOf = new Map()
     for (const l of data.graph.links) {
       if (!filesOf.has(l.source)) filesOf.set(l.source, [])
       filesOf.get(l.source).push({ file: l.target, n: l.n })
@@ -140,7 +135,7 @@ function ArtifactBrowser({ kind, data, accent, repo }) {
   }, [data])
 
   const connections = label => {
-    const shared = new Map() // other label -> [files]
+    const shared = new Map()
     for (const { file } of filesOf.get(label) || [])
       for (const { label: other } of artsOf.get(file) || []) {
         if (other === label) continue
@@ -255,10 +250,8 @@ export default function ConstitutionSection({ accent = 'var(--amber)' }) {
   const [exporting, setExporting] = useState(null)
 
   // ponytail: export = snapshot the already-rendered DOM of the SELECTED repo, tab by tab,
-  // driving real clicks into sub-pages (artifact / catalog detail) and saving one linked
-  // HTML file per page via the server. No re-implementation of any view.
   const snapshot = (el, linkify) => {
-    for (const i of el.querySelectorAll('input')) { // React holds input state as properties — mirror to attributes so it serializes
+    for (const i of el.querySelectorAll('input')) {
       if (i.type === 'checkbox') i.checked ? i.setAttribute('checked', '') : i.removeAttribute('checked')
       else i.setAttribute('value', i.value)
     }
@@ -271,7 +264,7 @@ export default function ConstitutionSection({ accent = 'var(--amber)' }) {
       await new Promise(r => setTimeout(r, 100))
       if (!/crunching atoms…|indexing atoms…|loading…|loading review state…/.test(contentRef.current?.parentElement?.innerText || '')) break
     }
-    if (extra) await new Promise(r => setTimeout(r, extra)) // let the d3 force layout settle
+    if (extra) await new Promise(r => setTimeout(r, extra))
   }
   const fileName = s => s.replace(/[^\w.-]+/g, '_') + '.html'
   const page = (title, body) => {
@@ -281,8 +274,6 @@ export default function ConstitutionSection({ accent = 'var(--amber)' }) {
 </head><body>${body}</body></html>`
   }
 
-  // capture every clickable sub-page reachable from the current tab: click each row/card,
-  // snapshot the detail view, click "←" back. Returns [{label, file}] and pushes files.
   const captureSubPages = async (prefix, files) => {
     const clickables = () => [...contentRef.current.querySelectorAll('tbody tr[style*="pointer"], div[style*="grid-template-columns"] > div[style*="pointer"]')]
     const n = clickables().length
@@ -292,13 +283,13 @@ export default function ConstitutionSection({ accent = 'var(--amber)' }) {
       if (!el) break
       el.click()
       await waitIdle(150)
-      const back = contentRef.current.querySelector('button') // "← …" is always the first button on a detail view
-      if (!back || !/←/.test(back.textContent)) continue // row wasn't a drill-down after all
+      const back = contentRef.current.querySelector('button')
+      if (!back || !/←/.test(back.textContent)) continue
       const title = contentRef.current.querySelector('span')?.textContent || `${prefix}-${i}`
-      for (const d of contentRef.current.querySelectorAll('details')) d.setAttribute('open', '') // expand markdown source etc.
+      for (const d of contentRef.current.querySelectorAll('details')) d.setAttribute('open', '')
       const file = fileName(`${prefix}-${title}`)
       files.push({ name: file, html: page(title, `<a href="index.html">← index</a><h1>${title}</h1><div style="display:grid;gap:14px">${snapshot(contentRef.current)}</div>`) })
-      links[i] = { label: title, file } // index-aligned with clickables() so the list view can wire row → file
+      links[i] = { label: title, file }
       setExporting(`${prefix} ${i + 1}/${n}`)
       back.click()
       await waitIdle(100)
@@ -311,13 +302,12 @@ export default function ConstitutionSection({ accent = 'var(--amber)' }) {
     const files = []
     const parts = [`<h1>${repo}</h1><div style="display:flex;gap:12px;flex-wrap:wrap">${snapshot(statsRef.current)}</div>`]
     for (const x of TABS) {
-      if (x === 'ask') continue // interactive-only, nothing prefilled to share
+      if (x === 'ask') continue
       setExporting(x); setTab(x)
       await waitIdle(x === 'graph' ? 2500 : 200)
       if (!contentRef.current) continue
       if (['catalog', 'workflows', 'rules', 'skills'].includes(x)) {
-        const links = await captureSubPages(x, files) // walk the drill-downs first…
-        // …then snapshot the list view with each card/row wired to its sub-page file
+        const links = await captureSubPages(x, files)
         const listHtml = snapshot(contentRef.current, clone => {
           const els = [...clone.querySelectorAll('tbody tr[style*="pointer"], div[style*="grid-template-columns"] > div[style*="pointer"]')]
           els.forEach((el, i) => links[i] && el.setAttribute('onclick', `window.location.href='${links[i].file}'`))

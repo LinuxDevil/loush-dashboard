@@ -8,14 +8,11 @@ const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
-// queued gray / running blue / completed green / failed red / aborted orange / blocked purple (feature 10)
 const STATUS = { unknown: 'var(--text-tertiary)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)', aborted: 'var(--accent-light)', blocked: 'var(--violet)' }
 const sc = s => STATUS[s] || STATUS.unknown
-// L2: single aggregated verdict per run (server computes from review severity + phase + retry caps)
 const VERDICT = { PASSING: 'var(--green)', BLOCKED: 'var(--red)', 'NEEDS-HUMAN': 'var(--violet)' }
 const artifactName = flow => (flow === 'test-cases' || flow === 'jira-implement') ? 'test-cases/test-plan.md' : 'review.md'
 
-// URL-driven filters (feature 7): shareable, back/forward works, removable pills.
 const FKEYS = { proj: 'runProj', flow: 'runFlow', status: 'runStatus', ticket: 'runQ' }
 function readFilters() {
   const q = new URLSearchParams(window.location.search)
@@ -104,7 +101,6 @@ function Approval({ run, onDone }) {
 
 const PRE = { margin: 0, font: `400 11px/1.6 ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 420, overflow: 'auto', background: 'var(--bg-inset)', borderRadius: 12, padding: '16px 18px' }
 
-// render a run artifact — diffs get +/- coloring, everything else is monospace text
 function FileBody({ name, content }) {
   if (content == null) return <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>loading…</div>
   if (name.endsWith('.diff') || name.endsWith('.patch')) {
@@ -120,7 +116,6 @@ function FileBody({ name, content }) {
   return <pre style={PRE}>{content}</pre>
 }
 
-// the full .loush/<ticket>/ file set — click a file to view it inline
 function RunFiles({ run }) {
   const [files, setFiles] = useState(null)
   const [open, setOpen] = useState(null)
@@ -173,7 +168,7 @@ function Detail({ run, onDone }) {
         if (!live || !d.events.length) return
         seq = d.events[d.events.length - 1].seq || seq
         setEvents(prev => [...(prev || []), ...d.events])
-        if (d.events.some(e => e.type === 'run.completed' || e.type === 'run.failed')) live = false // stop on terminal (feature 5)
+        if (d.events.some(e => e.type === 'run.completed' || e.type === 'run.failed')) live = false
       }).catch(() => {})
     setEvents([]); poll()
     const t = setInterval(() => { if (live) poll() }, 5000)
@@ -246,7 +241,7 @@ export default function RunsSection() {
     api.get('/api/runs' + (q ? '?' + q : '')).then(setData).catch(() => {})
   }
   useEffect(() => { writeFilters(f) }, [f])
-  useVisiblePoll(load, 5000, [f]) // poll every 5s, paused while tab hidden
+  useVisiblePoll(load, 5000, [f])
   if (!data) return <Skeleton tiles={0} rows={6} />
 
   const runs = data.runs

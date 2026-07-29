@@ -20,9 +20,6 @@ const sparkPts = (arr, h) => {
 
 function ResChips({ p }) {
   const groups = [['skills', p.skills], ['commands', p.commands], ['agents', p.agents], ['mcp', p.mcp]]
-  // How this project's tests run, detected from markers on disk. Rendered even when nothing was
-  // found, because "we could not tell" is a different answer from "it has no tests" and the
-  // detector deliberately declines rather than emitting a command that would vacuously pass.
   const test = p.test
   if (!groups.some(([, v]) => v.length) && !test) return null
   return (
@@ -47,7 +44,6 @@ function ResChips({ p }) {
   )
 }
 
-// feature 18: new-project harness scaffolder — dry-run preview, then real writes via /api/scaffold
 function Scaffolder({ projects, onClose, onDone }) {
   const [dir, setDir] = useState('')
   const [profiles, setProfiles] = useState([])
@@ -118,9 +114,6 @@ function Scaffolder({ projects, onClose, onDone }) {
   )
 }
 
-// Which worktree each agent session actually ran in. This dashboard already records every
-// session's cwd, so it can answer that; a worktree cannot report it from inside itself, which is
-// why the tool this idea came from never could.
 function Worktrees({ repo }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
@@ -129,8 +122,6 @@ function Worktrees({ repo }) {
   if (err) return <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>
   if (!d) return null
   if (d.status !== 'ok') {
-    // "we could not look" is reported as itself. An empty list here would read as "this repo has
-    // no worktrees", which is a different and possibly false claim.
     return (
       <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)' }}>
         <b style={{ color: 'var(--text-primary)' }}>Worktrees</b> — could not determine ({d.code}): {d.reason}
@@ -173,11 +164,10 @@ export default function ProjectsSection() {
   const [scaffolding, setScaffolding] = useState(false)
   const { slice, pager } = usePager(projects || [], 9)
   const load = () => api.get('/api/projects').then(setProjects)
-  // The current project, or the first known one — the worktree panel needs a repo to ask about.
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
-    const open = () => setScaffolding(true) // palette action
+    const open = () => setScaffolding(true)
     window.addEventListener('open-scaffolder', open)
     return () => { clearInterval(t); window.removeEventListener('open-scaffolder', open) }
   }, [])

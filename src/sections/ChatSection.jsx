@@ -11,8 +11,6 @@ const short = (v, n = 200) => {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
-// fold raw stream-json events into renderable blocks; events with parent_tool_use_id
-// nest under the Task tool_use that spawned them (that's the subagent's output)
 export function buildBlocks(events) {
   const blocks = [], byToolId = {}
   const target = ev => (ev.parent_tool_use_id && byToolId[ev.parent_tool_use_id]?.children) || blocks
@@ -23,14 +21,14 @@ export function buildBlocks(events) {
           const b = byToolId[c.tool_use_id]
           b.result = short(c.content, 400)
           b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
-          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult // structuredPatch / stdout / stderr / filePath
+          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult
         }
         else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
         else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
-      let usageLeft = ev.message?.usage || null // attach the message's token usage to its first tool (avoids double-count)
+      let usageLeft = ev.message?.usage || null
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text })
         else if (c.type === 'tool_use') {
@@ -51,8 +49,6 @@ export function buildBlocks(events) {
   return blocks
 }
 
-// L1: per-output review trail — records that a human reviewed an assistant output (accept/reject),
-// so "review every output" is logged, not implicit. Fire-and-forget to /api/chat-review.
 function ReviewButtons({ text, chatId, cwd }) {
   const [done, setDone] = useState(null)
   const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
@@ -94,7 +90,6 @@ export function Block({ b }) {
   return null
 }
 
-// feature 20: promote any message to a reusable artifact in one click
 function capture(text) {
   const kind = prompt('Capture as: command / skill / prompt / note', 'command')
   if (!kind) return
@@ -122,14 +117,11 @@ const Cap = ({ text, children }) => (
 
 const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = err; r.readAsDataURL(f) })
 
-// input bar with "/" command + "@" file autocomplete, image paste/attach, any-file upload
 function InputBar({ cwd, ended, onSend, initial }) {
   const [input, setInput] = useState(initial || '')
-  // `initial` arrives asynchronously when another section hands off a prompt. Without this the
-  // hand-off only ever worked if Chat had not been mounted yet — i.e. once per page load.
   useEffect(() => { if (initial) setInput(initial) }, [initial])
-  const [atts, setAtts] = useState([]) // {kind:'image', name, media_type, data} | {kind:'file', name, path}
-  const [sug, setSug] = useState(null) // {trigger:'/'|'@', items, idx, start, end}
+  const [atts, setAtts] = useState([])
+  const [sug, setSug] = useState(null)
   const cmdsRef = useRef(null)
   const taRef = useRef(null)
   const fileRef = useRef(null)
@@ -140,7 +132,7 @@ function InputBar({ cwd, ended, onSend, initial }) {
   const updateSug = (text, caret) => {
     clearTimeout(debRef.current)
     const before = text.slice(0, caret)
-    const cmd = /^\/([\w:-]*)$/.exec(before) // slash commands are message-initial
+    const cmd = /^\/([\w:-]*)$/.exec(before)
     const file = /@([^\s@]*)$/.exec(before)
     if (!cmd && !file) return setSug(null)
     debRef.current = setTimeout(async () => {
@@ -158,7 +150,7 @@ function InputBar({ cwd, ended, onSend, initial }) {
     }, cmd && cmdsRef.current ? 0 : 150)
   }
   const pick = item => {
-    if (sug.trigger === '@') { // file/folder refs become tags, not inline text
+    if (sug.trigger === '@') {
       setInput(input.slice(0, sug.start) + input.slice(sug.end))
       setAtts(a => [...a, { kind: 'ref', name: item.name }])
     } else {
@@ -242,7 +234,7 @@ export default function ChatSection() {
   const [projects, setProjects] = useState([])
   const [cwd, setCwd] = useState('')
   const [sessions, setSessions] = useState([])
-  const [active, setActive] = useState([]) // live server-side chats
+  const [active, setActive] = useState([])
   const [pins, setPins] = useState([])
   const [chatId, setChatId] = useState(null)
   const [events, setEvents] = useState([])
@@ -260,7 +252,7 @@ export default function ChatSection() {
     api.get('/api/projects').then(ps => { const ex = ps.filter(p => p.exists); setProjects(ex); if (ex[0]) setCwd(ex[0].path) })
     api.get('/api/chat').then(setActive).catch(() => {})
     loadPins()
-    const pre = sessionStorage.getItem('ctx-bundle-prompt') // feature 22 hand-off
+    const pre = sessionStorage.getItem('ctx-bundle-prompt')
     if (pre) { setPrefill(pre); sessionStorage.removeItem('ctx-bundle-prompt') }
   }, [])
   const togglePin = (s, pinned) => {
@@ -289,9 +281,6 @@ export default function ChatSection() {
     attach(id)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
-  // Deep link from another section: open a session here without making the user re-pick the project.
-  // Working Set uses this to close see → resume → fix inside the app, instead of handing over a
-  // `claude --resume <id>` string to paste into a terminal.
   useEffect(() => {
     const onOpen = e => {
       const { sessionId, cwd: c, prefill: pre } = e.detail || {}

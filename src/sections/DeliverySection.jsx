@@ -6,12 +6,6 @@ import EngineeringSection from './EngineeringSection.jsx'
 import { api, toast } from '../lib/api.js'
 
 // ---------- 2: Eng folds into the shell as the Delivery section ----------
-// The four-shell split WAS the defect: the only genuinely team-wide data in the repo sat behind a topbar
-// chip nobody clicked. The Engineering Metrics dashboard is now a section of this sidebar, not a portal.
-// Its own panels — Attention Queue, Review flow, Quality, Investment, Predictability, Epics, CI, Load,
-// Export — are IMPORTED wholesale. Nothing was rebuilt. Three panels the Eng shell does not carry hang
-// off the same snapshot as extra tabs here: the idea→prod funnel (11), the cohort AI ROI (8) and the
-// 1:1 prep card (15).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', PURPLE = 'var(--violet)', DIM = 'var(--text-secondary)'
@@ -29,11 +23,6 @@ const NotWired = ({ s }) => (
 )
 
 export default function DeliverySection({ onNav }) {
-  // The Quality & risk tab reads snapshot.quality — escape rate, area hotspots and ownership
-  // concentration — which server/eng.mjs has always computed and nothing ever displayed. It lives
-  // here rather than as its own nav entry because the restored Engineering dashboard is already
-  // on this screen and two top-level entries called "Engineering" would be worse than useless.
-  // Gated on the `Engineering` key in projects.json; hidden entirely when that is off.
   const [features, setFeatures] = useState(null)
   useEffect(() => { api.get('/api/features').then(setFeatures).catch(() => setFeatures({})) }, [])
   const items = [
@@ -48,7 +37,6 @@ export default function DeliverySection({ onNav }) {
 }
 
 // ---------- 11: idea→prod funnel — with the QUEUE half included ----------
-// If lead time is 30d and cycle time is 6d, no amount of AI coding speed matters. The gap is the point.
 const QUEUE = ['PM Backlog', 'Backlog', 'To Do', 'On Hold']
 const ACTIVE = ['In Progress', 'In Code Review', 'Code review', 'Design QA', 'Ready for QA', 'in QA (dev)', 'In QA', 'QA Blocked', 'Reopen', 'Ready for Release']
 
@@ -74,9 +62,6 @@ function Funnel() {
   if (!S.available) return <NotWired s={S} />
   if (!f.shipped) return <div className="panel"><h3>Idea → prod funnel</h3><p className="small" style={{ marginTop: 0 }}>nothing shipped in the last 90 days — no funnel to draw. This is a real zero, not a fabricated one.</p></div>
 
-  // Scale by the p50 max, NOT the p90 max: one stage with a 1,841-day p90 tail (a ticket that sat in PM
-  // Backlog for five years) otherwise squashes every real bar to a single pixel. The p90 ghost clamps at
-  // full width and says so in the label — the tail is stated, not drawn to scale.
   const max = Math.max(...[...f.q, ...f.a].map(s => s.p50 || 0), 1)
   const Row = ({ s, color }) => {
     const p90w = Math.min(100, (s.p90 / max) * 100)
@@ -126,8 +111,6 @@ function Funnel() {
 }
 
 // ---------- 8: AI ROI — COHORT LEVEL ONLY ----------
-// The endpoint drops the author/assignee field before aggregating. There is no per-person view here and
-// the server physically cannot produce one. Correlational, not causal. n<5 is greyed. Unattributed % is stated.
 function Roi() {
   const [d, setD] = useState(null)
   useEffect(() => { api.get('/api/roi?days=90').then(setD).catch(e => setD({ available: false, reason: e.message })) }, [])
@@ -208,22 +191,14 @@ function Roi() {
 }
 
 // ---------- DORA four keys — with 2023 Google Cloud benchmark bands ----------
-// Two of the four keys are genuinely measurable from what this repo collects (JIRA + GitHub PRs); the
-// other two are NOT, and are rendered as explicit "no data source" cards rather than faked from a proxy.
-// - Lead time: PR open→merge p50/p90 (working days) — already computed in review.mergeTime.
-// - Deploy frequency: merges to the default branch, trailing 30d → per-week rate. Labeled "merges to main",
-//   NOT "deploys" — there is no deploy pipeline wired, so calling it deployment count would be fabrication.
-// - Change failure rate + MTTR: no deploy-event or incident feed exists anywhere in the repo. Shown blank.
-// Bands are the DORA report's calendar-time ballpark; ours are WORKING days, so an elite lead-time reading
-// is if anything conservative. Cohort-level only by construction — no per-person split.
 const DORA_BANDS = [{ key: 'Elite', color: GREEN }, { key: 'High', color: BLUE }, { key: 'Medium', color: GOLD }, { key: 'Low', color: RED }]
 const DEPLOY_SEGS = ['multiple/day', '≥1/week', '≥1/month', '<1/month']
 const LEAD_SEGS = ['<1 day', '<1 week', '<1 month', '>1 month']
 const CFR_SEGS = ['0–15%', '16–30%', '31–45%', '46–60%']
 const MTTR_SEGS = ['<1 hr', '<1 day', '<1 week', '>1 week']
-const deployBand = pw => pw == null ? null : pw >= 7 ? 0 : pw >= 1 ? 1 : pw >= 0.23 ? 2 : 3 // 0.23/wk ≈ 1/month
+const deployBand = pw => pw == null ? null : pw >= 7 ? 0 : pw >= 1 ? 1 : pw >= 0.23 ? 2 : 3
 const leadBand = d => d == null ? null : d < 1 ? 0 : d < 7 ? 1 : d < 30 ? 2 : 3
-const LOW_N = 5 // mirror the n<5 suppression the Roi/Funnel tabs use — a band off 3 PRs is noise
+const LOW_N = 5
 
 function BandStrip({ segs, active }) {
   const dead = active == null
@@ -312,9 +287,6 @@ function Dora() {
 }
 
 // ---------- 15: 1:1 prep card — ships LAST, on purpose ----------
-// Built ONLY from plane-A work artifacts the subject can already open about themselves. Alphabetical, no
-// score, no ranking, no sort-by-output. NO token, cost, hours or transcript field appears anywhere on it.
-// Default view is SELF. Nothing here is persisted as a running tally anyone can screenshot.
 function OneOnOne() {
   const S = useSnap()
   const [me, setMe] = useState(null)
@@ -354,9 +326,6 @@ function OneOnOne() {
       `- in flight: ${card.wip}${card.atRisk ? ` (${card.atRisk} past budget)` : ''}`,
       `- rework: ${card.reopened} · 3+ QA rounds: ${card.qaHeavy} · bugs assigned: ${card.bugs}`, '',
       '## Talking points', ...card.talking.map(t => '- ' + t), '', '## Notes', '- '].join('\n')
-    // POST /api/notes reads req.body.content; this sent {text}, so every "1:1 note" click
-    // wrote a ZERO-BYTE file and still toasted "saved". ChatSection sends {title, content},
-    // which is why it went unnoticed.
     api.post('/api/notes', { title: `1:1 prep ${new Date().toISOString().slice(0, 10)}`, content: md })
       .catch(e => toast(e.message, 'error'))
     navigator.clipboard.writeText(md).catch(() => {})

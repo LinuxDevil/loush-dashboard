@@ -3,10 +3,6 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { modelName } from '../lib/modelName.js'
 
-// Context Window Explorer — replay of one real session's per-turn context occupancy.
-// e.in + e.cc + e.cr on a turn already IS the total prompt size the model saw for that turn
-// (Anthropic's usage block splits fresh/cache-write/cache-read of the SAME total) — no reconstruction
-// needed, unlike tools that only see raw token deltas. Ported concept from oh-my-hi's Context Explorer.
 const MONO = "var(--mono)"
 const FRESH = 'var(--accent)', CACHE = 'var(--blue)', COMPACT = 'var(--amber)', GRID = 'var(--bg-surface-active)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
@@ -19,7 +15,7 @@ export default function ContextExplorerSection() {
   const [data, setData] = useState(null)
   const [hover, setHover] = useState(null)
   const [playing, setPlaying] = useState(false)
-  const [cursor, setCursor] = useState(-1) // -1 = show all, else "played up to" index
+  const [cursor, setCursor] = useState(-1)
   const rafRef = useRef(null)
 
   useEffect(() => { api.get('/api/context/sessions').then(setList).catch(() => {}) }, [])
@@ -35,7 +31,6 @@ export default function ContextExplorerSection() {
     return f.slice(0, 40)
   }, [list, q])
 
-  // simple rAF-driven playback: advances `cursor` through entries at a fixed pace
   useEffect(() => {
     if (!playing || !data) return
     const n = data.entries.length

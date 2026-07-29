@@ -122,16 +122,13 @@ function Design() {
                 <span style={{ font: `600 9px ${MONO}`, padding: '2px 6px', borderRadius: 4, color: TYPE[x.type], background: 'var(--bg-surface-hover)', flexShrink: 0 }}>{x.type}</span>
                 <span style={{ font: `500 12px ${MONO}`, color: 'var(--text-primary)', flexShrink: 0 }}>{x.component}</span>
                 <span style={{ font: "400 12px var(--body)", color: 'var(--text-secondary)', flex: 1 }}>{x.detail}</span>
-                {/* A Figma URL needs the file key, which the manifest does not carry — the old link
-                    was https://www.figma.com/design/?node-id=… with no file, so it could never
-                    resolve. Show the node id (copyable) unless a real fileKey is present. */}
+                {}
                 {x.figmaNode && (x.figmaFileKey
                   ? <a href={`https://www.figma.com/design/${encodeURIComponent(x.figmaFileKey)}/?node-id=${encodeURIComponent(x.figmaNode)}`} target="_blank" rel="noreferrer" style={{ font: `400 10px ${MONO}`, color: 'var(--blue)', flexShrink: 0 }}>frame ↗</a>
                   : <span title="no Figma fileKey in the manifest — add one to make this a link" style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', flexShrink: 0 }}>node {x.figmaNode}</span>)}
               </div>
             ))}
-            {/* A code-generated baseline cannot disagree with the code it was generated from, so an
-                empty drift list there is not an all-clear — it is "no measurement was possible". */}
+            {}
             {d.status?.state === 'baseline-only' && (
               <div style={{ font: `400 12px ${MONO}`, color: 'var(--amber)', lineHeight: 1.6 }}>
                 ⚠ cannot detect drift yet — this manifest was generated from the code, so diffing it

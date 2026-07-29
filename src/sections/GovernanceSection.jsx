@@ -33,12 +33,12 @@ function Versions() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
   const [scope, setScope] = useState('')
-  const [sel, setSel] = useState([]) // up to 2 version ids for diff
+  const [sel, setSel] = useState([])
   const [diff, setDiff] = useState(null)
   const scopes = useScopes()
   const dq = useDebounced(q)
   const load = () => api.get(`/api/gov/versions?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {})
-  useEffect(() => { api.get(`/api/gov/versions?q=${encodeURIComponent(dq)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {}) }, [dq, scope]) // debounced search
+  useEffect(() => { api.get(`/api/gov/versions?q=${encodeURIComponent(dq)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {}) }, [dq, scope])
   const pick = async id => {
     const next = sel.includes(id) ? sel.filter(x => x !== id) : [...sel.slice(-1), id]
     setSel(next)
@@ -150,8 +150,6 @@ function Approvals() {
   )
 }
 
-// Per-(profile, project) rwx matrix. r = may read/display, w = may write into, x = may run
-// commands against. Unconfigured cells read `---`: access is granted, never inherited.
 const MODE_BITS = ['r', 'w', 'x']
 const MODE_HELP = { r: 'read and display this project', w: 'write into it (config, captures, tickets)', x: 'run commands against it' }
 
@@ -167,8 +165,6 @@ function Access() {
     setBusy(true); setErr('')
     try { await fn(); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
-  // Clicking a bit flips just that bit and writes the whole cell back, so the mode string the
-  // server stores is always the one shown in the grid.
   const toggleBit = (profile, project, mode, bit) => {
     const next = MODE_BITS.map((b, i) => (b === bit ? (mode[i] === b ? '-' : b) : mode[i])).join('')
     return send(() => api.put('/api/access/permission', { profile, project, mode: next }))
@@ -251,7 +247,6 @@ function Access() {
         <input value={newProfile} onChange={e => setNewProfile(e.target.value)} placeholder="new profile name…" style={{ width: 200 }} />
         <button className="mini" style={{ marginTop: 0 }} disabled={busy || !newProfile.trim() || !matrix.projects.length}
           onClick={() => send(async () => {
-            // A new profile starts denied everywhere — it exists as a row to grant from.
             await api.put('/api/access/permission', { profile: newProfile.trim(), project: matrix.projects[0], mode: '---' })
             setNewProfile('')
           })}>add profile</button>
@@ -268,9 +263,6 @@ const FA_STATUS = {
   unknown: { color: 'var(--violet)', gloss: 'the check itself could not run — not a pass and not a fail' },
 }
 
-// A production-readiness checklist attested against a real checkout. The differentiator is that
-// most of it is actually verified rather than asserted, so the honest handling of the parts that
-// cannot be verified is what makes the verified parts worth anything.
 function FreezeAudit() {
   const [projects, setProjects] = useState([])
   const [project, setProject] = useState('')
@@ -294,8 +286,6 @@ function FreezeAudit() {
   if (!d) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>auditing…</div>
 
   const sum = d.summary || {}
-  // Default view hides what nobody can act on right now. The counts stay visible so the list
-  // never reads as the whole checklist.
   const rows = (d.items || []).filter(i => show === 'all' || ['fail', 'unknown', 'manual'].includes(i.status))
   const ready = d.verdict === 'READY TO FREEZE'
 
@@ -319,8 +309,7 @@ function FreezeAudit() {
         ))}
       </div>
       <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
-        {/* Stack scoping decides which items even apply, so showing the evidence for it keeps a
-            wrong guess visible instead of quietly turning real failures into n-a. */}
+        {}
         stacks detected: {d.detectedStacks?.length ? d.detectedStacks.join(', ') : 'none'}
         {d.stackEvidence && Object.keys(d.stackEvidence).length > 0 && ' (' + Object.entries(d.stackEvidence).map(([k, v]) => `${k}: ${v.join('; ')}`).join(' · ') + ')'}
         <div>
@@ -340,13 +329,11 @@ function FreezeAudit() {
               <span style={{ color: 'var(--text-tertiary)', width: 54, flexShrink: 0 }}>{i.id}</span>
               <div style={{ flex: 1 }}>
                 <div style={{ color: 'var(--text-secondary)' }}>{i.text}</div>
-                {/* Evidence is what separates this from a checklist you tick by feel. */}
+                {}
                 {i.evidence?.detail && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>{i.evidence.detail}</div>}
                 {i.status === 'manual' && i.manualReason && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>manual: {i.manualReason}</div>}
               </div>
-              {/* A tick can only settle a `manual` item. It deliberately cannot clear a fail or
-                  an unknown — a human asserting a machine-checkable fact we already checked and
-                  found false is exactly the failure this whole screen exists to prevent. */}
+              {}
               {i.status === 'manual' && (
                 <label style={{ flexShrink: 0, display: 'flex', gap: 4, alignItems: 'center', color: isTicked ? 'var(--green)' : 'var(--text-tertiary)' }}>
                   <input type="checkbox" checked={isTicked} onChange={e => tick(i.id, e.target.checked)} />
@@ -366,7 +353,7 @@ function Audit() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
   const dq = useDebounced(q)
-  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq]) // debounced
+  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq])
   return (
     <div style={{ ...PANEL }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 12 }}>
@@ -394,7 +381,6 @@ function Audit() {
   )
 }
 
-// feature 19: apply one change across many projects — always dry-run first
 const BATCH_OPS = [
   ['set-setting', 'set a settings field'],
   ['enable-skill', 'enable a global skill'],

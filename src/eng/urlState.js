@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 
-// §13 — route/project/window/member/ticket live in the query string, so every view is bookmarkable and
-// pasteable into Slack. `dash=eng` is preserved (App.jsx reads it to mount this shell).
 export function useUrlState(defaults) {
   const read = () => {
     const q = new URLSearchParams(window.location.search)

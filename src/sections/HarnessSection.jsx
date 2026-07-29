@@ -16,7 +16,6 @@ const MODEL_HUES = {
 }
 const MODELS = Object.keys(MODEL_HUES)
 
-// click-to-edit inline value
 function Ed({ value, onSave, type = 'text', width = 110, title = 'click to edit' }) {
   const [editing, setEditing] = useState(false)
   const [v, setV] = useState(value)
@@ -57,9 +56,9 @@ const CardTitle = ({ children, hint }) => (
 export default function HarnessSection() {
   const [data, setData] = useState(null)
   const [scope, setScope] = useState('global')
-  const [editor, setEditor] = useState(null) // {content}
+  const [editor, setEditor] = useState(null)
   const [busyGate, setBusyGate] = useState(null)
-  const [view, setView] = useState('hub') // for project scopes: 'hub' (drill-down) | 'config'
+  const [view, setView] = useState('hub')
   const load = s => api.get('/api/harness?scope=' + encodeURIComponent(s ?? scope)).then(setData).catch(() => {})
   useEffect(() => { load(scope) }, [scope])
   if (!data) return <Skeleton tiles={3} rows={6} />
@@ -115,7 +114,7 @@ export default function HarnessSection() {
 
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* header row: config path + edit */}
+      {}
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, font: `600 18px ${HEAD}`, letterSpacing: '-0.02em' }}>
           {scope === 'global' ? 'Global harness' : cur.label + ' · harness'}
@@ -127,7 +126,7 @@ export default function HarnessSection() {
         </div>
       </header>
 
-      {/* scope switcher */}
+      {}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ font: `600 10px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginRight: 2 }}>Scope</span>
         {scopes.map(s => {
@@ -162,7 +161,7 @@ export default function HarnessSection() {
 
       {scope !== 'global' && view === 'hub' ? <ProjectHub project={scope} /> : <>
 
-      {/* overview strip */}
+      {}
       <div className="hx-overview">
         <div style={{ ...PANEL, display: 'flex', alignItems: 'center', gap: 16, animation: 'fadeUp .5s ease both' }}>
           <svg width="76" height="76" viewBox="0 0 76 76">
@@ -193,7 +192,7 @@ export default function HarnessSection() {
         ))}
       </div>
 
-      {/* loop + context */}
+      {}
       <div className="hx-2a">
         <div style={{ ...PANEL, animation: 'fadeUp .5s ease both', animationDelay: '.1s' }}>
           <CardTitle hint="react → act → observe">Agent loop &amp; turn policy</CardTitle>
@@ -277,7 +276,7 @@ export default function HarnessSection() {
         </div>
       </div>
 
-      {/* routing + guardrails */}
+      {}
       <div className="hx-2">
         <div style={{ ...PANEL, animation: 'fadeUp .5s ease both', animationDelay: '.2s' }}>
           <CardTitle hint="task → model">Model routing</CardTitle>
@@ -328,7 +327,7 @@ export default function HarnessSection() {
         </div>
       </div>
 
-      {/* permissions + verification */}
+      {}
       <div className="hx-2">
         <div style={{ ...PANEL, animation: 'fadeUp .5s ease both', animationDelay: '.3s' }}>
           <CardTitle hint={`sandbox: ${r.permissions.sandbox}`}>Tools &amp; permissions</CardTitle>
@@ -363,7 +362,7 @@ export default function HarnessSection() {
         </div>
       </div>
 
-      {/* environment + instructions */}
+      {}
       <div className="hx-2b">
         <div style={{ ...PANEL, animation: 'fadeUp .5s ease both', animationDelay: '.4s' }}>
           <CardTitle>Environment</CardTitle>
@@ -401,7 +400,7 @@ export default function HarnessSection() {
 
       </>}
 
-      {/* raw config editor drawer */}
+      {}
       {editor && (
         <>
           <div className="drawer-overlay" onClick={() => setEditor(null)} />

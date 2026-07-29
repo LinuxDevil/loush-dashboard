@@ -1,11 +1,7 @@
-// Shared UI primitives. These three lived inside GovernanceSection.jsx — a routable section — while
-// eight other sections imported them from it, so opening any of those files implied that Governance
-// was involved. They are pure presentation with no Governance coupling; only their address changes.
 import React from 'react'
 
 const MONO = "var(--mono)"
 
-// minimal LCS line diff — good enough for config files
 export function lineDiff(a, b) {
   const A = (a || '').split('\n'), B = (b || '').split('\n')
   const m = A.length, n = B.length
@@ -34,9 +30,6 @@ export const DiffView = ({ before, after }) => (
   </pre>
 )
 
-// Underline tabs, not a pill group: the active tab is marked by a 2px rule that reads as "this panel
-// belongs to that label", and the row doubles as the section's top border. Styling lives in the .tabs
-// block of styles.css so the whole app changes in one place.
 export const Tabs = ({ tabs, tab, setTab }) => (
   <div className="tabs" role="tablist">
     {tabs.map(t => (

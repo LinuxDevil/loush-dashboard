@@ -1,18 +1,12 @@
 import React, { useState } from 'react'
 
-// The approval gate for a regeneration.
-//
-// A regenerated design is reconciled against whatever the user has already edited, and that
-// reconciliation is exactly where hand work disappears. So it is shown, not applied: kept / added /
-// dropped, with anything the user authored broken out and CHECKED BY DEFAULT. The model omitting a
-// node is not evidence that the human's node was wrong.
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)'
 const mini = { padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer', font: '500 11px var(--body)' }
 
 const Col = ({ title, colour, ids, labelOf, empty }) => (
   <div style={{ flex: 1, minWidth: 170 }}>
-    {/* the word is the signal; the colour is redundant, for anyone who cannot see it */}
+    {}
     <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: colour, marginBottom: 6 }}>{title} {ids.length}</div>
     {ids.length === 0
       ? <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{empty}</div>
@@ -29,7 +23,6 @@ export default function RederivePreview({ pending, current, onApply, onDiscard, 
   const newById = new Map((pending?.graph?.nodes || []).map(n => [n.id, n]))
   const labelOf = id => newById.get(id)?.data?.label || curById.get(id)?.data?.label || id
 
-  // A dropped node the user or the assistant authored is rescued by default.
   const mine = (report.droppedIds || []).filter(id => ['user', 'assistant'].includes(curById.get(id)?.data?.origin))
   const [keep, setKeep] = useState(() => new Set(mine))
   const keptIds = (pending?.graph?.nodes || []).map(n => n.id).filter(id => !(report.addedIds || []).includes(id))

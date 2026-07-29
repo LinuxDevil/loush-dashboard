@@ -3,16 +3,6 @@ import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 
 // ---------- Setup — every piece of config this app needs, entered visually ----------
-//
-// Configuring this dashboard used to mean hand-editing JSON in three places, and the only reason it
-// "worked out of the box" was another company's production config compiled into the source. Now that
-// everything org-specific is user config, there has to be somewhere to put it.
-//
-// SECRETS: this component can never display a credential, because no endpoint will return one. The
-// server answers `set: true|false` and nothing else. A token field is therefore always blank on load
-// — that is not a bug, it is the whole design. Submitting a blank field LEAVES the stored value
-// alone; clearing one requires the explicit Remove button. If the field round-tripped the value it
-// would be visible in devtools, in a screenshot, and in any cached response.
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -45,10 +35,6 @@ const Section = ({ title, sub, children, right }) => (
 const Dot = ({ ok, warn }) => <span style={{ width: 8, height: 8, borderRadius: 4, display: 'inline-block', background: ok ? GREEN : warn ? GOLD : DIM, flexShrink: 0 }} />
 const emails = s => String(s || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
 
-// /api/meta has existed since PR #3 with nothing reading it. It answers a question this app
-// otherwise only implies: which directories does it actually read from and write to. Worth
-// showing plainly on a screen that is already about "where does my configuration live", not
-// least because every path here is one a user may need to back up or inspect by hand.
 function Paths() {
   const [m, setM] = useState(null)
   const [err, setErr] = useState('')
@@ -70,8 +56,7 @@ function Paths() {
       {m && rows.map(([label, value, gloss]) => (
         <div key={label} style={{ display: 'flex', gap: 12, padding: '4px 0', font: '400 12px monospace', alignItems: 'baseline', flexWrap: 'wrap' }}>
           <span style={{ color: DIM, width: 130, flexShrink: 0 }}>{label}</span>
-          {/* An absent path is reported as unknown rather than as an empty string, which would
-              read as "nowhere" instead of "the server did not say". */}
+          {}
           <span style={{ color: value ? 'var(--text-primary)' : DIM }}>{value || 'unknown'}</span>
           <span style={{ color: DIM, flexBasis: '100%', fontSize: 11 }}>{gloss}</span>
         </div>
@@ -385,7 +370,6 @@ function OrgTools({ d, reload }) {
   const ds = d.eng.designSystem || {}
   const [enabled, setEnabled] = useState(!!flag.enabled)
   const [emails, setEmails] = useState((flag.emails || []).join('\n'))
-  // one field, two sources: a URL is a Storybook build, anything else is a package name or path.
   const [dsSource, setDsSource] = useState(ds.storybook || ds.package || '')
   const [busy, setBusy] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -405,8 +389,6 @@ function OrgTools({ d, reload }) {
       reload()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
   }
-  // Extract runs against what is TYPED, not what is saved, so a wrong package name is one click to
-  // find out about rather than a save + a terminal round-trip.
   const extract = async () => {
     setExtracting(true)
     try {
@@ -480,15 +462,6 @@ function Notifications({ d, reload }) {
 }
 
 // ---------- model pricing ----------
-//
-// The rates every dollar figure in this app is computed from. They live here rather than only in
-// lib/pricing.mjs because Anthropic changes them: our table said Opus cost $15/M input for two
-// generations after it became $5/M, and nothing on any screen could have told you that. A table
-// nobody can edit is a table that silently goes stale.
-//
-// RAW MODEL IDS ONLY on this screen. Everywhere else the dashboard renders "Claude Opus 4.8" via
-// src/lib/modelName.js; here the id is data — it is matched against what transcripts actually say —
-// so formatting it would be actively wrong.
 const RATE_KEYS = ['in', 'out', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h']
 const RATE_LABEL = { in: 'input', out: 'output', cacheRead: 'cache read', cacheWrite5m: 'cache write 5m', cacheWrite1h: 'cache write 1h' }
 const rateInp = { ...inp, font: `400 12px ${MONO}`, padding: '6px 8px', textAlign: 'right' }
@@ -507,9 +480,6 @@ function ModelPricing() {
     .then(p => { setRules(p.rules.map(r => ({ ...r }))); setSource(p.source) })
     .catch(e => setErr(e.message))
   useEffect(() => { load() }, [])
-  // The unpriced-model list has been computed server-side since the null-fallback fix and read by
-  // nothing. A model we hold no rate for contributes $0 to every total, so the only thing standing
-  // between that and a wrong number a reader trusts is saying so out loud — here, next to the fix.
   useEffect(() => { api.get('/api/usage').then(u => setUnpriced(u.unpricedModels || [])).catch(() => {}) }, [rules])
 
   const set = (i, k, v) => setRules(rs => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)))
@@ -518,8 +488,6 @@ function ModelPricing() {
 
   const toggleIntro = (i, on) => setRules(rs => rs.map((r, j) => {
     if (j !== i) return r
-    // Clearing the date clears the promo entirely — leaving intro rates behind with no cutoff
-    // would store a rule the server rejects, and a half-saved promo is worse than none.
     if (!on) { const { intro, intro_until, ...rest } = r; return rest }
     return { ...r, intro_until: '', intro: { in: 0, out: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } }
   }))
@@ -527,8 +495,6 @@ function ModelPricing() {
   const save = async () => {
     setBusy(true); setErr('')
     try {
-      // Send what the server's validator accepts: drop an empty promo date rather than posting
-      // intro rates it will reject, and coerce blanked number fields back to 0.
       const clean = rules.map(r => {
         const out = r.id != null && r.id !== '' ? { id: r.id } : { match: r.match }
         for (const k of RATE_KEYS) out[k] = Number(r[k]) || 0

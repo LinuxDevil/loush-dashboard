@@ -35,9 +35,6 @@ export default function ReliabilitySection() {
   )
 }
 
-// Groups failures by cause rather than listing them. A rate limit and a broken tool call read
-// identically in a raw transcript, and the difference decides whether you have a bug or a
-// retry policy problem.
 function ErrorCauses() {
   const [days, setDays] = useState(30)
   const [d, setD] = useState(null)
@@ -61,15 +58,14 @@ function ErrorCauses() {
             <div style={{ width: `${(g.count / max) * 100}%`, height: '100%', background: g.retryable ? 'var(--amber, #d79921)' : 'var(--red)' }} />
           </div>
           <span style={{ width: 46, textAlign: 'right', color: 'var(--text-secondary)' }}>{g.count}</span>
-          {/* retryable null means we could not tell — shown as a question mark, not as "no". */}
+          {}
           <span style={{ width: 78, color: 'var(--text-tertiary)' }}>
             {g.retryable === true ? 'retryable' : g.retryable === false ? 'not retryable' : 'retryable?'}
           </span>
         </div>
       ))}
       <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
-        {/* Both caveats come straight from the API rather than being restated here, so they
-            cannot drift apart from what the endpoint actually did. */}
+        {}
         {d.scope}
         {d.samplesCapped && <div>sample list capped at {d.sampleCap} — counts above are complete, examples are not</div>}
       </div>
@@ -274,7 +270,6 @@ function Evals() {
   )
 }
 
-// feature 27: run the eval suite in real CI on PRs touching .claude/, with a merge-blocking pass-rate gate
 function CiGate() {
   const scopes = useScopes()
   const [project, setProject] = useState('')

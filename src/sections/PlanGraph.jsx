@@ -21,15 +21,14 @@ const Chip = ({ type, label, onClick }) => (
 )
 
 export default function PlanGraph({ steps, cwd, derived, diagnostics }) {
-  const [hub, setHub] = useState(null)   // { promptBlocks, skillScope: {name->scope} }
-  const [mcps, setMcps] = useState({})   // name -> config
-  const [sel, setSel] = useState(null)   // selected step_id
-  const [chip, setChip] = useState(null) // { type, name, body|obj, loading }
-  const [drill, setDrill] = useState([]) // stack of { label, steps } — drilling into subagent graphs
-  const [hi, setHi] = useState(null)     // Set of step_ids highlighted from a diagnosis finding
-  const [lane, setLane] = useState(null) // null | 'files' | 'cost' — docked aggregate panel
+  const [hub, setHub] = useState(null)
+  const [mcps, setMcps] = useState({})
+  const [sel, setSel] = useState(null)
+  const [chip, setChip] = useState(null)
+  const [drill, setDrill] = useState([])
+  const [hi, setHi] = useState(null)
+  const [lane, setLane] = useState(null)
 
-  // new session / plan → reset the whole view
   useEffect(() => { setDrill([]); setSel(null); setChip(null); setHi(null) }, [steps])
   const activeSteps = drill.length ? drill[drill.length - 1].steps : steps
 
@@ -43,7 +42,6 @@ export default function PlanGraph({ steps, cwd, derived, diagnostics }) {
   }, [cwd])
 
   const { pos, W, H } = useMemo(() => {
-    // Explicit `column` (derived activity graphs) wins; otherwise lay out by dependency depth (real plans).
     const useCol = activeSteps.some(s => typeof s.column === 'number')
     const { depth } = useCol ? { depth: null } : planLayout(activeSteps)
     const colOf = s => useCol ? (s.column || 0) : (depth.get(s.step_id) || 0)
@@ -66,7 +64,6 @@ export default function PlanGraph({ steps, cwd, derived, diagnostics }) {
       return setChip({ type, name, body: blk ? blk.text : 'No matching CLAUDE.md section found.' })
     }
     if (type === 'tool') return setChip({ type, name, body: `Tool: ${name}\n(built-in — no source file; see the step's params)` })
-    // skill: fetch the SKILL.md body on demand
     const scope = hub?.skillScope?.[name] || 'user'
     setChip({ type, name, loading: true })
     api.get(`/api/res/skills/item?scope=${scope}&name=${encodeURIComponent(name)}`)
@@ -77,7 +74,6 @@ export default function PlanGraph({ steps, cwd, derived, diagnostics }) {
   const byId = new Map(activeSteps.map(s => [s.step_id, s]))
   const selStep = sel != null ? byId.get(sel) : null
   const openSubgraph = s => { setDrill([...drill, { label: (s.description || 'subagent').split(':')[0].split(' (')[0], steps: s.subplan }]); setSel(null); setChip(null) }
-  // activity/subagent graphs (steps carry `column`) render as a flow-laid timeline; real plans keep the DAG
   const useTimeline = activeSteps.some(s => typeof s.column === 'number')
   const metrics = useMemo(() => turnMetrics(activeSteps), [activeSteps])
   const files = useMemo(() => lane === 'files' ? filesTouched(activeSteps) : [], [lane, activeSteps])
@@ -130,7 +126,6 @@ export default function PlanGraph({ steps, cwd, derived, diagnostics }) {
               if (!p || !t) return null
               const lit = sel === d || sel === s.step_id
               const stroke = lit ? 'var(--text-primary)' : 'var(--bg-surface-active)', sw = lit ? 2 : 1.3
-              // same column → connect bottom→top (vertical thread); different columns → right→left
               const sameCol = Math.abs(p.x - t.x) < 1
               const dpath = sameCol
                 ? (() => { const x1 = p.x + CW / 2, y1 = p.y + CH, x2 = t.x + CW / 2, y2 = t.y, my = (y1 + y2) / 2; return `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}` })()
@@ -276,8 +271,6 @@ function FilesPanel({ files, onClose }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {files.map(f => {
           const seg = f.path.split('/'), base = seg.pop()
-          // keep the filename whole and let the leading directories be the thing that gets clipped —
-          // truncating a long absolute path from the right hides the only part worth reading.
           const dir = seg.slice(-1).join('/')
           return (
             <div key={f.path} title={f.path} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', borderRadius: 6 }}>

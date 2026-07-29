@@ -19,7 +19,7 @@ export default function PromptStudio() {
   const [scopes, setScopes] = useState([])
   const dq = useDebounced(q)
   const loadList = () => api.get('/api/prompts?q=' + encodeURIComponent(q)).then(setList).catch(() => {})
-  useEffect(() => { api.get('/api/prompts?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq]) // debounced: one fetch per pause, not per keystroke
+  useEffect(() => { api.get('/api/prompts?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq])
   useEffect(() => { api.get('/api/harness').then(d => setScopes(d.scopes)).catch(() => {}) }, [])
 
   const addInput = async () => {
@@ -56,7 +56,7 @@ export default function PromptStudio() {
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="hx-2a">
-        {/* composer */}
+        {}
         <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 10 }}>
             <input value={doc.title} onChange={e => setDoc(d => ({ ...d, title: e.target.value }))} placeholder="prompt title…" style={{ flex: 1, font: `600 14px ${HEAD}` }} />
@@ -75,7 +75,7 @@ export default function PromptStudio() {
             </select>
             <input value={(doc.tags || []).join(', ')} onChange={e => setDoc(d => ({ ...d, tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))} placeholder="tags, comma separated" style={{ flex: 1, minWidth: 140 }} />
           </div>
-          {/* input chips */}
+          {}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
             {doc.inputs.map((inp, i) => {
               const [icon, color] = CHIP[inp.type] || ['·', 'var(--text-secondary)']
@@ -92,7 +92,7 @@ export default function PromptStudio() {
             })}
             {doc.inputs.length === 0 && <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no inputs yet — add text, URLs, files, screenshots, or harness artifacts below</span>}
           </div>
-          {/* add input row */}
+          {}
           <div style={{ display: 'flex', gap: 8 }}>
             <select value={adding} onChange={e => setAdding(e.target.value)} aria-label="input type">
               {['text', 'url', 'file', 'artifact', 'image'].map(t => <option key={t} value={t}>{t}</option>)}
@@ -119,7 +119,7 @@ export default function PromptStudio() {
             </div>
           )}
         </div>
-        {/* output */}
+        {}
         <div style={{ ...PANEL, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderBottom: '1px solid var(--border-default)' }}>
             <span style={{ font: `600 14px ${HEAD}` }}>Generated prompt</span>
@@ -141,7 +141,7 @@ export default function PromptStudio() {
         </div>
       </div>
 
-      {/* saved library */}
+      {}
       <div style={{ ...PANEL }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 12 }}>
           <div style={{ font: `600 14px ${HEAD}` }}>Saved prompts</div>

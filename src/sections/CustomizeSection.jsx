@@ -2,9 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 
 // ---------- Customize — one place to manage skills / commands / subagents / rules / mcp / hooks / plugins ----------
-// Presentation only: the inventory + real enable/disable live behind /api/customize (server/index.mjs). A toggle
-// here renames the file / edits the config that Claude actually reads, so "off" means Claude skips it — never
-// a cosmetic flag. The existing Capabilities → Skills/Commands/Agents editors stay for deep editing.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const CATS = [
@@ -74,7 +71,7 @@ export default function CustomizeSection() {
   const [err, setErr] = useState('')
   const [pill, setPill] = useState('all')
   const [q, setQ] = useState('')
-  const [busy, setBusy] = useState(null) // id being toggled
+  const [busy, setBusy] = useState(null)
   const [banner, setBanner] = useState(() => localStorage.getItem('customize-banner') !== 'off')
 
   const load = () => api.get('/api/customize').then(d => { setData(d); setErr('') }).catch(e => setErr(e.message))
@@ -88,7 +85,7 @@ export default function CustomizeSection() {
     return (data?.[kind] || []).filter(i => !ql || (i.name + ' ' + (i.description || '')).toLowerCase().includes(ql))
       .sort((a, b) => a.name.localeCompare(b.name))
   }
-  const groupsOf = items => { // group by item.group, preserving first-seen order
+  const groupsOf = items => {
     const g = new Map()
     for (const i of items) { const k = i.group || 'other'; (g.get(k) || g.set(k, []).get(k)).push(i) }
     return [...g.entries()]
@@ -97,13 +94,12 @@ export default function CustomizeSection() {
   const toggle = async item => {
     const id = idOf(item), next = !item.enabled
     setBusy(id)
-    // optimistic
     setData(d => ({ ...d, [item.kind]: d[item.kind].map(x => idOf(x) === id ? { ...x, enabled: next } : x) }))
     try {
       const r = await api.post('/api/customize/toggle', { kind: item.kind, scope: item.scope, name: item.name, enable: next, ref: item.ref })
       if (r.error) throw new Error(r.error)
       toast(`${item.name} ${next ? 'enabled' : 'disabled'}`, 'success')
-      load() // re-read truth (rename may have changed the backing path)
+      load()
     } catch (e) {
       setData(d => ({ ...d, [item.kind]: d[item.kind].map(x => idOf(x) === id ? { ...x, enabled: !next } : x) }))
       toast('toggle failed: ' + e.message, 'error')

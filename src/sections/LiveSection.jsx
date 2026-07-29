@@ -5,13 +5,8 @@ const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
-// Poll rather than stream. The board reads the tail of each transcript, which is cheap, and a
-// couple of seconds of latency is invisible on a screen whose slowest signal is a human deciding
-// what to type. A socket here would be more machinery for no perceptible gain.
 const POLL_MS = 2000
 
-// Every status carries its own colour and a plain-language gloss. `unknown` is a first-class
-// state, not an error: it means the transcript did not say, and saying so beats guessing idle.
 const STATUS = {
   thinking: { color: 'var(--green)', gloss: 'working right now' },
   waiting: { color: 'var(--amber, #d79921)', gloss: 'stopped and handed the turn back to you' },
@@ -50,8 +45,7 @@ export default function LiveSection() {
           <div style={{ font: `600 14px ${HEAD}` }}>Now</div>
           <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
             from transcripts · refreshes every {POLL_MS / 1000}s
-            {/* Say which signal is in play. Without the hook receiver this board is accurate but
-                lags a turn's internal steps; claiming live-ness it doesn't have would be worse. */}
+            {}
             {data.hookReceiver ? ' · hook receiver connected (mid-turn)' : ' · hook receiver not installed — states update per transcript write, not per step'}
           </span>
         </div>
@@ -80,9 +74,7 @@ export default function LiveSection() {
                   </span>
                 </div>
 
-                {/* Mid-turn state, shown only when the hook has seen this session more recently
-                    than its transcript was written. Between turn boundaries the transcript says
-                    nothing at all, so this is the only signal that exists in that window. */}
+                {}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   {s.live ? (
                     <span style={{ font: `400 11px ${MONO}`, color: 'var(--green)' }}>
@@ -97,9 +89,7 @@ export default function LiveSection() {
                   )}
                 </div>
 
-                {/* Context pressure. A known percentage gets a bar; an unknown window gets the
-                    real token count and no bar, because inventing a denominator to fill a bar
-                    is exactly the kind of plausible-looking guess this codebase refuses. */}
+                {}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
                   {s.context?.known ? (
                     <>
@@ -124,8 +114,7 @@ export default function LiveSection() {
           })}
         </div>
 
-        {/* collapseIdle hides rows deliberately. Showing the count keeps the board from reading
-            as a complete list of everything that exists. */}
+        {}
         {data.hidden > 0 && (
           <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>
             {data.hidden} row{data.hidden === 1 ? '' : 's'} hidden ({Object.entries(data.hiddenReasons || {}).map(([k, v]) => `${v} ${k.replace(/-/g, ' ')}`).join(', ')})
