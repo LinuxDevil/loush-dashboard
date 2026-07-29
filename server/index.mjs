@@ -19,8 +19,6 @@ import mountAccess from './access.mjs'
 import { mountHooksReceiver, publishInstance, unpublishInstance } from './hooks-receiver.mjs'
 import { securityMiddleware, bindHost, isExposedBind } from './security.mjs'
 import { installNetworkGuard } from '../lib/network-guard.mjs'
-// contextPressure collides with the harness-metrics export above; the live board wants the
-// per-turn, model-aware one from session-status.
 import { detectTestCommand } from '../lib/testdetect.mjs'
 import { classifyError } from '../lib/error-taxonomy.mjs'
 import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
@@ -45,66 +43,34 @@ import { runAgent } from '../lib/agent.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
 import { PRICE_PER_M, isPriced, entryCost, entryCacheRates, splitCacheWrite, dedupeTurns } from '../lib/pricing.mjs'
 import mountPricing from './pricing-store.mjs'
+import { foldNameLine, sessionName, nameSource } from '../lib/session-name.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
-// PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
-//   team-visible — every engineer can open the underlying artifact — so per-person views are allowed there.
-// PLANE B (this file: transcripts, tokens, cost, session times) is SELF-ONLY, FOREVER.
-//   * server.mjs only ever reads the local ~/.claude of the person running the dashboard.
-//   * No endpoint here accepts a machine/user/engineer parameter for transcript data. Ever.
-//   * No aggregate over plane-B data is keyed by a person other than the viewer. No tokens-per-engineer,
-//     no cost-per-engineer, no active-hours, no leaderboard. This is a boundary, not a preference.
-//   * The ONLY permitted cross-plane join is /api/roi, at COHORT level: it drops the author/assignee field
-//     BEFORE aggregating and never emits a per-person token, cost or session-time field.
-//   * No auto-nudge / auto-ping: every "nudge" this server emits is a line of text for a human to send.
-// Inbox items therefore carry `plane: 'work' | 'harness'` so the boundary is visible in the payload itself.
 // =============================================================================================================
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 const CLAUDE_JSON = path.join(HOME, '.claude.json')
-// The repo this dashboard WATCHES — the app's parent. Anchored in lib/paths.mjs so it no longer
-// depends on where this file sits: it feeds ALLOWED_ROOTS, and a silent shift moves the write jail.
 const PROJECT = WATCHED_PROJECT
 const WIN = process.platform === 'win32'
 const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
 const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
-// Host-header allowlist + loopback CORS + optional token, before any route. The Host check is
-// not redundant with binding to loopback: a page in the user's browser can point an attacker
-// domain at 127.0.0.1 and reach this server with the browser's own credentials, and only the
-// Host header distinguishes that from a genuine local request.
 app.use(...securityMiddleware())
 app.use(express.json({ limit: '10mb' }))
-// Opt-in outbound audit. Off by default and deliberately so: this app makes real outbound
-// calls (api.anthropic.com, api.figma.com, Atlassian), so 'block' breaks working features.
-// DASH_NETWORK_GUARD=report records what actually leaves; =block refuses non-loopback.
 if (process.env.DASH_NETWORK_GUARD) {
   const mode = process.env.DASH_NETWORK_GUARD === 'block' ? 'block' : 'report'
   installNetworkGuard({ mode, onViolation: v => console.warn(`[network-guard] ${mode}: ${v.host}:${v.port}`) })
   console.log(`[claude-dashboard] outbound network guard: ${mode}`)
 }
-mountEng(app) // /api/eng/* — the delivery snapshot (JIRA changelog + GitHub PRs)
-mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
-mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
-// /api/access/* — per-(profile, project) rwx policy. Core governance, so it is mounted
-// unconditionally; `track` is hoisted from below and records each change in the audit log.
+mountEng(app)
+mountTicket(app)
+mountMemory(app)
 mountAccess(app, { track: (...a) => track(...a) })
-// /api/hooks/event + /api/hooks/live — mid-turn state pushed by the hook script. Unauthenticated
-// by necessity (Claude Code spawns the hook with no way to hand it a secret), so the module
-// stores tool_input KEY NAMES only and never opens any path it is given.
 const hooksReceiver = mountHooksReceiver(app)
-// /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
-// this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
 mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })
-// /api/setup/* — visual config for everything the app needs, including credentials. Secret VALUES
-// are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
-// /api/todos/* — the human's day list: one day at a time, filed by directory and file, moving through
-// the delivery stages. Its suggestion panel reads the SAME transcripts Working Set reads, so a day
-// starts from what the agent actually touched rather than from an empty box. Writes go through
-// `track` so a todo edit is versioned and rollback-able like every other write here.
 mountTodos(app, {
   scanTranscripts: (...a) => scanTranscripts(...a),
   failStats: (...a) => failStats(...a),
@@ -113,17 +79,7 @@ mountTodos(app, {
 })
 
 // ---------- org-specific tool bundle: Company tools ----------
-// The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture needs a
-// design-system catalog, so these are useless — and were previously misleading — outside an org that
-// has that layout. They are now behind a flag in projects.json rather than deleted or unconditional.
-// Gated HERE, at mount time: when the flag is off the routes do not exist at all, so a stale client
-// cannot reach them.
 function companyToolsEnabled() {
-  // Deliberately does NOT use readJson(): that is a `const` arrow declared ~1000 lines below, so
-  // calling it from here hits the temporal dead zone and throws — and an outer catch turned that
-  // into a confident `false`, silently disabling the feature with the config plainly set to true.
-  // A swallowed error producing a wrong answer is the exact failure this codebase keeps repeating,
-  // so the catch below reports rather than hides.
   const readLocal = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return {} } }
   try {
     const cfg = loadEngCfg(PROJECTS_FILE)
@@ -134,8 +90,6 @@ function companyToolsEnabled() {
     return false
   }
 }
-// Same evaluation path as companyTools, for the same reason: a thrown error here must report
-// rather than resolve to a confident `false` with the config plainly set.
 function engineeringEnabled() {
   const readLocal = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return {} } }
   try {
@@ -152,22 +106,17 @@ if (ENGINEERING) console.log('[claude-dashboard] Engineering metrics enabled (pr
 
 const COMPANY_TOOLS = companyToolsEnabled()
 if (COMPANY_TOOLS) {
-  mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
-  mountAtoms(app)          // /api/atoms/*        — feature catalog + grounded ask-the-project
-  mountFigmaCapture(app)   // /api/figma-capture/* — annotate Figma frames with component mappings
-  mountPageCapture(app)    // /api/page-capture/*  — same capture layout, sourced from a live URL
+  mountConstitution(app)
+  mountAtoms(app)
+  mountFigmaCapture(app)
+  mountPageCapture(app)
   console.log('[claude-dashboard] Company tools enabled (projects.json -> Company_Tools)')
 }
-// Feature flags the client needs before it can decide which nav entries exist.
 app.get('/api/features', (req, res) => res.json({ companyTools: COMPANY_TOOLS, engineering: ENGINEERING }))
 
-mountPromptCheck(app) // /api/promptcheck — cached `claude -p` rating of how the user prompts (claude|cursor)
-// (from main: mountMindwalk / mountGame are not mounted — Labs and the gamification layer are deleted;
-//  mountFigmaCapture is mounted above, inside the Company_Tools gate.)
+mountPromptCheck(app)
 
 // ---------- response cache for heavy aggregate GETs ----------
-// Aggregation is local parsing (no claude CLI, no tokens) but re-runs on every section visit.
-// TTL memo per URL; x-cached-at header drives the staleness chip in the UI; ?fresh=1 bypasses.
 const HEAVY_TTL = {
   '/api/overview': 300_000, '/api/usage': 120_000, '/api/projects': 300_000, '/api/harness': 60_000,
   '/api/chatstats': 600_000, '/api/dupes': 600_000, '/api/flow': 600_000, '/api/search': 600_000,
@@ -176,9 +125,9 @@ const HEAVY_TTL = {
   '/api/inbox': 60_000, '/api/capabilities': 300_000, '/api/forensics': 600_000, '/api/sessions': 120_000,
   '/api/roi': 600_000, '/api/ci/health': 600_000, '/api/gov/team': 300_000,
 }
-const respCache = new Map() // url -> {at, body}
+const respCache = new Map()
 app.use((req, res, next) => {
-  if (req.method !== 'GET') { respCache.clear(); return next() } // any write invalidates everything — cheap and always correct
+  if (req.method !== 'GET') { respCache.clear(); return next() }
   const ttl = HEAVY_TTL[req.path]
   if (!ttl) return next()
   const key = req.originalUrl.replace(/[?&]fresh=1/, '')
@@ -214,7 +163,6 @@ function parseFM(src) {
 }
 
 // ---------- skills / commands / agents ----------
-// skills are dirs containing SKILL.md; commands/agents are flat .md files
 const KINDS = {
   skills: {
     dirs: () => [{ scope: 'user', dir: path.join(CLAUDE, 'skills') }, { scope: 'project', dir: path.join(PROJECT, '.claude', 'skills') }],
@@ -233,10 +181,6 @@ const KINDS = {
   },
 }
 const OFF = '.off'
-// Flat kinds (commands/agents) may be installed into namespaced subdirectories — SuperClaude
-// ships ~/.claude/commands/sc/*.md — and a single-level readdir silently skipped every one of
-// them. A name round-trips as `sc:implement` <-> `sc/implement.md`, matching how Claude Code
-// addresses namespaced commands.
 const flatName = name => name.split(':')
 function walkFlatKind(dir) {
   const out = []
@@ -257,7 +201,6 @@ function walkFlatKind(dir) {
   walk(dir, '')
   return out
 }
-// Enabled items only — the shape every read path other than the customize view wants.
 function listItemNames(kind, dir) {
   if (!fs.existsSync(dir)) return []
   if (KINDS[kind].nested) {
@@ -320,7 +263,6 @@ app.put('/api/res/:kind/item', kindGuard, (req, res) => {
 
 app.post('/api/res/:kind', kindGuard, (req, res) => {
   const { kind } = req.params, { scope = 'user', name } = req.body
-  // `:` separates a namespace (sc:implement -> sc/implement.md); safe() still bounds the result.
   if (!/^[\w.-]+(:[\w.-]+)*$/.test(name || '') || name.includes('..')) return res.status(400).json({ error: 'invalid name' })
   const file = safe(itemFile(kind, scopeDir(kind, scope), name))
   if (fs.existsSync(file)) return res.status(409).json({ error: 'already exists' })
@@ -338,11 +280,6 @@ app.delete('/api/res/:kind/item', kindGuard, (req, res) => {
 })
 
 // ---------- MCP servers ----------
-// A MISSING ~/.claude.json is a legitimate cold start — someone who has installed this dashboard but
-// not yet run Claude Code. It used to throw straight out of the handler, so /api/mcp, /api/projects
-// and /api/hooks all answered with a bare 500 and the UI sat on a skeleton forever.
-// A CORRUPT file is a different thing entirely and still throws: several callers merge into this
-// object and write it back, so silently treating unreadable JSON as {} would destroy the real file.
 function readClaudeJson() {
   if (!fs.existsSync(CLAUDE_JSON)) return {}
   return JSON.parse(fs.readFileSync(CLAUDE_JSON, 'utf8'))
@@ -384,7 +321,6 @@ app.delete('/api/mcp/:name', (req, res) => {
 })
 
 const INIT_MSG = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claude-dashboard', version: '1.0.0' } } }
-// generic JSON-RPC initialize probe — shared by the Claude and Cursor MCP sections
 async function mcpTest(cfg) {
   const t0 = Date.now()
   try {
@@ -396,7 +332,6 @@ async function mcpTest(cfg) {
         signal: AbortSignal.timeout(8000),
       })
       const body = (await r.text()).slice(0, 300)
-      // 401 means reachable but needs OAuth — still a live server
       return { ok: r.status < 500, status: r.status, ms: Date.now() - t0, detail: body }
     }
     return await new Promise(resolve => {
@@ -448,19 +383,8 @@ app.put('/api/hooks', (req, res) => {
   fs.writeFileSync(file, JSON.stringify(settings, null, 2))
   res.json({ ok: true, backup: bak })
 })
-// Superseded by PUT /api/harness/raw, which is what the UI actually calls. Kept because an
-// external script may still use it, but no longer as a second way to write config:
-//
-// as written it took a full settings object and wrote it straight to disk — no approval step for
-// global scope, and no track() entry. That made it an unaudited write path around the exact
-// governance this app claims to provide: a global settings change through here never appeared in
-// the audit log and never waited for review, while the same change through the UI did both.
-//
-// It now routes through the identical path as /api/harness/raw. Behaviour for a project scope is
-// unchanged apart from being recorded; a global edit now returns a proposal instead of having
-// silently applied.
 app.put('/api/settings', (req, res) => {
-  const { scope, settings } = req.body // full settings object, already-parsed JSON
+  const { scope, settings } = req.body
   const file = SETTINGS_FILES[scope]
   if (!file) return res.status(400).json({ error: 'bad scope' })
   if (settings == null || typeof settings !== 'object') return res.status(400).json({ error: 'settings must be an object' })
@@ -472,15 +396,7 @@ app.put('/api/settings', (req, res) => {
 })
 
 // ---------- Customize: one unified inventory + REAL enable/disable across every category ----------
-// The presentation layer (CustomizeSection.jsx) shows skills/commands/subagents/rules/mcp/hooks/plugins as
-// grouped cards with a toggle. "Disable" must actually make Claude skip the item — so it is enforced at the
-// real source of truth, never a cosmetic flag:
-//   · skills/commands/agents/rules → rename the discovered file to `<file>.off` (Claude only loads a skill
-//     when SKILL.md exists; an agent/command/rule when its .md exists). Reversible, backed up on the way in.
-//   · mcp     → park the server config in `_disabledMcpServers` in ~/.claude.json (out of `mcpServers` = off).
-//   · plugins → the native `enabledPlugins` boolean in settings.json.
-//   · hooks   → move the matcher entry between `settings.hooks[event]` and `settings._disabledHooks[event]`.
-function customizeRes(kind) { // skills/commands/agents
+function customizeRes(kind) {
   const out = []
   const add = (scope, name, enabled, file) => {
     const content = fs.readFileSync(file, 'utf8')
@@ -497,7 +413,6 @@ function customizeRes(kind) { // skills/commands/agents
         else if (fs.existsSync(live + OFF)) add(scope, e.name, false, live + OFF)
       }
     } else {
-      // Disabled items keep their .md.off suffix, so both states come back from one walk.
       for (const { name, file, enabled } of walkFlatKind(dir)) add(scope, name, enabled, file)
     }
   }
@@ -553,12 +468,10 @@ function customizeAll() {
 }
 app.get('/api/customize', (req, res) => { try { res.json(customizeAll()) } catch (e) { res.status(500).json({ error: e.message }) } })
 
-// toggle one item on/off at its real source of truth. { kind, scope, name, enable, ref }
 app.post('/api/customize/toggle', (req, res) => {
   try {
     const { kind, scope, name, enable, ref } = req.body
     if (kind === 'skills' || kind === 'commands' || kind === 'agents') {
-      // itemFile(), not a hand-built path — it is what maps `sc:implement` onto sc/implement.md.
       const live = safe(itemFile(kind, scopeDir(kind, scope), name))
       return res.json(toggleOffFile(live, enable))
     }
@@ -667,12 +580,8 @@ app.delete('/api/artifacts', (req, res) => {
 const META_FILE = path.join(CLAUDE, 'dashboard-meta.json')
 const readMeta = () => { try { return JSON.parse(fs.readFileSync(META_FILE, 'utf8')) } catch { return { tags: {} } } }
 const writeMeta = m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2))
-// /api/pricing — the model rate table, seeded from lib/pricing.mjs and overridable per user.
-// Mounted here rather than with the other modules above because it reads the stored table at
-// mount time and readMeta/writeMeta are declared on the two lines above this one. onChange
-// drops the per-file usage cache: every cached `cost` in it was computed with the old rates.
 mountPricing(app, { readMeta, writeMeta, onChange: () => usageCache.clear() })
-const tokens = s => Math.ceil((s || '').length / 4) // ~4 chars/token heuristic
+const tokens = s => Math.ceil((s || '').length / 4)
 
 function scoreItem(fm, body, kind) {
   // ponytail: static-analysis heuristic, not an LLM judge — upgrade to an eval harness if scores need to be trusted
@@ -691,7 +600,7 @@ function scoreItem(fm, body, kind) {
   if (/^#{1,3} /m.test(body)) s += 10
   if (/```/.test(body) || /^\s*[-*] /m.test(body)) s += 10
   if (kind === 'commands' && /\$ARGUMENTS/.test(body)) s += 5
-  if (words > 4000) s -= 10 // context hog when invoked
+  if (words > 4000) s -= 10
   return Math.max(0, Math.min(100, s))
 }
 const levelOf = s => (s >= 90 ? 'perfect' : s >= 70 ? 'excellent' : s >= 45 ? 'good' : 'poor')
@@ -713,9 +622,6 @@ function groupOf(name, kind) {
 function overviewItems() {
   const meta = readMeta()
   const items = []
-  // Read once and share across every capability: which MCP servers exist (to resolve declared
-  // dependencies) and the user settings (a framework's own plugin entry corroborates, but never
-  // by itself establishes, that a given file came from it).
   let installedMcp = [], userSettings = null
   try { installedMcp = Object.keys(readClaudeJson().mcpServers || {}) } catch {}
   try { userSettings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8')) } catch {}
@@ -728,25 +634,18 @@ function overviewItems() {
         const content = fs.readFileSync(file, 'utf8')
         const { fm, body } = parseFM(content)
         const score = scoreItem(fm, body, kind)
-        // mtime is a lower bound on age — editing resets it — but that errs toward withholding a
-        // DEAD verdict rather than inventing one for a capability installed this morning.
         let mtime = null
         try { mtime = fs.statSync(file).mtimeMs } catch {}
-        // Provenance, frontmatter health and declared dependencies, all off the one read.
         const origin = detectFramework(file, fm, content, { kind, settings: userSettings })
         const lint = lintFrontmatter(content, { file, kind })
         const deps = declaredDependencies(fm)
         const depCheck = deps.declared ? checkDependencies(deps, { mcpServers: installedMcp }) : null
         push(kind, name, {
           scope, group: groupOf(name, kind), mtime,
-          descTokens: tokens(String(fm.description || '')), // always in context (metadata listing)
-          fullTokens: tokens(content),                       // loaded when invoked
+          descTokens: tokens(String(fm.description || '')),
+          fullTokens: tokens(content),
           score, level: levelOf(score), specificity: specificityOf(fm, kind),
-          // null means "we could not attribute this", not "the user wrote it" — the ledger
-          // renders it as unattributed rather than claiming authorship either way.
           origin: origin ? { framework: origin.framework, confidence: origin.confidence, basis: origin.basis } : null,
-          // A file whose frontmatter does not parse still runs; it is just invisible to the
-          // selector, which is a far quieter failure than a crash and worth surfacing.
           fm: { ok: lint.ok, findings: lint.findings },
           deps: deps.declared ? { mcpServers: deps.mcpServers, agents: deps.agents, missing: depCheck?.missing?.mcpServers ?? null } : null,
         })
@@ -776,7 +675,7 @@ function overviewItems() {
 app.get('/api/overview', (req, res) => res.json({ items: overviewItems() }))
 
 app.put('/api/tags', (req, res) => {
-  const { key, tags: t } = req.body // key = "<kind>:<name>"
+  const { key, tags: t } = req.body
   const meta = readMeta()
   meta.tags = meta.tags || {}
   if (t?.length) meta.tags[key] = t
@@ -786,7 +685,7 @@ app.put('/api/tags', (req, res) => {
 })
 
 // ---------- usage: parsed from session transcripts (per-file mtime cache) ----------
-const usageCache = new Map() // file -> {mtime, size, entries, lines, tools, out, msgs, toolCalls}
+const usageCache = new Map()
 function collectUsage() {
   const base = path.join(CLAUDE, 'projects')
   const files = []
@@ -797,15 +696,10 @@ function collectUsage() {
     const st = fs.statSync(f)
     const proj = path.relative(base, f).split(path.sep)[0]
     let rec = usageCache.get(f)
-    if (!rec || rec.v !== 4 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      // v2: also keeps cwd + gitBranch + per-file $ / token / span totals (session ledger + /api/roi)
-      // v3: dedups streamed turns by message.id (see below) — v2 caches over-count and must be rebuilt
-      // v4: splits cache-creation into its 5m/1h tiers and prices them at their real, different
-      //     rates — a v3 cache holds costs computed with one rate for both and understates them
-      rec = { v: 4, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
+    if (!rec || rec.v !== 5 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      rec = { v: 5, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {}, name: null, nameSource: null }
       try {
-        // Streamed turns repeat across records sharing one message.id — dedupeTurns() keeps the
-        // last of each. Collected first, folded into the totals below.
+        const nameAcc = {}
         const records = []
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (line.includes('"usage"')) {
@@ -818,12 +712,6 @@ function collectUsage() {
               if (Array.isArray(j.message.content))
                 for (const c of j.message.content) if (c.type === 'tool_use') { tc++; tools[c.name] = (tools[c.name] || 0) + 1 }
               const t = Date.parse(j.timestamp)
-              // Cache creation is two products at two prices: the 5-minute tier costs 1.25x
-              // input, the 1-hour tier 2x. The flat cache_creation_input_tokens throws that
-              // away, so read the nested breakdown and keep both. `cc` stays the total, which
-              // is what the 17 other collectUsage() readers want and what the flat field
-              // always meant (verified: flat === 5m + 1h on 31,162 of 31,162 records).
-              // splitCacheWrite() owns the absent-breakdown fallback and counts it.
               const { cc5, cc1h } = splitCacheWrite(u.cache_creation_input_tokens, u.cache_creation?.ephemeral_5m_input_tokens, u.cache_creation?.ephemeral_1h_input_tokens)
               const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cc5, cc1h, cr: u.cache_read_input_tokens || 0, tc }
               records.push({ id: j.message?.id, e, tools, cwd: j.cwd || '', br: j.gitBranch || '' })
@@ -838,8 +726,14 @@ function collectUsage() {
               if (add + del) rec.lines.push({ t: Date.parse(j.timestamp), proj, add, del })
             } catch {}
           }
+          if (line.includes('"customTitle"') || line.includes('"aiTitle"')) {
+            try { foldNameLine(nameAcc, JSON.parse(line)) } catch {}
+          } else if (!nameAcc.prompt && line.includes('"type":"user"')) {
+            try { foldNameLine(nameAcc, JSON.parse(line)) } catch {}
+          }
         }
-        // Fold the deduped turns into the file totals.
+        rec.name = sessionName(nameAcc)
+        rec.nameSource = nameSource(nameAcc)
         for (const { e, tools, cwd, br } of dedupeTurns(records)) {
           rec.entries.push(e)
           rec.out += e.out; rec.in += e.in; rec.cc += e.cc; rec.cr += e.cr; rec.msgs++; rec.toolCalls += e.tc
@@ -859,44 +753,23 @@ function collectUsage() {
     all.files.push({
       path: f, proj, isAgent: f.includes('subagents'), mtime: st.mtimeMs, out: rec.out, msgs: rec.msgs, toolCalls: rec.toolCalls,
       in: rec.in, cc: rec.cc, cr: rec.cr, cost: rec.cost, subagentCost: 0, first: rec.first, last: rec.last, cwd: rec.cwd, branches: rec.branches,
-      entries: rec.entries,
+      entries: rec.entries, name: rec.name, nameSource: rec.nameSource,
     })
   }
   all.unattributedAgentCost = rollUpSubagents(all.files)
   all.entries.sort((a, b) => a.t - b.t)
   return all
 }
-// A subagent transcript lives at <project>/<parentSessionId>/subagents/<id>.jsonl, so its
-// parent session is the directory name above `subagents` — derivable from the path alone, no
-// .meta.json read, no toolUseId lookup. Measured on this machine: 567 of 567 subagent
-// transcripts resolve to a parent transcript that exists.
 const parentSessionPath = p => {
   const parts = p.split(path.sep)
   const i = parts.lastIndexOf('subagents')
   return i < 1 ? null : [...parts.slice(0, i - 1), parts[i - 1] + '.jsonl'].join(path.sep)
 }
-// A subagent's tokens were spent by the session that spawned it, so they belong in that
-// session's spend. They were not: everything reading `all.entries` counted them (the global
-// KPI) and everything reading `all.files` dropped them via `!f.isAgent` (every per-session
-// row) — 47.6% of usage records, so the headline total and the sum of the rows under it
-// disagreed on the same screen, silently, with no third number to say why.
-//
-// This folds each agent file's spend into its parent and leaves the agent file in place, still
-// flagged. `!f.isAgent` keeps doing its real job — not listing a subagent as a session of its
-// own — without that filter also meaning "and forget what it cost". `subagentCost` carries the
-// rolled-up part separately so a row can show "incl. $X in subagents" rather than a total that
-// silently grew. Deepest paths first, so a nested subagent reaches its grandparent.
-//
-// Only the spend and the token counts it is computed from move. `msgs`, `toolCalls`,
-// `entries`, `first`/`last` and `branches` describe the conversation in that transcript, not
-// its cost, and stay where they are.
 function rollUpSubagents(files) {
   const byPath = new Map(files.map(f => [f.path, f]))
   let unattributed = 0
   for (const f of [...files].filter(f => f.isAgent).sort((a, b) => b.path.length - a.path.length)) {
     const parent = byPath.get(parentSessionPath(f.path))
-    // No parent transcript on disk: say so rather than pick one. An explicit gap in the
-    // payload beats a session row that quietly absorbed someone else's bill.
     if (!parent) { unattributed += f.cost; continue }
     parent.subagentCost += f.cost
     parent.cost += f.cost
@@ -904,8 +777,6 @@ function rollUpSubagents(files) {
   }
   return unattributed
 }
-// est. $ saved by prompt caching: cache reads cost ~10% of input price → 90% saved
-// PRICE_PER_M / isPriced / entryCost / dedupeTurns live in lib/pricing.mjs — see the notes there.
 const HOUR = 3600_000, BLOCK = 5 * HOUR
 app.get('/api/usage', (req, res) => {
   const { entries, lineEvents, toolTotals, files, unattributedAgentCost } = collectUsage()
@@ -914,7 +785,6 @@ app.get('/api/usage', (req, res) => {
     const m = (perModel[e.model] ||= { msgs: 0, out: 0, in: 0, cache: 0 })
     m.msgs++; m.out += e.out; m.in += e.in; m.cache += e.cc + e.cr
   }
-  // 5h billing blocks: start hour-floored at first activity, next block at first activity after previous end
   let blockStart = null, active = null
   for (const e of entries) {
     if (blockStart === null || e.t >= blockStart + BLOCK) blockStart = Math.floor(e.t / HOUR) * HOUR
@@ -928,7 +798,6 @@ app.get('/api/usage', (req, res) => {
     }
     active = { start: blockStart, end: blockStart + BLOCK, byModel, msgs: blockEntries.length, out: blockEntries.reduce((s, e) => s + e.out, 0), in: blockEntries.reduce((s, e) => s + e.in + e.cc, 0) }
   }
-  // daily series (126 days = 18 weeks, for heatmap + sparklines) + streak
   const dayOf = t => new Date(t).toISOString().slice(0, 10)
   const daily = {}
   for (const e of entries) { const d = (daily[dayOf(e.t)] ||= { out: 0, msgs: 0, tools: 0, lines: 0 }); d.out += e.out; d.msgs++; d.tools += e.tc }
@@ -943,18 +812,14 @@ app.get('/api/usage', (req, res) => {
   for (let i = 0; ; i++) {
     const d = dayOf(Date.now() - i * 24 * HOUR)
     if (daily[d]) streak++
-    else if (i === 0) continue // today idle doesn't break the streak
+    else if (i === 0) continue
     else break
   }
-  // KPI extras
   const now = Date.now(), d7 = now - 7 * 24 * HOUR, d30 = now - 30 * 24 * HOUR
   const todayKey = dayOf(now)
   let lines7Add = 0, lines7Del = 0
   for (const l of lineEvents) if (l.t >= d7) { lines7Add += l.add; lines7Del += l.del }
-  // Priced at the rate in effect on the day of the entry, not today's — e.t is passed so an
-  // introductory rate that has since lapsed is still applied to the days it covered.
   const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * (PRICE_PER_M(e.model, e.t) || 0) * 0.9, 0)
-  // Models we saw traffic for but hold no rate for — every $ figure below excludes them.
   const unpricedModels = [...new Set(entries.filter(e => !isPriced(e.model)).map(e => e.model))]
   const sessions30 = files.filter(f => !f.isAgent && f.mtime >= d30).length
   const projNames = {}
@@ -963,7 +828,6 @@ app.get('/api/usage', (req, res) => {
     .map(f => ({ sessionId: path.basename(f.path, '.jsonl'), proj: projNames[f.proj] || f.proj.split('-').pop(), mtime: f.mtime, out: f.out, msgs: f.msgs, toolCalls: f.toolCalls }))
   const tools = Object.entries(toolTotals).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([name, count]) => ({ name, count }))
   const hiddenPerTurn = HARNESS_DEFAULTS.context.alwaysLoadedBudget.systemPrompt + HARNESS_DEFAULTS.context.alwaysLoadedBudget.toolDefs
-  // cache TTL waste + daily anomalies + month-end projection — all pure trend reads over `entries`
   const { map: cacheMap, sortedDates: cacheDates } = buildDailyCacheMap(entries)
   const rollingEff = rollingCacheEfficiency(cacheMap, cacheDates)
   const waste = cacheWasteCost(entries, entryCacheRates, rollingEff.bestEffPct / 100)
@@ -975,9 +839,6 @@ app.get('/api/usage', (req, res) => {
   res.json({
     perModel, activeBlock: active, totalMsgs: entries.length, since: entries[0]?.t || null,
     daily: series, streak, activeDays: days.length, tools, recentSessions, unpricedModels,
-    // Subagent spend that could not be traced back to a parent session, so it is in the global
-    // total but in no session row. 0 on this machine; a non-zero value is the gap made visible
-    // rather than a row quietly inheriting it.
     unattributedAgentCost,
     health: computeUsageHealth(entries, entryCost, hiddenPerTurn, now),
     regression: computeRegression(entries, now),
@@ -992,9 +853,6 @@ app.get('/api/usage', (req, res) => {
   })
 })
 
-// Both endpoints below re-read every matching transcript on each request, and they are polled.
-// The tailer's parse cache is keyed on (mtime, size) and LRU-bounded, so an unchanged file is
-// parsed once and reused; only files that actually grew get re-read.
 const analysisTailer = createTailer({ maxCachedFiles: 256 })
 function transcriptsSince(since) {
   const base = path.join(CLAUDE, 'projects')
@@ -1003,34 +861,24 @@ function transcriptsSince(since) {
   walk(base)
   return { base, files }
 }
-// Returns parsed records plus how many lines could not be parsed, so a caller can report that
-// rather than quietly analysing a subset.
 async function parsedRecords(file) {
   const r = await analysisTailer.read(file)
   return r.ok ? { records: r.records, malformed: r.malformed?.length || 0, cached: r.cached } : { records: [], malformed: 0, cached: false, error: r.error }
 }
 
 // ---------- worktrees ----------
-// Which worktree an agent run actually executed in. This dashboard already knows each session's
-// recorded cwd, so it can answer that; the tool this idea came from cannot, because a worktree
-// cannot self-report from inside itself.
 app.get('/api/worktrees', async (req, res) => {
   try {
     const repo = path.resolve(String(req.query.repo || PROJECT))
     const list = await listWorktrees(repo)
     if (list.status !== 'ok') {
-      // Not an empty list: "we could not look" and "there are none" are different answers and
-      // the endpoint refuses to collapse them.
       return res.json({ repo, status: list.status, code: list.code, reason: list.reason, worktrees: null, sessions: [] })
     }
-    // Attribute recent sessions to a worktree by their recorded cwd.
     const { files } = collectUsage()
     const sessions = files.filter(f => !f.isAgent && f.cwd).slice(0, 200).map(f => {
       const wt = attributeSession(f.cwd, list.worktrees)
       return {
         sessionId: path.basename(f.path, '.jsonl'), cwd: f.cwd, mtime: f.mtime, msgs: f.msgs, cost: f.cost,
-        // null means the cwd matched no worktree — usually a session in a different repo, and
-        // reported as unattributed rather than forced into the closest match.
         worktree: wt ? { path: wt.path, branch: wt.branchName || wt.branch || null, detached: !!wt.detached } : null,
       }
     })
@@ -1041,25 +889,18 @@ app.get('/api/worktrees', async (req, res) => {
 })
 
 // ---------- security findings ----------
-// Reads a claudecode-results.json produced by the security-review action. The artifact has a
-// 7-day retention on GitHub, so this takes a path: fetching it is a CI wiring decision, not
-// something to guess at here.
 app.get('/api/security/findings', (req, res) => {
   try {
     const file = req.query.file ? path.resolve(String(req.query.file)) : null
     if (!file) return res.status(400).json({ error: 'file required — path to a claudecode-results.json artifact' })
     if (!fs.existsSync(file)) return res.status(404).json({ error: 'not found: ' + file })
     const parsed = parseResultsJson(fs.readFileSync(file, 'utf8'))
-    // Re-run the exclusion rules locally over the KEPT findings so a user can see what the
-    // vendor's filter would have dropped, independent of what it actually dropped.
     const filtered = applyFilters(parsed.findings || [], {})
     res.json({ file, ...parsed, localFilter: filtered, rules: hardExclusionRules().map(r => ({ id: r.id, reason: r.reason })) })
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
 
 // ---------- session events ----------
-// Readable rows for one session's tool calls. summarizeToolCall never echoes input VALUES, so a
-// token in a Bash command cannot reach this response.
 app.get('/api/session/events', async (req, res) => {
   try {
     const id = String(req.query.session || '')
@@ -1074,8 +915,6 @@ app.get('/api/session/events', async (req, res) => {
 })
 
 // ---------- lessons ----------
-// Proposals derived from what actually happened, never invented. Every proposal cites the record
-// uuids that produced it; deriveLessons drops anything ungrounded before it can be returned.
 app.get('/api/lessons', async (req, res) => {
   try {
     const days = Math.min(90, Number(req.query.days) || 14)
@@ -1097,9 +936,6 @@ app.get('/api/lessons', async (req, res) => {
 })
 
 // ---------- design map ----------
-// lib/design-map.mjs has had no endpoint since it was added, so nothing could call it. It maps a
-// design-system repo's components to their Figma nodes by harvesting story files, and flags
-// collisions where two stories claim the same node.
 app.get('/api/design-map', (req, res) => {
   try {
     const dsRepo = path.resolve(String(req.query.repo || ''))
@@ -1113,8 +949,6 @@ app.get('/api/design-map', (req, res) => {
       summary: {
         total: rows.length,
         mapped: rows.filter(r => r.figma).length,
-        // Unmapped is a real state worth counting, not an error: it means the component exists
-        // in code and no story claims a Figma node for it.
         unmapped: rows.filter(r => !r.figma).length,
         collisions: rows.filter(r => r.evidence?.collisionWith?.length).length,
       },
@@ -1124,10 +958,6 @@ app.get('/api/design-map', (req, res) => {
 })
 
 // ---------- freeze audit ----------
-// Which stack tags a checkout actually warrants. Without this every repo fails the checks
-// belonging to stacks it does not use — and the audit's whole value is that its failures are
-// worth reading. Detection is deliberately evidence-based and reported back, so a wrong tag is
-// visible rather than silently reshaping the result.
 function detectStacks(dir) {
   const stacks = new Set(), because = {}
   const mark = (tag, why) => { stacks.add(tag); (because[tag] ||= []).push(why) }
@@ -1154,8 +984,6 @@ app.get('/api/gov/freeze-audit', async (req, res) => {
     const dir = path.resolve(String(req.query.project || PROJECT))
     if (!fs.existsSync(dir)) return res.status(404).json({ error: 'project not found: ' + dir })
     const detected = detectStacks(dir)
-    // An explicit ?stacks= overrides detection, so a user who knows better than the heuristic
-    // can say so rather than arguing with it.
     const declared = req.query.stacks != null ? String(req.query.stacks).split(',').map(t => t.trim()).filter(Boolean) : detected.stacks
     const ticked = readMeta().freezeAuditTicked?.[dir] || []
     const audit = await auditRepo(dir, { stacks: declared, ticked })
@@ -1163,8 +991,6 @@ app.get('/api/gov/freeze-audit', async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
 
-// Human ticks for the items no machine can decide. Stored per project; they can lift a `manual`
-// item out of the blocker list and deliberately cannot touch a `fail` or an `unknown`.
 app.put('/api/gov/freeze-audit/tick', (req, res) => {
   try {
     const dir = path.resolve(String(req.body?.project || PROJECT))
@@ -1181,9 +1007,6 @@ app.put('/api/gov/freeze-audit/tick', (req, res) => {
 })
 
 // ---------- prompt complexity ----------
-// What tier of work you are actually asking for, scored offline from the prompt text. The
-// intended payoff is spotting expensive models doing cheap work — but the thresholds are not
-// calibrated yet, so this reports a distribution and says so rather than costing it out.
 app.get('/api/complexity', async (req, res) => {
   const days = Math.min(90, Number(req.query.days) || 7)
   const since = Date.now() - days * 24 * 3600_000
@@ -1210,9 +1033,6 @@ app.get('/api/complexity', async (req, res) => {
   res.json({
     days, turns: turns.length, turnCap: MAX_TURNS, capped, unparsableLines: unparsable,
     distribution: tierDistribution(results),
-    // Boundaries are now fitted, but to a 21-prompt hand-labelled set (see
-    // test/fixtures/complexity-labelled.mjs) — not to user-confirmed ground truth. Say which,
-    // rather than letting "calibrated" imply more than was actually done.
     calibrated: true,
     calibration: { method: 'fitted to a hand-labelled fixture set', sampleSize: 21, fixture: 'test/fixtures/complexity-labelled.mjs' },
     caveat: 'Boundaries are fitted to 21 hand-labelled prompts, not to user-confirmed ground truth. Tier counts are directional; disagree with a label and the fixture is where to change it.',
@@ -1220,8 +1040,6 @@ app.get('/api/complexity', async (req, res) => {
 })
 
 // ---------- error taxonomy ----------
-// Groups recent failures by cause. The point is the distinction the raw transcript loses: a
-// rate limit and a broken tool call both look like "an error" until something classifies them.
 app.get('/api/errors', async (req, res) => {
   const days = Math.min(90, Number(req.query.days) || 7)
   const since = Date.now() - days * 24 * 3600_000
@@ -1253,22 +1071,13 @@ app.get('/api/errors', async (req, res) => {
   const groups = Object.values(byCategory).sort((a, b) => b.count - a.count)
   res.json({
     days, scanned, groups, samples, unparsableLines: unparsable,
-    // Say what was left out rather than presenting a capped list as the whole picture.
     sampleCap: MAX_SAMPLES, samplesCapped: capped,
-    // Only tool-level errors are visible in transcripts; provider API errors are not recorded
-    // here, so this is a view of one class of failure, not of everything that can go wrong.
     scope: 'tool-level errors recorded in transcripts; provider API errors are not captured here',
   })
 })
 
 // ---------- live board ----------
-// "What is happening right now", derived from transcripts alone. The hook receiver sharpens
-// mid-turn accuracy when installed, but this must work without it — a dashboard that only
-// lights up once hooks are configured is a dashboard most people never see working.
-const LIVE_TAIL_BYTES = 64 * 1024 // enough for the last few records of any real session
-// Reads only the end of a transcript. A session file grows without bound and the board polls
-// every couple of seconds, so parsing whole files here would make the cheapest screen the most
-// expensive one.
+const LIVE_TAIL_BYTES = 64 * 1024
 function lastSignals(file, size) {
   const out = { lastEventType: null, lastContentTypes: null, permissionMode: null, lastTurn: null, stopReason: null }
   let fd
@@ -1278,13 +1087,12 @@ function lastSignals(file, size) {
     const buf = Buffer.alloc(Math.min(size, LIVE_TAIL_BYTES))
     fs.readSync(fd, buf, 0, buf.length, start)
     const lines = buf.toString('utf8').split('\n')
-    if (start > 0) lines.shift() // first line is a fragment when we did not start at byte 0
+    if (start > 0) lines.shift()
     for (let i = lines.length - 1; i >= 0; i--) {
       const raw = lines[i].trim()
       if (!raw) continue
       let j
       try { j = JSON.parse(raw) } catch { continue }
-      // Walking backwards, the first record of each kind wins — later records are newer.
       out.lastEventType ??= j.type || null
       out.permissionMode ??= j.permissionMode || null
       out.stopReason ??= j.stopReason || null
@@ -1295,7 +1103,7 @@ function lastSignals(file, size) {
         out.lastTurn = { model: j.message.model, in: u.input_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0 }
       if (out.lastEventType && out.lastContentTypes && out.lastTurn) break
     }
-  } catch { /* an unreadable transcript yields nulls, which deriveStatus reports as unknown */ }
+  } catch { }
   finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} }
   return out
 }
@@ -1305,16 +1113,11 @@ app.get('/api/live', (req, res) => {
   const { files } = collectUsage()
   const projNames = {}
   try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
-  // Mid-turn state from the hook receiver, keyed by session id. This is the whole point of the
-  // hook: a transcript is only written at turn boundaries, so between them it says nothing,
-  // while the hook reports each tool call as it starts. Where both have an opinion the fresher
-  // one wins — a hook session left over from a dashboard that has been running for days must
-  // not override what the transcript says happened five seconds ago.
   let hookSessions = new Map()
   try {
     const hv = hooksReceiver.getLiveState?.()
     for (const h of hv?.sessions || []) if (h.sessionIdKnown !== false && h.sessionId) hookSessions.set(h.sessionId, h)
-  } catch { /* the board must render with or without the receiver */ }
+  } catch { }
 
   const sessions = files.filter(f => !f.isAgent && f.msgs > 0).map(f => {
     let size = 0
@@ -1323,15 +1126,11 @@ app.get('/api/live', (req, res) => {
     const label = projNames[f.proj] || f.proj.split('-').pop()
     const sessionId = path.basename(f.path, '.jsonl')
     const hook = hookSessions.get(sessionId) || null
-    // Only let the hook speak for a session it has seen more recently than the transcript was
-    // written; otherwise the transcript is the better evidence.
     const hookIsFresher = hook && Number(hook.lastSeen) > f.mtime
     const session = { sessionId, label, cwd: f.cwd, lastEventAt: hookIsFresher ? Number(hook.lastSeen) : f.mtime, ...sig }
     return {
       ...session,
       status: deriveStatus(session, now),
-      // Reported separately rather than folded into status, so the UI can show what the agent
-      // is doing right now without the board claiming the transcript said it.
       live: hookIsFresher
         ? { status: hook.status, since: hook.statusSince, tool: hook.currentTool?.name || null, toolInputKeys: hook.currentTool?.inputKeys || null, agents: hook.agents?.length || 0 }
         : null,
@@ -1340,27 +1139,21 @@ app.get('/api/live', (req, res) => {
       msgs: f.msgs, toolCalls: f.toolCalls, cost: f.cost,
     }
   })
-  // Newest first, then collapse: the board answers "what is running", not "what has ever run".
   sessions.sort((a, b) => b.lastEventAt - a.lastEventAt)
   const collapsed = collapseIdle(sessions.map(s => ({ ...s, status: s.status.status })), now)
   const keep = new Set(collapsed.sessions.map(s => s.sessionId))
   res.json({
     now,
     sessions: sessions.filter(s => keep.has(s.sessionId)),
-    // collapseIdle hides rows on purpose; saying how many and why keeps that from reading as
-    // "these are all the sessions there are".
     hidden: collapsed.dropped,
     hiddenReasons: collapsed.reasons,
-    // Whether the sharper mid-turn signal is actually arriving — not whether the module is
-    // mounted. It is always mounted; what matters to a reader is whether hooks are installed
-    // and delivering, which is only true once some session has reported in.
     hookReceiver: (() => { try { return (hooksReceiver.getLiveState?.()?.sessions?.length || 0) > 0 } catch { return false } })(),
   })
 })
 
 // ---------- projects ----------
-const ACTIVE_MS = 5 * 60_000 // transcript touched in last 5 min = running
-const gitCache = new Map() // dir -> {t, commits, langs}
+const ACTIVE_MS = 5 * 60_000
+const gitCache = new Map()
 const LANG_EXT = { ts: 'TypeScript', tsx: 'TypeScript', js: 'JavaScript', jsx: 'JavaScript', mjs: 'JavaScript', py: 'Python', go: 'Go', rs: 'Rust', rb: 'Ruby', java: 'Java', kt: 'Kotlin', swift: 'Swift', css: 'CSS', scss: 'CSS', vue: 'Vue', php: 'PHP', dart: 'Dart', md: 'Markdown', sh: 'Shell' }
 function repoInfo(dir) {
   const c = gitCache.get(dir)
@@ -1391,7 +1184,7 @@ app.get('/api/projects', (req, res) => {
   }
   for (const l of lineEvents) { const p = byProj[l.proj]; if (p) { p.add += l.add; p.del += l.del } }
   const now = Date.now(), base = path.join(CLAUDE, 'projects')
-  const mangle = dir => dir.replace(/[\\/:._]/g, '-') // Claude Code transcript-dir naming
+  const mangle = dir => dir.replace(/[\\/:._]/g, '-')
   const listDir = (p, nested) => { try { return fs.readdirSync(p, { withFileTypes: true }).filter(e => (nested ? e.isDirectory() : e.name.endsWith('.md'))).map(e => (nested ? e.name : e.name.replace(/\.md$/, ''))) } catch { return [] } }
   const out = []
   for (const dir of Object.keys(cj.projects || {})) {
@@ -1401,7 +1194,7 @@ app.get('/api/projects', (req, res) => {
     walkT(tdir)
     let mcp = Object.keys(cj.projects[dir]?.mcpServers || {})
     try { mcp = [...new Set([...mcp, ...Object.keys(JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8')).mcpServers || {})])] } catch {}
-    let progress = null // GSD roadmap checkboxes, if the project uses .planning/
+    let progress = null
     try {
       const rm = fs.readFileSync(path.join(dir, '.planning', 'ROADMAP.md'), 'utf8')
       const done = (rm.match(/^\s*- \[x\]/gim) || []).length, open = (rm.match(/^\s*- \[ \]/gm) || []).length
@@ -1413,8 +1206,6 @@ app.get('/api/projects', (req, res) => {
     out.push({
       path: dir, name: path.basename(dir), exists, current: dir === PROJECT,
       sessions, running, runningAgents, progress, mcp,
-      // How this project's tests are run, detected from markers on disk. null means we could
-      // not tell — which is different from "it has no tests", and is shown as such.
       test: exists ? (() => { try { return detectTestCommand(dir) } catch { return null } })() : null,
       commits: info.commits, langs: info.langs,
       skills: listDir(path.join(dir, '.claude', 'skills'), true),
@@ -1429,9 +1220,7 @@ app.get('/api/projects', (req, res) => {
 
 // ---------- chat: live claude sessions ----------
 // ponytail: sessions live in server memory — a dashboard restart orphans the view, but the
-// CLI session persists on disk and can be resumed. Add persistence if that ever hurts.
-const chats = new Map() // chatId -> {child, cwd, sessionId, alive, events: [], listeners: Set<res>}
-// Force execution plans into a machine-parseable DAG so the dashboard can render them (see src/PlanGraph.jsx).
+const chats = new Map()
 const PLAN_SCHEMA_RULE = `When asked to create an execution plan, you MUST output a JSON array inside a \`\`\`json code block — not a markdown list. Every element uses exactly this schema:
 {"step_id": 1, "description": "short action", "dependencies": [], "expected_skill": [], "active_rules": [], "mcp_server": null, "tool_to_call": "Edit", "expected_params": {"name": "value or 'TBD based on step N'"}}
 dependencies is an array of step_ids that must finish first. Use null/[] where a field does not apply. This rule applies only when an execution plan is requested; answer normally otherwise.`
@@ -1440,7 +1229,6 @@ function chatBroadcast(chat, ev) {
   const line = `data: ${JSON.stringify(ev)}\n\n`
   for (const l of chat.listeners) l.write(line)
 }
-// past conversation history from the on-disk transcript (resumed CLI sessions emit nothing until the first new message)
 const readTranscript = (file, parentId) => {
   const out = []
   try {
@@ -1458,8 +1246,6 @@ const readTranscript = (file, parentId) => {
 function historyEvents(cwd, sessionId) {
   const dir = path.join(CLAUDE, 'projects', mangle(cwd))
   const main = readTranscript(path.join(dir, sessionId + '.jsonl')).slice(-200)
-  // stitch in subagent transcripts (stored under <sessionId>/subagents/, linked by meta.toolUseId)
-  // so resumed sessions show what each subagent actually did, nested under its Task node
   const taskIds = new Set()
   for (const e of main) if (e.type === 'assistant' && Array.isArray(e.message?.content))
     for (const c of e.message.content) if (c.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent')) taskIds.add(c.id)
@@ -1467,7 +1253,7 @@ function historyEvents(cwd, sessionId) {
     const subDir = path.join(dir, sessionId, 'subagents')
     for (const meta of fs.readdirSync(subDir).filter(f => f.endsWith('.meta.json'))) {
       let link; try { link = JSON.parse(fs.readFileSync(path.join(subDir, meta), 'utf8')) } catch { continue }
-      if (!taskIds.has(link.toolUseId)) continue // only stitch children whose Task node is in view
+      if (!taskIds.has(link.toolUseId)) continue
       main.push(...readTranscript(path.join(subDir, meta.replace('.meta.json', '.jsonl')), link.toolUseId))
     }
   } catch {}
@@ -1483,7 +1269,7 @@ app.post('/api/chat', (req, res) => {
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', PLAN_SCHEMA_RULE]
   if (resume) args.push('--resume', resume)
   if (model) args.push('--model', model)
-  const child = spawn('claude', args, { cwd, env: process.env, shell: WIN }) // shell resolves claude.cmd on Windows
+  const child = spawn('claude', args, { cwd, env: process.env, shell: WIN })
   const id = Math.random().toString(36).slice(2, 10)
   const chat = { child, cwd, resume: resume || null, model: model || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
   chats.set(id, chat)
@@ -1512,7 +1298,7 @@ app.get('/api/chat/:id/events', (req, res) => {
   const chat = chats.get(req.params.id)
   if (!chat) return res.status(404).json({ error: 'no such chat' })
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
-  res.write(': connected\n\n') // flush headers even when no events yet
+  res.write(': connected\n\n')
   for (const ev of chat.events) res.write(`data: ${JSON.stringify(ev)}\n\n`)
   chat.listeners.add(res)
   req.on('close', () => chat.listeners.delete(res))
@@ -1523,9 +1309,7 @@ app.post('/api/chat/:id/message', (req, res) => {
   if (!chat.alive) return res.status(410).json({ error: 'session ended' })
   const content = (req.body.images || []).slice(0, 20).map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))
   content.push({ type: 'text', text: req.body.text })
-  chatBroadcast(chat, { type: 'user', message: { role: 'user', content } }) // echo the CLEAN text to viewers
-  // L1 grounding: prepend top curated-memory hits to the MODEL's copy only, and ask it to cite them.
-  // Guarded: never fails the turn; curated memory only (self-authored, high-signal); off if no hits.
+  chatBroadcast(chat, { type: 'user', message: { role: 'user', content } })
   let modelContent = content
   try {
     const hits = req.body.text ? retrieveContext(req.body.text, mangle(chat.cwd)) : []
@@ -1538,22 +1322,20 @@ app.post('/api/chat/:id/message', (req, res) => {
   chat.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: modelContent } }) + '\n')
   res.json({ ok: true })
 })
-// autocomplete for the chat input: "/" = slash commands+skills (global + chat project), "@" = project files
 app.get('/api/chat/complete', (req, res) => {
   const cwd = req.query.cwd && fs.existsSync(req.query.cwd) ? req.query.cwd : HOME
   const q = String(req.query.q || '').toLowerCase()
   if (req.query.kind === 'files') {
     const qRaw = String(req.query.q || '')
-    const r = spawnSync('git', ['-C', cwd, 'ls-files', '-co', '--exclude-standard'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 }) // tracked + untracked-not-ignored
+    const r = spawnSync('git', ['-C', cwd, 'ls-files', '-co', '--exclude-standard'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 })
     if (r.status === 0 && r.stdout.toString().trim()) {
       const files = r.stdout.toString().split('\n').filter(Boolean)
       const dirs = new Set()
       for (const f of files) { let d = path.dirname(f); while (d && d !== '.' && d !== '/') { dirs.add(d + '/'); d = path.dirname(d) } }
       const match = [...dirs, ...files].filter(f => f.toLowerCase().includes(q))
-      match.sort((a, b) => (b.endsWith('/') - a.endsWith('/')) || a.localeCompare(b)) // folders first
+      match.sort((a, b) => (b.endsWith('/') - a.endsWith('/')) || a.localeCompare(b))
       return res.json(match.slice(0, 25).map(f => ({ name: f })))
     }
-    // not a repo — browse by typed path segment so folders drill down (@dashboard/src/…)
     const slash = qRaw.lastIndexOf('/')
     const dirPart = slash >= 0 ? qRaw.slice(0, slash + 1) : ''
     const namePart = qRaw.slice(slash + 1).toLowerCase()
@@ -1574,7 +1356,6 @@ app.get('/api/chat/complete', (req, res) => {
   scanSkills(path.join(CLAUDE, 'skills'), 'user'); scanSkills(path.join(cwd, '.claude', 'skills'), 'project')
   res.json(out.filter(c => c.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 25))
 })
-// non-image attachments (video, pdf, csv, …): saved to disk, referenced in the message as @path
 app.post('/api/chat/upload', express.raw({ type: '*/*', limit: '300mb' }), (req, res) => {
   const name = path.basename(String(req.query.name || 'file')).replace(/[^\w.-]/g, '_')
   if (!req.body?.length) return res.status(400).json({ error: 'empty upload' })
@@ -1591,8 +1372,6 @@ app.delete('/api/chat/:id', (req, res) => {
 })
 
 // ---------- quick actions: one-shot `claude -p "/cmd"` runs against a chosen project ----------
-// Reuses the chats map + /api/chat/:id/events SSE for streaming; a run is just a chat that
-// exits after one result. Analysis is derived from the run's own stream-json events.
 function analyzeRun(events) {
   const a = { tools: {}, files: new Set(), skills: new Set(), mcp: new Set(), agents: new Set(), cost: null, durationMs: null, turns: null, tokens: null }
   for (const ev of events) {
@@ -1616,8 +1395,6 @@ app.post('/api/actions/run', (req, res) => {
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
   if ([...chats.values()].filter(c => c.alive && c.action).length >= 3) return res.status(429).json({ error: 'max 3 concurrent action runs' }) // ponytail: global cap
   const prompt = args ? `${cmd} ${args}` : cmd
-  // stdin explicitly ignored: an unfed, unclosed pipe makes the CLI wait (sometimes indefinitely)
-  // for stdin that will never come, hanging the run and permanently eating a concurrency slot.
   const child = isCursor
     ? spawn('cursor-agent', ['-p', prompt, '--output-format', 'stream-json', '-f'], { cwd, env: process.env, shell: WIN, stdio: ['ignore', 'pipe', 'pipe'] })
     : spawn('claude', ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'], { cwd, env: process.env, shell: WIN, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -1655,7 +1432,6 @@ app.get('/api/actions', (req, res) =>
   res.json([...chats.entries()].filter(([, c]) => c.action).map(([id, c]) => ({
     id, cwd: c.cwd, alive: c.alive, sessionId: c.sessionId, ...c.action, analysis: c.analysis || null,
   })).sort((a, b) => b.startedAt - a.startedAt)))
-// past sessions on disk for a project (for --resume)
 app.get('/api/chat/sessions', (req, res) => {
   const dir = path.join(CLAUDE, 'projects', String(req.query.cwd || '').replace(/[\\/:._]/g, '-'))
   const out = []
@@ -1718,7 +1494,6 @@ function readInboxes(team) {
   msgs.sort((a, b) => b.ts - a.ts)
   return msgs
 }
-// find a teammate's transcript jsonl under the project transcript dir
 function findTranscript(cwd, agentId, name) {
   const roots = [path.join(CLAUDE, 'projects', mangle(cwd || PROJECT))]
   const wanted = [`agent-${agentId}.jsonl`, `${agentId}.jsonl`, `agent-${name}.jsonl`]
@@ -1738,7 +1513,7 @@ function findTranscript(cwd, agentId, name) {
   for (const r of roots) walk(r, 0)
   return best
 }
-const teamTokCache = new Map() // file -> {mtime,size,tokens,model,lastErr}
+const teamTokCache = new Map()
 function transcriptStats(file) {
   const st = fs.statSync(file)
   let rec = teamTokCache.get(file)
@@ -1820,7 +1595,6 @@ app.get('/api/team/agent', (req, res) => {
   const tr = findTranscript(m.cwd, m.agentId, m.name)
   let events = [], currentTool = null
   if (tr) {
-    // tail: last 256KB is plenty for a live transcript view
     const st = fs.statSync(tr.path)
     const start = Math.max(0, st.size - 256 * 1024)
     const fd = fs.openSync(tr.path, 'r'), buf = Buffer.alloc(st.size - start)
@@ -1844,7 +1618,6 @@ app.get('/api/team/agent', (req, res) => {
   }
   res.json({ transcript: tr?.path || null, events, currentTool })
 })
-// all lead->teammate controls are inbox messages (that IS the team IPC mechanism)
 function inboxAppend(team, to, content) {
   const cfg = readJson(path.join(TEAMS, team, 'config.json'), null)
   if (!cfg) throw Object.assign(new Error('no such team'), { status: 404 })
@@ -1878,9 +1651,6 @@ app.post('/api/team/plan', (req, res) => {
 })
 
 // ---------- harness (scope-based config with inheritance) ----------
-// Real fields (permissions, model, env, hooks) live where Claude Code reads them.
-// Mockup-only concepts (turn policy, context budget, routing) persist under a
-// `harness` namespace in the same settings.json so inheritance is genuine.
 const HARNESS_DEFAULTS = {
   turnPolicy: { maxTurns: 40, stopConditions: ['task done', 'needs input', 'budget hit'], retry: '3x exp backoff (2s->8s)', onError: 'checkpoint + retry', checkpointInterval: 5 },
   context: { windowSize: 200000, compactionThreshold: 0.82, keepTurns: 12, alwaysLoadedBudget: { systemPrompt: 2100, toolDefs: 1700, softCap: 8000 } },
@@ -1933,7 +1703,6 @@ function harnessResolve(scope) {
     return inList('deny') ? 'DENY' : inList('ask') ? 'ASK' : inList('allow') ? 'ALLOW' : null
   }
   const guardrails = GUARDRAIL_DEFS.map(g => ({ ...g, mode: guardMode(g.pattern) || g.dflt, fromConfig: !!guardMode(g.pattern) }))
-  // verification gates: real hooks + harness.verification entries
   const gates = []
   for (const [event, matchers] of Object.entries(settings.hooks || {}))
     for (const m of Array.isArray(matchers) ? matchers : [])
@@ -1941,10 +1710,9 @@ function harnessResolve(scope) {
         gates.push({ name: `${event}${m.matcher ? ' · ' + m.matcher : ''}`, command: String(hk.command || '').slice(0, 80), status: 'hook', kind: 'hook' })
   for (const v of Array.isArray(settings.harness?.verification) ? settings.harness.verification : (Array.isArray(h.verification) ? h.verification : []))
     gates.push({ name: v.name, command: v.command, status: verifyResults.get(scope + '|' + v.name)?.status || 'manual', kind: 'gate' })
-  // validation
   const conflicts = []
   for (const [s, f] of [['global', settingsFileFor('global')], [scope, settingsFileFor(scope)]]) {
-    if (s === 'global' && scope !== 'global') {} // still validate both
+    if (s === 'global' && scope !== 'global') {}
     if (!fs.existsSync(f)) continue
     try { JSON.parse(fs.readFileSync(f, 'utf8')) } catch (e) { conflicts.push(`${f}: invalid JSON — ${e.message.slice(0, 60)}`) }
   }
@@ -1953,11 +1721,9 @@ function harnessResolve(scope) {
   for (const d of dupes) conflicts.push(`"${d}" is in both allow and deny`)
   if (h.turnPolicy.maxTurns < 1 || h.turnPolicy.maxTurns > 500) conflicts.push('harness.turnPolicy.maxTurns out of range (1-500)')
   if (h.context.compactionThreshold < 0.3 || h.context.compactionThreshold > 0.98) conflicts.push('harness.context.compactionThreshold out of range (0.3-0.98)')
-  // instructions
   const mdPath = claudeMdFor(scope)
   const md = fs.existsSync(mdPath) ? fs.readFileSync(mdPath, 'utf8') : (scope !== 'global' && fs.existsSync(path.join(scope, '.claude', 'CLAUDE.md')) ? fs.readFileSync(path.join(scope, '.claude', 'CLAUDE.md'), 'utf8') : null)
   const claudeMdTokens = md ? tokens(md) : 0
-  // live context usage: latest transcript entry for this scope's project
   let usedTokens = null
   try {
     const { entries } = collectUsage()
@@ -1966,7 +1732,6 @@ function harnessResolve(scope) {
     const last = rel[rel.length - 1]
     if (last) usedTokens = Math.min(last.in + last.cr, h.context.windowSize)
   } catch {}
-  // health: computed, not stored
   const checks = [
     ['add a deny list', (perms.deny || []).length > 0, 15],
     ['add ask-first rules', (perms.ask || []).length > 0, 10],
@@ -1994,12 +1759,12 @@ function harnessResolve(scope) {
     valid: { ok: conflicts.length === 0, conflicts },
   }
 }
-const verifyResults = new Map() // scope|name -> {status, out, t}
+const verifyResults = new Map()
 app.get('/api/harness', (req, res) => {
   const cj = readJson(CLAUDE_JSON, {})
   const scopes = [{ id: 'global', label: 'Global', path: settingsFileFor('global'), ovCount: 0 }]
   for (const dir of Object.keys(cj.projects || {})) {
-    if (dir === HOME || !fs.existsSync(dir)) continue // HOME's ".claude" IS the global scope
+    if (dir === HOME || !fs.existsSync(dir)) continue
     const pset = readJson(path.join(dir, '.claude', 'settings.json'), null)
     scopes.push({ id: dir, label: path.basename(dir), path: path.join(dir, '.claude', 'settings.json'), ovCount: pset ? leafPaths({ harness: pset.harness, permissions: pset.permissions, model: pset.model, env: pset.env }).length : 0 })
   }
@@ -2036,7 +1801,7 @@ app.put('/api/harness/raw', (req, res) => {
 app.post('/api/harness/verify', (req, res) => {
   const { scope, name, command } = req.body
   const cwd = scope === 'global' ? HOME : scope
-  exec(command, { cwd, timeout: 60000 }, (err, stdout, stderr) => { // exec uses cmd.exe on Windows, sh elsewhere
+  exec(command, { cwd, timeout: 60000 }, (err, stdout, stderr) => {
     const status = err ? 'failing' : 'passing'
     verifyResults.set(scope + '|' + name, { status, t: Date.now() })
     res.json({ status, out: String(stdout || '').slice(-400), err: String(stderr || '').slice(-400) })
@@ -2046,7 +1811,6 @@ app.post('/api/harness/verify', (req, res) => {
 // ---------- project harness hub ----------
 const readIf = p => { try { return fs.readFileSync(p, 'utf8') } catch { return null } }
 const splitSections = src => {
-  // split markdown into heading-anchored blocks for per-block provenance
   const out = []
   let cur = { heading: '(preamble)', text: '' }
   for (const line of (src || '').split('\n')) {
@@ -2237,7 +2001,6 @@ app.get('/api/hub', (req, res) => {
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   res.json(hubResolve(project))
 })
-// session replay: which skills/agents/tools actually fired
 app.get('/api/hub/session', (req, res) => {
   const { project, id } = req.query
   const f = path.join(CLAUDE, 'projects', mangle(String(project || '')), String(id || '') + '.jsonl')
@@ -2262,7 +2025,6 @@ app.get('/api/hub/session', (req, res) => {
   out.skills = [...new Set(out.skills)]
   res.json(out)
 })
-// artifact file read/edit (hub detail) — restricted to ~/.claude and known project dirs
 app.get('/api/hub/file', (req, res) => {
   const p = path.resolve(String(req.query.path || ''))
   const cj = readJson(CLAUDE_JSON, {})
@@ -2287,7 +2049,6 @@ const VERSIONS_FILE = path.join(CLAUDE, 'dashboard-versions.jsonl')
 const APPROVALS_FILE = path.join(CLAUDE, 'dashboard-approvals.json')
 const AUTHOR = os.userInfo().username
 const appendVersion = entry => fs.appendFileSync(VERSIONS_FILE, JSON.stringify(entry) + '\n')
-// tracked write: every config mutation appends an immutable version/audit entry
 function track(file, content, { scope = 'global', summary = '', author = AUTHOR, approvedBy = null } = {}) {
   const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
   fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -2316,12 +2077,11 @@ app.get('/api/gov/versions/:id', (req, res) => {
 app.post('/api/gov/rollback', (req, res) => {
   const v = readVersions().find(x => x.id === req.body.id)
   if (!v) return res.status(404).json({ error: 'no such version' })
-  const target = req.body.to === 'prev' ? v.prev : v.content // roll back TO this version's state (or to before it)
+  const target = req.body.to === 'prev' ? v.prev : v.content
   if (target == null) return res.status(400).json({ error: 'nothing to roll back to' })
   const id = track(v.file, target, { scope: v.scope, summary: `rollback to ${v.id}${req.body.to === 'prev' ? ' (before)' : ''}` })
   res.json({ ok: true, id })
 })
-// approvals: global-scope config changes are proposed, not applied
 const readApprovals = () => readJson(APPROVALS_FILE, [])
 const writeApprovals = a => fs.writeFileSync(APPROVALS_FILE, JSON.stringify(a, null, 2))
 function propose(file, content, summary) {
@@ -2370,7 +2130,7 @@ app.post('/api/gov/dryrun', (req, res) => {
 })
 
 // ---------- failure & retry analytics ----------
-const failCache = new Map() // file -> {mtime,size,toolErrs,toolUses,byHour,turns,compactions,retries,proj,last}
+const failCache = new Map()
 function failStats() {
   const base = path.join(CLAUDE, 'projects')
   const files = []
@@ -2381,11 +2141,6 @@ function failStats() {
     const st = fs.statSync(f)
     let rec = failCache.get(f)
     if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      // v2 (item 9 — session forensics): the walker already had the tool_use→name map, the is_error detector
-      // and the compaction counter; it threw the error TEXT and the result SIZE away. Same loop, now it keeps both.
-      // v3: same story one level down — idName held the tool_use block, which carries the target file_path,
-      // and kept only the tool name. Keeping the path is what lets an error be attributed to a FILE, which is
-      // the whole basis of "which files does the agent keep failing on" (/api/fe/*).
       rec = {
         v: 3, mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0],
         sessionId: path.basename(f, '.jsonl'), file: f,
@@ -2412,7 +2167,6 @@ function failStats() {
                 const fp = c.input && typeof c.input === 'object' ? c.input.file_path || c.input.notebook_path || null : null
                 idName[c.id] = { name: c.name, path: typeof fp === 'string' ? fp : null }
                 rec.toolUses[c.name] = (rec.toolUses[c.name] || 0) + 1
-                // retry = the very next tool call after an error hits the same tool
                 if (first && lastErrTool === c.name) rec.retries++
                 if (first) { lastErrTool = null; first = false }
               }
@@ -2423,10 +2177,9 @@ function failStats() {
                 const call = idName[c.tool_use_id] || null
                 const name = call?.name || '?'
                 const chars = RESULT_TEXT(c).length
-                // (b) context pressure: bytes into context, per tool + the biggest single results
                 rec.bytes[name] = (rec.bytes[name] || 0) + chars
                 const s = (rec.sizes[name] ||= [])
-                if (s.length < 300) s.push(chars) // sample cap — medians only, not a full census
+                if (s.length < 300) s.push(chars)
                 if (chars >= 20000) {
                   rec.big.push({ tool: name, chars, t })
                   if (rec.big.length > 40) { rec.big.sort((a, b) => b.chars - a.chars); rec.big.length = 20 }
@@ -2435,7 +2188,6 @@ function failStats() {
                 rec.toolErrs[name] = (rec.toolErrs[name] || 0) + 1
                 lastErrTool = name
                 if (t) { const d = new Date(t); const k = d.getDay() + ':' + d.getHours(); rec.byHour[k] = (rec.byHour[k] || 0) + 1 }
-                // (a) failure signatures: keep the first 240 chars of the error verbatim + when + how big
                 if (rec.errs.length < 400) rec.errs.push({ t, tool: name, file: call?.path || null, text: RESULT_TEXT(c).replace(/\s+/g, ' ').trim().slice(0, 240), chars })
               }
           } catch {}
@@ -2448,7 +2200,6 @@ function failStats() {
   }
   return out
 }
-// normalized failure signature: strip the varying parts (paths, ids, numbers, quotes) so the same bug groups
 const errSig = (tool, text) => tool + ': ' + text
   .replace(/\/[\w./~-]+/g, '<path>').replace(/\b[0-9a-f]{8,}\b/gi, '<id>').replace(/\b\d+\b/g, '<n>')
   .replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '<str>').replace(/\s+/g, ' ').trim().slice(0, 120)
@@ -2500,7 +2251,6 @@ app.get('/api/gov/trace', (req, res) => {
     } catch {}
   }
   for (let i = 0; i < steps.length; i++) steps[i].latency = steps[i + 1]?.ts && steps[i].ts ? steps[i + 1].ts - steps[i].ts : null
-  // config version active during this session
   const ver = readVersions().filter(v => v.ts <= (firstTs || 0)).pop() || null
   res.json({ steps: steps.slice(0, 400), total: steps.length, startedAt: firstTs, configVersion: ver ? { id: ver.id, summary: ver.summary, file: ver.file, ts: ver.ts } : null })
 })
@@ -2514,7 +2264,7 @@ const DEFAULT_EVALS = [
   { name: 'tool use: filesystem', prompt: 'List the files in the current directory, then reply with the word FS_DONE at the end.', expect: 'FS_DONE' },
 ]
 const evalRuns = () => { try { return fs.readFileSync(EVAL_RUNS, 'utf8').split('\n').filter(Boolean).map(JSON.parse) } catch { return [] } }
-const activeEvals = new Map() // runId -> {status, done, total}
+const activeEvals = new Map()
 app.get('/api/gov/evals', (req, res) => res.json({ tasks: readJson(EVALS_FILE, DEFAULT_EVALS), runs: evalRuns().slice(-40).reverse(), active: [...activeEvals.entries()].map(([id, s]) => ({ id, ...s })) }))
 app.put('/api/gov/evals', (req, res) => { fs.writeFileSync(EVALS_FILE, JSON.stringify(req.body.tasks, null, 2)); res.json({ ok: true }) })
 app.post('/api/gov/evals/run', (req, res) => {
@@ -2550,7 +2300,6 @@ app.post('/api/gov/evals/run', (req, res) => {
 })
 
 // ---------- costs, budgets, alerts ----------
-// price ratios and the unpriced-model rule now live in lib/pricing.mjs
 function costAlerts() {
   const { entries } = collectUsage()
   const today = new Date().toISOString().slice(0, 10)
@@ -2653,7 +2402,6 @@ app.post('/api/gov/bundle/import', (req, res) => {
   if (b.mcp) w('.mcp.json', JSON.stringify(b.mcp, null, 2))
   res.json({ ok: true, written })
 })
-// drift: compare project's current harness vs an agreed baseline bundle
 app.post('/api/gov/baseline', (req, res) => {
   const meta = readMeta()
   ;(meta.baselines ||= {})[req.body.project] = req.body.file
@@ -2666,7 +2414,7 @@ function driftFor(project) {
   if (!bFile) return { baseline: null, drifts: [] }
   const b = readJson(path.join(LIBRARY_DIR, path.basename(bFile)), null)
   if (!b) return { baseline: bFile, error: 'baseline bundle missing', drifts: [] }
-  return { baseline: bFile, provenance: b.provenance, drifts: driftVs(b, project) } // driftVs is shared with the team baseline (item 14)
+  return { baseline: bFile, provenance: b.provenance, drifts: driftVs(b, project) }
 }
 app.get('/api/gov/drift', (req, res) => res.json(driftFor(req.query.project)))
 function syncDriftField(project, field) {
@@ -2698,7 +2446,6 @@ app.get('/api/gov/recs', (req, res) => {
   if (project && fs.existsSync(project)) {
     const hub = hubResolve(project)
     for (const f of hub.findings) recs.push({ key: 'finding:' + f.text.slice(0, 60), severity: f.severity, text: f.text, fix: f.artifact?.path || null })
-    // skills that cost a lot when loaded and haven't been touched in 60d
     const stale = hub.inventory.skills.filter(s => s.fullTokens > 3000 && Date.now() - s.mtime > 60 * 86400_000).slice(0, 5)
     if (stale.length) recs.push({ key: 'stale-skills:' + project, severity: 'info', text: `${stale.length} large skills untouched for 60+ days (${stale.map(s => s.name).slice(0, 3).join(', ')}) — consider pruning or making on-demand`, fix: stale[0].path })
     if (hub.budget.alwaysOn > hub.budget.softCap) recs.push({ key: 'budget:' + project, severity: 'error', text: `always-loaded budget ${Math.round(hub.budget.alwaysOn / 100) / 10}k exceeds the ${Math.round(hub.budget.softCap / 1000)}k cap — trim rules or skill metadata`, fix: null })
@@ -2706,11 +2453,11 @@ app.get('/api/gov/recs', (req, res) => {
   const { alerts } = costAlerts()
   for (const a of alerts) recs.push({ key: 'cost:' + a.text.slice(0, 40), severity: a.level, text: a.text + ' — consider downgrading model routing for routine tasks', fix: null })
   if (project && fs.existsSync(project)) {
-    try { // 29: design drift feeds recommendations
+    try {
       const dd = designDrift(project)
       if (dd.manifest && dd.drifts.length) recs.push({ key: 'design-drift:' + project, severity: 'warning', text: `${dd.drifts.length} design-system drift(s) vs the Figma manifest (${dd.drifts.slice(0, 3).map(d => d.component).join(', ')}…) — see Quality → Design drift`, fix: dd.manifest })
     } catch {}
-    try { // 30: recurring review findings → suggest a hook
+    try {
       for (const rc of reviewData(project).recurring.slice(0, 3))
         recs.push({ key: 'recurring-finding:' + rc.category, severity: 'warning', text: `"${rc.category}" flagged in ${rc.passes} separate reviews (${rc.count} findings) — add a PreToolUse hook to block the pattern automatically (Hooks → Library)`, fix: null })
     } catch {}
@@ -2727,10 +2474,6 @@ app.post('/api/gov/recs/dismiss', (req, res) => {
 // ---------- prompt generator / library ----------
 const PROMPTS_DIR = path.join(CLAUDE, 'prompts-library')
 const ASSETS_DIR = path.join(PROMPTS_DIR, 'assets')
-// The template bakes in the four behaviours that scored highest on the Prompt Quality rubric — plan-first,
-// explicit output/format expectations, behavioural (not code-level) acceptance criteria, and concrete
-// anchors instead of "shared memory". So even a one-line goal assembles into a ≥9/10-structured prompt.
-// scorePrompt() below grades the same structure, so the badge the Studio shows is honest, not cosmetic.
 const PLAN_FIRST = {
   implementation: '## Plan first\nBefore editing, outline your approach and the exact files you will touch, then pause for my confirmation. If two approaches are viable, give the tradeoffs and let me pick.',
   bugfix: '## Plan first\nReproduce and state the root cause before changing code. Outline the fix and the files it touches, then pause for my confirmation.',
@@ -2782,8 +2525,6 @@ function assemblePrompt(p) {
   return lines.join('\n')
 }
 
-// Grades the assembled prompt on the rubric the template is built around. Floor is 9 once there is a
-// real goal, because the four structural sections are always present; the rest is input-richness bonus.
 function scorePrompt(p, output) {
   const tpl = p.template || 'implementation'
   const texts = (p.inputs || []).filter(i => i.type === 'text').map(i => i.value)
@@ -2861,7 +2602,7 @@ app.post('/api/prompts/asset', (req, res) => {
 // ================= flow graph, chat insights, inbox, palette, scaffold, batch, pins, bundles =================
 
 // ---------- transcript prompt/invocation scan (per-file mtime cache, like usageCache) ----------
-const scanCache = new Map() // file -> {mtime,size,prompts,invocations,userMsgs,toolCalls,first,last}
+const scanCache = new Map()
 function scanTranscripts() {
   const base = path.join(CLAUDE, 'projects')
   const files = []
@@ -2876,8 +2617,6 @@ function scanTranscripts() {
     const sessionId = path.basename(f, '.jsonl')
     let rec = scanCache.get(f)
     if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      // v3 (items 9c + 16): same single walk now also keeps structured hook attachments, assistant text,
-      // tool_use inputs (paths touched, bash commands) and Edit structuredPatch hunks — the search index.
       rec = {
         v: 3, mtime: st.mtimeMs, size: st.size, prompts: [], invocations: [], reviews: [], hooks: {}, hookBlocks: 0,
         userMsgs: 0, toolCalls: 0, first: 0, last: 0, cwd: '', branch: '',
@@ -2889,7 +2628,7 @@ function scanTranscripts() {
       try {
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (!line) continue
-          if (line.includes(' hook')) { // hook firings show up as system/hook-context lines
+          if (line.includes(' hook')) {
             const m = HOOK_RE.exec(line)
             if (m) rec.hooks[m[1]] = (rec.hooks[m[1]] || 0) + 1
             if (/hook (denied|blocked)/.test(line)) rec.hookBlocks++
@@ -2899,7 +2638,6 @@ function scanTranscripts() {
           if (t) { rec.first ||= t; rec.last = Math.max(rec.last, t) }
           if (j.cwd) rec.cwd = j.cwd
           if (j.gitBranch) rec.branch = j.gitBranch
-          // hook blast radius: hooks are logged as attachments carrying name/event/exitCode/durationMs/stdout
           const at = j.attachment
           if (at && typeof at.type === 'string' && at.type.startsWith('hook_') && at.hookName) {
             const std = String(at.stdout || '') + String(at.content || '')
@@ -2915,7 +2653,6 @@ function scanTranscripts() {
             if (rec.hookEvents.length < 800) rec.hookEvents.push(hookEv)
             if (blocked) rec.hookBlocks++
           }
-          // Edit/Write structuredPatch hunks — searchable diff text, and the "files edited" index
           const tur = j.toolUseResult
           if (tur && typeof tur === 'object' && Array.isArray(tur.structuredPatch) && tur.filePath) {
             touched.add(tur.filePath)
@@ -2944,7 +2681,6 @@ function scanTranscripts() {
               if (c.name === 'Skill' && c.input?.skill) { rec.invocations.push({ t, kind: 'skill', name: String(c.input.skill), src: lastSkill }); lastSkill = 'skill:' + c.input.skill }
               else if ((c.name === 'Task' || c.name === 'Agent') && c.input?.subagent_type) rec.invocations.push({ t, kind: 'agent', name: String(c.input.subagent_type), src: lastSkill })
               else if (c.name.startsWith('mcp__')) rec.invocations.push({ t, kind: 'mcp', name: c.name.slice(5).split('__')[0], src: lastSkill })
-              // native /review & /security-review report through the ReportFindings tool
               else if (c.name === 'ReportFindings' && Array.isArray(c.input?.findings)) rec.reviews.push({
                 t, level: c.input.level || null,
                 findings: c.input.findings.slice(0, 32).map(x => ({ file: x.file, line: x.line, summary: String(x.summary || '').slice(0, 240), category: x.category || 'uncategorized', verdict: x.verdict || null, outcome: x.outcome || null })),
@@ -2998,7 +2734,6 @@ app.get('/api/flow', (req, res) => {
   }
   try { for (const name of Object.keys(readClaudeJson().mcpServers || {})) addNode('mcp', name, { scope: 'global' }) } catch {}
   if (project) for (const name of Object.keys(readJson(path.join(project, '.mcp.json'), {}).mcpServers || {})) addNode('mcp', name, { scope: 'project' })
-  // defined edges: an item's body mentions another item's name (or its mcp__ prefix)
   const defined = new Map()
   const named = nodes.filter(n => n.kind !== 'entry')
   for (const [srcId, body] of Object.entries(bodies)) {
@@ -3010,14 +2745,13 @@ app.get('/api/flow', (req, res) => {
     }
   }
   for (const n of nodes) if (n.kind === 'skill' || n.kind === 'command') defined.set('entry:prompt→' + n.id, { from: 'entry:prompt', to: n.id, trigger: true })
-  // observed edges: real invocations from transcripts, weighted by frequency
   const { invocations } = scanTranscripts()
   const projFilter = project ? mangle(project) : null
   const observed = new Map(), nodeUse = {}
   for (const inv of invocations) {
     if (projFilter && inv.proj !== projFilter) continue
     const to = nid(inv.kind, inv.name)
-    if (!seen.has(to)) addNode(inv.kind, inv.name, { ghost: true }) // used in sessions but not defined in this scope (plugin skills etc.)
+    if (!seen.has(to)) addNode(inv.kind, inv.name, { ghost: true })
     const from = inv.src && seen.has(inv.src) ? inv.src : 'entry:prompt'
     const k = from + '→' + to
     const e = observed.get(k) || { from, to, count: 0, last: 0 }
@@ -3025,7 +2759,6 @@ app.get('/api/flow', (req, res) => {
     const u = nodeUse[to] ||= { count: 0, last: 0 }; u.count++; u.last = Math.max(u.last, inv.t)
   }
   for (const n of nodes) Object.assign(n, nodeUse[n.id] || { count: 0, last: null })
-  // dead ends: defined but never observed; cycles: DFS over defined edges
   const deadEnds = nodes.filter(n => n.kind !== 'entry' && !n.ghost && !n.count).map(n => n.id)
   const adj = {}; for (const e of defined.values()) (adj[e.from] ||= []).push(e.to)
   const cycles = [], state = {}
@@ -3038,7 +2771,6 @@ app.get('/api/flow', (req, res) => {
     state[v] = 2
   }
   for (const n of nodes) if (!state[n.id]) dfs(n.id, [n.id])
-  // most-traveled path: greedy walk over observed counts from the entry
   const out = {}; for (const e of observed.values()) (out[e.from] ||= []).push(e)
   const trail = ['entry:prompt']
   for (let i = 0; i < 6; i++) {
@@ -3059,7 +2791,6 @@ app.get('/api/dupes', (req, res) => {
   const projFilter = req.query.project ? mangle(req.query.project) : null
   const cutoff = Date.now() - days * 86400_000
   const { prompts } = scanTranscripts()
-  // slash-commands are already reusable artifacts — exclude them
   const list = prompts.filter(p => p.t >= cutoff && (!projFilter || p.proj === projFilter) && p.text.length >= 25 && !p.text.startsWith('/')).slice(-4000)
   const clusters = []
   for (const p of list) {
@@ -3092,7 +2823,6 @@ app.get('/api/chatstats', (req, res) => {
   const en = entries.filter(e => e.t >= cutoff && (!projFilter || e.proj === projFilter))
   const heat = Array.from({ length: 7 }, () => new Array(24).fill(0))
   for (const p of pr) { const d = new Date(p.t); heat[d.getDay()][d.getHours()]++ }
-  // correction rate: a prompt re-phrasing the previous one in the same session within 3 minutes
   let reprompts = 0
   const prevBySess = {}
   for (const p of pr) {
@@ -3133,9 +2863,6 @@ app.get('/api/chatstats', (req, res) => {
 })
 
 // ---------- 16: search my past self (palette) ----------
-// Indexes prompts + assistant text + tool_use inputs (bash commands, files touched) + Edit hunks.
-// `?file=<substr>` is the killer filter: only sessions that EDITED (or touched) that path.
-// Plane B: self-only. There is deliberately no machine/user parameter and there never will be.
 app.get('/api/search', (req, res) => {
   const q = String(req.query.q || '').toLowerCase()
   const file = String(req.query.file || '').toLowerCase()
@@ -3144,9 +2871,8 @@ app.get('/api/search', (req, res) => {
   const limit = Math.min(100, Number(req.query.limit) || 25)
   if (q.length < 3 && !file) return res.json([])
   const { prompts, texts, cmds, edits, sessions } = scanTranscripts()
-  const meta = {}   // sessionId -> {cwd, branch, files}
+  const meta = {}
   for (const s of sessions) meta[s.sessionId] = s
-  // "only sessions that edited <path>" — the query the IC most wants and cannot express today
   const okSession = sid => !file || (meta[sid]?.files || []).some(p => p.toLowerCase().includes(file))
   const hits = []
   const snip = (text, at) => text.slice(Math.max(0, at - 60), at + 160)
@@ -3158,7 +2884,7 @@ app.get('/api/search', (req, res) => {
       const idx = q ? hay.toLowerCase().indexOf(q) : 0
       if (q && idx < 0) continue
       if (!okSession(r.sessionId)) continue
-      if (file && kind === 'edit' && !String(r.file || '').toLowerCase().includes(file)) continue // an edit row must be an edit TO that file
+      if (file && kind === 'edit' && !String(r.file || '').toLowerCase().includes(file)) continue
       const s = meta[r.sessionId]
       hits.push({
         kind, proj: r.proj, sessionId: r.sessionId, t: r.t, snippet: snip(hay, idx),
@@ -3173,7 +2899,6 @@ app.get('/api/search', (req, res) => {
   scan(texts, 'assistant', 'text')
   scan(cmds, 'bash', 'cmd')
   scan(edits, 'edit', 'hunk', e => ({ file: e.file, add: e.add, del: e.del }))
-  // file-only query (no q): one row per session that touched the path
   if (!q && file)
     for (const s of sessions) {
       const f = (s.files || []).filter(p => p.toLowerCase().includes(file))
@@ -3184,42 +2909,34 @@ app.get('/api/search', (req, res) => {
 })
 
 // ---------- plane-A bridge: the eng snapshot (server-eng.mjs OWNS it — we only read it) ----------
-// Zero new API calls, zero new auth: server-eng.mjs already caches the JIRA+GitHub aggregate for 2h.
 let engMod = null
-// at = last SUCCESS (drives ENG_TTL). errAt = last failure/unavailable (drives the short backoff).
-// Caching a null under ENG_TTL is the bug that served a crippled inbox for 10 minutes after every restart.
 const engSnap = { at: 0, errAt: 0, data: null, p: null }
 const ENG_TTL = 10 * 60_000
-const ENG_ERR_TTL = 15_000      // failure backoff: seconds, not minutes — a cold start must converge fast
-const ENG_COLD_WAIT = 90_000    // first-ever fetch (~65s of live JIRA+GitHub): wait it out rather than serve a 3-item inbox.
-                                // All cold callers await the SAME in-flight promise, so this is one fetch, not one per poll.
+const ENG_ERR_TTL = 15_000
+const ENG_COLD_WAIT = 90_000
 async function loadEngSnapshot() {
   engMod ||= await import('./eng.mjs')
-  if (typeof engMod.snapshotAll === 'function') return await engMod.snapshotAll() // in-process, once server-eng exports it
-  const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/snapshot?project=all`)   // fallback: its own route, same cache
+  if (typeof engMod.snapshotAll === 'function') return await engMod.snapshotAll()
+  const r = await fetch(`http://127.0.0.1:${PORT}/api/eng/snapshot?project=all`)
   return await r.json()
 }
-// wait=false: don't block on a *refresh* of a snapshot we already have (the inbox polls every 60s — it can wait a poll).
-// But a caller with NO snapshot at all is blocked briefly (ENG_COLD_WAIT), because "no data" is not a valid answer.
 async function engSnapshot(wait = true) {
   const now = Date.now()
   const stale = !engSnap.data || now - engSnap.at > ENG_TTL
-  const backoff = !engSnap.data && now - engSnap.errAt < ENG_ERR_TTL // only successes get the long TTL
+  const backoff = !engSnap.data && now - engSnap.errAt < ENG_ERR_TTL
   if (!engSnap.p && stale && !backoff)
     engSnap.p = loadEngSnapshot()
       .then(d => { if (d?.available) { engSnap.data = d; engSnap.at = Date.now() } else engSnap.errAt = Date.now(); engSnap.p = null; return engSnap.data })
       .catch(() => { engSnap.errAt = Date.now(); engSnap.p = null; return engSnap.data })
-  if (engSnap.data) return engSnap.data // warm: serve it, any refresh finishes in the background
-  if (!engSnap.p) return null           // cold + inside the error backoff: next request retries
+  if (engSnap.data) return engSnap.data
+  if (!engSnap.p) return null
   if (wait) { try { return await engSnap.p } catch { return null } }
-  // cold, no data: wait a bounded while for the in-flight fetch rather than serve a hollow answer
   let t
   try { return await Promise.race([engSnap.p.catch(() => null), new Promise(r => { t = setTimeout(() => r(null), ENG_COLD_WAIT) })]) }
   finally { clearTimeout(t) }
 }
 
 // ---------- 1: delivery risk in the inbox (plane A → work items) ----------
-// Working days: openDays/inCurrent are ALREADY working days (10:00–18:00 Sun–Thu), so 24 working hours = 3d, 48 = 6d.
 const SLA_REVIEW = 3, SLA_REVIEW_HARD = 6
 const jiraUrl = i => `https://${i.host}/browse/${i.key}`
 const prUrl = p => `https://github.com/${p.repo}/pull/${p.num}`
@@ -3231,7 +2948,7 @@ function workItems(snap) {
   for (const p of snap.prs || []) {
     if (p.state === 'Merged' || p.state === 'Closed') continue
     const created = Date.parse(p.createdAt) || Date.now()
-    const reviews = (p.reviewEvents || []).length // reviewEvents are already non-bot only (server-eng BOT filter)
+    const reviews = (p.reviewEvents || []).length
     if (!reviews && p.openDays >= SLA_REVIEW)
       W(`pr:noreview:${p.repo}#${p.num}`, 'review', p.openDays >= SLA_REVIEW_HARD ? 'error' : 'warning',
         `PR #${p.num} (${p.ticket}) has had zero reviews for ${d1(p.openDays)} working days — ${p.author} is blocked`, created,
@@ -3270,7 +2987,6 @@ function workItems(snap) {
 }
 
 // ---------- 17: attention inbox ----------
-// Every item declares its plane: 'work' (JIRA/GitHub/CI artifacts) or 'harness' (this machine's ~/.claude).
 async function inboxItems() {
   const items = []
   for (const a of readApprovals()) if (a.status === 'proposed') items.push({ key: 'appr:' + a.id, kind: 'approval', severity: 'warning', text: `pending approval: ${a.summary}`, ts: a.ts, section: 'governance' })
@@ -3278,7 +2994,7 @@ async function inboxItems() {
   for (const a of alerts) items.push({ key: 'cost:' + a.text.slice(0, 40), kind: 'budget', severity: a.level, text: a.text, ts: Date.now(), section: 'reliability' })
   for (const r of evalRuns().slice(-10)) if (r.passRate < 1) items.push({ key: 'eval:' + r.id, kind: 'eval', severity: r.passRate === 0 ? 'error' : 'warning', text: `eval run at ${Math.round(r.passRate * 100)}% pass (${r.scope === 'global' ? 'global' : path.basename(r.scope)})`, ts: r.ts, section: 'reliability' })
   for (const [id, c] of chats) {
-    if (c.action) { // quick-action runs: completed = info, failed = error
+    if (c.action) {
       if (!c.alive) items.push({ key: 'action:' + id, kind: 'action', severity: c.action.exitCode === 0 ? 'info' : 'error', text: `${c.action.cmd} in ${path.basename(c.cwd)} ${c.action.exitCode === 0 ? 'finished' : `failed (exit ${c.action.exitCode})`}${c.analysis?.cost ? ` · $${c.analysis.cost.toFixed(3)}` : ''}`, ts: c.action.endedAt, section: 'workflows' })
       continue
     }
@@ -3286,7 +3002,6 @@ async function inboxItems() {
     const lastEv = c.events[c.events.length - 1]
     if (lastEv && lastEv.type === 'result') items.push({ key: 'chat:' + id, kind: 'session', severity: 'info', text: `session in ${path.basename(c.cwd)} is waiting for your input`, ts: Date.now(), section: 'chat' })
   }
-  // 34: blocked board tickets are actually stuck (error) — distinct from paused-by-design idle cards (info)
   try {
     for (const t of readBoard().tickets) {
       if (t.blocked) items.push({ key: 'board:blk:' + t.id + ':' + t.blocked.at, kind: 'board', severity: 'error', text: `ticket "${t.title}" blocked by ${t.blocked.by}: ${t.blocked.needed || t.blocked.reason}`.slice(0, 140), ts: t.blocked.at, section: 'board' })
@@ -3298,37 +3013,28 @@ async function inboxItems() {
     for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d)).slice(0, 8)) {
       const hub = hubResolve(dir)
       for (const f of (hub.findings || []).filter(f => f.severity === 'error').slice(0, 2)) {
-        // the same finding text is raised against several projects — the key MUST carry the project or the rows
-        // collide (React dup-key) and clearing one clears "both" (inboxDone is keyed by this). legacyKey keeps
-        // pre-fix clears/dismissals honoured (old format: 'finding:<text>', no project).
         const legacyKey = 'finding:' + f.text.slice(0, 60)
         const key = `finding:${dir}:${f.text.slice(0, 60)}`
         if (!dismissed[key] && !dismissed[legacyKey]) items.push({ key, legacyKey, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'library' })
       }
     }
   } catch {}
-  try { // loush runs: failed = error, blocked/awaiting-approval = warning (section: runs)
+  try {
     for (const r of scanRuns()) {
       if (r.status === 'failed') items.push({ key: 'run:fail:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'error', text: `loush ${r.flow || 'run'} for ${r.ticket} failed (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
       else if (r.awaitingApproval) items.push({ key: 'run:appr:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} awaits approval (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
       else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
     }
   } catch {}
-  try { items.push(...schedulerInbox(CLAUDE)) } catch {} // Gap B: scheduled-job results (info-only, self-only)
-  // L1: nudge (never auto-install) the two default safety hooks if absent. Global config is the user's
-  // to change — surface it, they click install in Hooks. Match on a distinctive message fragment so
-  // JSON-escaping of the command string doesn't matter.
+  try { items.push(...schedulerInbox(CLAUDE)) } catch {}
   try {
     const MARK = { 'block-prod-file-edit': 'protected path', 'secret-scan-pre-write': 'looks like a secret' }
     const userHooks = JSON.stringify(readJson(SETTINGS_FILES.user, {}).hooks || {})
     const missing = Object.entries(MARK).filter(([, m]) => !userHooks.includes(m)).map(([n]) => n)
     if (missing.length && !(readMeta().inboxDone || {})['hooks:safety'])
-      // ts is required: without it the row renders "Invalid Date" and NaN-poisons the severity sort.
       items.push({ key: 'hooks:safety', kind: 'recommendation', severity: 'info', section: 'hooks', ts: Date.now(), text: `${missing.length} recommended safety hook${missing.length === 1 ? '' : 's'} not installed (${missing.join(', ')}) — install from Hooks` })
   } catch {}
-  for (const i of items) i.plane ||= 'harness' // everything above is this machine's own harness telemetry
-  // plane A: delivery risk (JIRA + GitHub + CI), from the snapshot server-eng.mjs already caches.
-  // Non-blocking: a cold snapshot (~80s) must not stall the badge — the work items land on the next 60s poll.
+  for (const i of items) i.plane ||= 'harness'
   const snap = await engSnapshot(false).catch(() => null)
   items.push(...workItems(snap))
   try {
@@ -3342,27 +3048,23 @@ async function inboxItems() {
       })
     }
   } catch {}
-  // inboxDone: {until:ts} = snoozed, {until:null} = cleared. Legacy boolean/number values still mean "cleared".
   const done = readMeta().inboxDone || {}
   const doneOf = v => {
     if (!v) return { done: false, snoozedUntil: null }
-    if (typeof v !== 'object') return { done: true, snoozedUntil: null }        // legacy: true / Date.now()
+    if (typeof v !== 'object') return { done: true, snoozedUntil: null }
     if (v.until == null) return { done: true, snoozedUntil: null }
-    return v.until > Date.now() ? { done: true, snoozedUntil: v.until } : { done: false, snoozedUntil: null } // snooze expired → back
+    return v.until > Date.now() ? { done: true, snoozedUntil: v.until } : { done: false, snoozedUntil: null }
   }
   const sev = { error: 0, warning: 1, info: 2 }
-  // legacyKey (if any) is the pre-fix key for the same item — read-through so nothing already cleared comes back.
-  // It never reaches the client: /api/inbox/done always writes the new key.
   return items
     .map(({ legacyKey, ...i }) => ({ ...i, ...doneOf(done[i.key] ?? (legacyKey ? done[legacyKey] : undefined)) }))
     .sort((a, b) => sev[a.severity] - sev[b.severity] || b.ts - a.ts)
 }
 app.get('/api/inbox', async (req, res) => {
   const items = await inboxItems()
-  const plane = req.query.plane // 'work' | 'harness' | undefined (both)
+  const plane = req.query.plane
   res.json(plane ? items.filter(i => i.plane === plane) : items)
 })
-// { key, done } clears; { key, snoozeHours } defers. Snooze is why inboxDone is an object now.
 app.post('/api/inbox/done', (req, res) => {
   const { key, done, snoozeHours } = req.body
   const meta = readMeta()
@@ -3370,7 +3072,7 @@ app.post('/api/inbox/done', (req, res) => {
   if (snoozeHours > 0) meta.inboxDone[key] = { at: Date.now(), until: Date.now() + snoozeHours * 3600_000 }
   else if (done) meta.inboxDone[key] = { at: Date.now(), until: null }
   else delete meta.inboxDone[key]
-  for (const [k, v] of Object.entries(meta.inboxDone)) if (v && typeof v === 'object' && v.until && v.until < Date.now()) delete meta.inboxDone[k] // prune expired snoozes
+  for (const [k, v] of Object.entries(meta.inboxDone)) if (v && typeof v === 'object' && v.until && v.until < Date.now()) delete meta.inboxDone[k]
   fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
   res.json({ ok: true })
 })
@@ -3409,8 +3111,6 @@ app.get('/api/digest', async (req, res) => {
 })
 
 // ---------- 5: skill/agent/MCP ROI ledger — fires × always-on cost ----------
-// Pure join of /api/overview items (kind, name, descTokens, fullTokens) × /api/flow invocations
-// (count, last), both of which already exist. Zero new sources. Plane B, self-only by construction.
 const CAP_KIND = { skills: 'skill', agents: 'agent', commands: 'command', mcp: 'mcp' }
 function capabilityLedger() {
   const items = overviewItems()
@@ -3422,7 +3122,6 @@ function capabilityLedger() {
     u.all++; if (t >= d30) u.c30++; if (t >= d90) u.c90++; u.last = Math.max(u.last, t)
   }
   for (const i of invocations) bump(i.kind, i.name, i.t)
-  // commands don't fire as tool_use — they arrive as a "/name" prompt
   const cmds = new Set(items.filter(i => i.kind === 'commands').map(i => i.name))
   for (const p of prompts) {
     const m = /^\/([\w:.-]+)/.exec(p.text.trim())
@@ -3437,15 +3136,12 @@ function capabilityLedger() {
   const sessionTimes = real.map(s => s.last).filter(Boolean)
   const rows = items.filter(i => CAP_KIND[i.kind]).map(i => {
     const u = use[CAP_KIND[i.kind] + ':' + i.name] || { c30: 0, c90: 0, all: 0, last: 0 }
-    // Scope BOTH the verdict and the tax to the capability's own lifetime. Charging a skill
-    // installed yesterday for 90 days of sessions — and calling it DEAD for never having fired in
-    // sessions that predate it — is the same bug twice.
     const ageDays = i.mtime ? (now - i.mtime) / 86400_000 : null
     const sinceInstall = sessionsSince(sessionTimes, i.mtime ?? null, d90)
     return {
       kind: i.kind, name: i.name, scope: i.scope, group: i.group,
-      alwaysOnTokens: i.descTokens || 0,   // in context on EVERY session (the metadata listing)
-      fullTokens: i.fullTokens || 0,       // loaded only when it actually fires
+      alwaysOnTokens: i.descTokens || 0,
+      fullTokens: i.fullTokens || 0,
       fires30: u.c30, fires90: u.c90, firesAll: u.all, last: u.last || null,
       installedAt: i.mtime ?? null,
       ageDays: ageDays == null ? null : Math.round(ageDays),
@@ -3473,7 +3169,6 @@ function capabilityLedger() {
   }
 }
 app.get('/api/capabilities', (req, res) => res.json(capabilityLedger()))
-// archive = the EXISTING backup()/track() write path (same as the batch `disable-skill` op): dry-run, backed up, reversible.
 app.post('/api/capabilities/archive', (req, res) => {
   const { items = [], project, dryRun } = req.body
   const out = []
@@ -3481,7 +3176,7 @@ app.post('/api/capabilities/archive', (req, res) => {
     const { kind, name, scope = 'user' } = it
     if (!KINDS[kind]) { out.push({ ...it, error: 'kind not archivable (only skills/commands/agents)' }); continue }
     try {
-      if (project && scope === 'project') { // reuse the batch op verbatim for project-scoped skills
+      if (project && scope === 'project') {
         const plan = batchPlan('disable-skill', project, { skill: name })
         if (!dryRun && plan.changed && plan.apply) plan.apply()
         out.push({ kind, name, scope, target: project, desc: plan.desc, changed: plan.changed, applied: !dryRun && plan.changed })
@@ -3502,7 +3197,6 @@ app.post('/api/capabilities/archive', (req, res) => {
 })
 
 // ---------- 9: session forensics — failure signatures, context pressure, hook blast radius ----------
-// All three panels come off the ONE extra parse now living inside the failStats()/scanTranscripts() walkers.
 app.get('/api/forensics', (req, res) => {
   const days = Number(req.query.days) || 30
   const projFilter = req.query.project ? mangle(req.query.project) : null
@@ -3510,7 +3204,6 @@ app.get('/api/forensics', (req, res) => {
   const half = Date.now() - (days / 2) * 86400_000
   const recs = failStats().filter(r => r.last >= cutoff && (!projFilter || r.proj === projFilter))
 
-  // (a) failure signatures
   const sigs = {}
   for (const r of recs) for (const e of r.errs) {
     if (e.t && e.t < cutoff) continue
@@ -3519,16 +3212,15 @@ app.get('/api/forensics', (req, res) => {
     g.count++; if (e.t >= half) g.recent++; else g.prior++
     g.first = Math.min(g.first || e.t, e.t); g.last = Math.max(g.last, e.t)
     g.sessions.add(r.sessionId); g.projects.add(r.proj)
-    if (e.t === g.last) g.example = e.text // freshest verbatim example
+    if (e.t === g.last) g.example = e.text
   }
   const failures = Object.values(sigs).map(g => ({
     sig: g.sig, tool: g.tool, count: g.count, first: g.first, last: g.last, example: g.example,
     sessions: g.sessions.size, projects: [...g.projects].slice(0, 4),
     trend: g.recent > g.prior ? 'up' : g.recent < g.prior ? 'down' : 'flat', recent: g.recent, prior: g.prior,
-    biting: g.count >= 3, // "this has bitten you N times"
+    biting: g.count >= 3,
   })).sort((a, b) => b.count - a.count).slice(0, 60)
 
-  // (b) context pressure
   const bytes = {}, sizes = {}, big = []
   let compactions = 0
   const perSession = []
@@ -3539,15 +3231,10 @@ app.get('/api/forensics', (req, res) => {
     compactions += r.compactions
     if (r.compactions || r.turns) perSession.push({ sessionId: r.sessionId, proj: r.proj, compactions: r.compactions, turns: r.turns, errors: Object.values(r.toolErrs).reduce((a, b) => a + b, 0), last: r.last })
   }
-  // `share` used to be presented under a context-WINDOW heading while actually being the share of
-  // tool-result characters — a different denominator that excludes the system prompt, CLAUDE.md,
-  // user turns and assistant output. Renamed, tokens estimated explicitly, medians null-safe, and
-  // the p90 no longer sorts the caller's array in place. See harness-metrics.mjs.
   const pressure = contextPressure({ bytesByTool: bytes, sizesByTool: sizes })
   const tools = pressure.tools
   const totalBytes = pressure.totalChars
 
-  // (c) hook blast radius
   const { hookEvents } = scanTranscripts()
   const hooks = {}
   for (const h of hookEvents) {
@@ -3573,7 +3260,7 @@ app.get('/api/forensics', (req, res) => {
     context: {
       tools, totalChars: totalBytes,
       totalEstTokens: pressure.totalEstTokens, charsPerToken: pressure.charsPerToken,
-      denominator: pressure.denominator, // so the client cannot re-label this as "share of context"
+      denominator: pressure.denominator,
       compactions,
       compactionsPerSession: recs.length ? +(compactions / recs.length).toFixed(2) : 0,
       biggest: big.sort((a, b) => b.chars - a.chars).slice(0, 10),
@@ -3584,10 +3271,11 @@ app.get('/api/forensics', (req, res) => {
 })
 
 // ---------- 10: session ledger with real $ ----------
-// collectUsage() already carried sessionId into recentSessions — only cost was missing.
 app.get('/api/sessions', (req, res) => {
   const days = Number(req.query.days) || 7
   const limit = Math.min(200, Number(req.query.limit) || 20)
+  const offset = Math.max(0, Number(req.query.offset) || 0)
+  const q = String(req.query.q || '').trim().toLowerCase()
   const cutoff = Date.now() - days * 86400_000
   const { files } = collectUsage()
   const fail = {}; for (const r of failStats()) fail[r.file] = r
@@ -3600,7 +3288,9 @@ app.get('/api/sessions', (req, res) => {
     const cacheIn = f.in + f.cc + f.cr
     return {
       sessionId: id, proj: f.proj, project: projNames[f.proj] || f.proj.split('-').pop(), cwd,
+      name: f.name || null, nameSource: f.nameSource || null,
       cost: +f.cost.toFixed(4), out: f.out, in: f.in, cacheRead: f.cr,
+      subagentCost: +(f.subagentCost || 0).toFixed(4),
       cacheReadPct: cacheIn ? +(f.cr / cacheIn).toFixed(3) : 0,
       first: f.first, last: f.last, durationMs: Math.max(0, f.last - f.first),
       msgs: f.msgs, toolCalls: f.toolCalls,
@@ -3611,13 +3301,19 @@ app.get('/api/sessions', (req, res) => {
       resume: cwd ? `cd ${cwd} && claude --resume ${id}` : `claude --resume ${id}`,
     }
   }).sort((a, b) => b.last - a.last)
-  const totals = { cost: +rows.reduce((s, r) => s + r.cost, 0).toFixed(2), sessions: rows.length, out: rows.reduce((s, r) => s + r.out, 0) }
-  res.json({ days, plane: 'harness', totals, sessions: rows.slice(0, limit) })
+  const matched = q
+    ? rows.filter(r => (r.name || '').toLowerCase().includes(q) || r.sessionId.toLowerCase().includes(q) || r.cwd.toLowerCase().includes(q))
+    : rows
+  const totals = { cost: +matched.reduce((s, r) => s + r.cost, 0).toFixed(2), sessions: matched.length, out: matched.reduce((s, r) => s + r.out, 0) }
+  res.json({
+    days, plane: 'harness', totals, q, offset, limit,
+    total: matched.length,
+    named: matched.filter(r => r.name).length,
+    sessions: matched.slice(offset, offset + limit),
+  })
 })
 
 // ---------- Context Window Explorer — real per-turn context occupancy for one session ----------
-// e.in + e.cc + e.cr on a turn IS the total prompt (context window) size the model saw for that turn —
-// Anthropic's usage block already reports it split fresh/cache-write/cache-read, no reconstruction needed.
 const BIG_CTX = 1_000_000, STD_CTX = 200_000
 const firstUserPrompt = file => {
   try {
@@ -3668,16 +3364,12 @@ app.get('/api/context/:sessionId', (req, res) => {
 })
 
 // ---------- 8: /api/roi — cohort-level AI ROI (THE ONLY CROSS-PLANE JOIN) ----------
-// Join: transcript gitBranch → cfg.ticketRegex → JIRA key (falling back to pr.branch → pr.ticket).
-// THE AUTHOR/ASSIGNEE FIELD IS DROPPED BEFORE ANY AGGREGATION. Cohorts only. Never per person.
-// Correlational, not causal: n is shown per bucket, n<5 is flagged `low`, unattributed % is stated.
 app.get('/api/roi', async (req, res) => {
   const days = Number(req.query.days) || 90
   const cutoff = Date.now() - days * 86400_000
   const snap = await engSnapshot()
   if (!snap?.available) return res.json({ available: false, reason: 'no eng snapshot (JIRA creds / gh auth)', plane: 'cohort' })
   const { files } = collectUsage()
-  // branch → ticket
   const keyRes = [...new Set((snap.projects || []).map(p => p.jiraProjectKey).filter(Boolean))].map(k => new RegExp(`${k}-\\d+`, 'i'))
   const branchTicket = {}
   for (const p of snap.prs || []) if (p.branch) branchTicket[p.branch] = p.ticket
@@ -3686,8 +3378,6 @@ app.get('/api/roi', async (req, res) => {
     for (const re of keyRes) { const m = branch.match(re); if (m) return m[0].toUpperCase() }
     return branchTicket[branch] || null
   }
-  // Claude spend per ticket. NOTE: this is the viewer's OWN spend — plane B is self-only, so an
-  // "AI-touched" cohort here means "touched by THIS machine's Claude", stated plainly in the payload.
   const spendByTicket = {}, weekly = {}
   let attributed = 0, total = 0
   const wk = t => { const d = new Date(t); const day = (d.getUTCDay() + 6) % 7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day)).toISOString().slice(0, 10) }
@@ -3705,19 +3395,17 @@ app.get('/api/roi', async (req, res) => {
       w.tickets.add(tk)
     }
   }
-  // shipped stories in the window — author/assignee deliberately NOT read
   const shipped = (snap.issues || []).filter(i => i.live && i.pts > 0 && Date.parse(i.closedAt || 0) >= cutoff)
   for (const i of shipped) { const w = (weekly[wk(Date.parse(i.closedAt))] ||= { week: wk(Date.parse(i.closedAt)), spend: 0, points: 0, tickets: new Set() }); w.points += i.pts }
   const trend = Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)).map(w => ({
     week: w.week, spend: +w.spend.toFixed(2), points: w.points,
     perPoint: w.points ? +(w.spend / w.points).toFixed(2) : null, n: w.tickets.size,
   }))
-  // cohorts, bucketed by story points. Only cohort-level medians — nothing keyed to a human.
   const BUCKETS = [[1, 2, '1–2'], [3, 3, '3'], [5, 5, '5'], [8, 8, '8'], [13, 99, '13+']]
   const cohort = BUCKETS.map(([lo, hi, label]) => {
     const inB = shipped.filter(i => i.pts >= lo && i.pts <= hi)
     const cut = list => ({
-      n: list.length, low: list.length < 5, // n<5 → the UI greys this cell
+      n: list.length, low: list.length < 5,
       medianCycleDays: list.length ? +median(list.map(i => i.delivery)).toFixed(2) : null,
       medianActiveDays: list.length ? +median(list.map(i => i.activeDays)).toFixed(2) : null,
       medianQaCycles: list.length ? +median(list.map(i => i.qaCycles || 0)).toFixed(2) : null,
@@ -3729,15 +3417,6 @@ app.get('/api/roi', async (req, res) => {
     return { bucket: label, pts: lo, aiTouched: cut(ai), untouched: cut(un) }
   })
   const shippedPts = shipped.reduce((s, i) => s + i.pts, 0)
-  // DIMENSIONAL FIX. `spendPerPoint` was `total / shippedPts`: the numerator is THIS MACHINE's Claude
-  // spend (plane B is self-only) and the denominator was the WHOLE TEAM's shipped points, because
-  // the JQL is team-wide and this endpoint deliberately never reads assignee. One person's dollars
-  // divided by everyone's output — on a ten-person team the figure came out ~10x too low, and it
-  // moved when OTHER PEOPLE shipped. A manager scaling a budget on it would have been badly wrong.
-  //
-  // Both sides now describe the same cohort: spend attributed to tickets that shipped in the window,
-  // over the points of exactly those tickets. The team-wide total is still reported, separately and
-  // under a name that says what it is.
   const shippedWithSpend = shipped.filter(i => spendByTicket[i.key])
   const cohortSpend = shippedWithSpend.reduce((s, i) => s + (spendByTicket[i.key]?.cost || 0), 0)
   const cohortPts = shippedWithSpend.reduce((s, i) => s + i.pts, 0)
@@ -3745,19 +3424,15 @@ app.get('/api/roi', async (req, res) => {
     available: true, plane: 'cohort', days, caveat: 'correlational, not causal · AI spend is the viewer\'s own Claude usage (plane B is self-only) · spendPerPoint is computed over AI-touched shipped tickets only, so numerator and denominator share a cohort · which tickets get pointed at Claude is a CHOICE, so the cohort split is selection-biased, not a controlled comparison · no author/assignee field is read or emitted',
     headline: {
       spend: +total.toFixed(2), shippedPoints: shippedPts,
-      // same-cohort figure: your spend on AI-touched shipped tickets ÷ those tickets' points
       spendPerPoint: cohortPts ? +(cohortSpend / cohortPts).toFixed(2) : null,
       spendPerPointBasis: { spend: +cohortSpend.toFixed(2), points: cohortPts, tickets: shippedWithSpend.length },
-      // kept, but named honestly: this is YOUR spend over the TEAM's output. It is not a unit cost.
       selfSpendOverTeamPoints: shippedPts ? +(total / shippedPts).toFixed(2) : null,
       attributedPct: total ? +(attributed / total).toFixed(3) : 0,
-      unattributedPct: total ? +(1 - attributed / total).toFixed(3) : 1, // spend on branches that map to no ticket
+      unattributedPct: total ? +(1 - attributed / total).toFixed(3) : 1,
       ticketsWithSpend: Object.keys(spendByTicket).length, shippedTickets: shipped.length,
-      // quality guardrail on spendPerPoint — cheap points mean nothing if they bounce back (rework = reopens + re-entered In Progress)
       reworkRate: shipped.length ? +(shipped.filter(i => i.rework).length / shipped.length).toFixed(2) : null,
       medianQaCycles: shipped.length ? +median(shipped.map(i => i.qaCycles || 0)).toFixed(2) : null,
       reworkedTickets: shipped.filter(i => i.rework).length,
-      // shipped tickets carrying no story points can't enter a points bucket — say so rather than hide them
       unpointedShipped: (snap.issues || []).filter(i => i.live && !(i.pts > 0) && Date.parse(i.closedAt || 0) >= cutoff).length,
     },
     trend, cohort,
@@ -3775,8 +3450,6 @@ function driftVs(bundle, project) {
   for (const k of new Set([...Object.keys(bundle.skills || {}), ...Object.keys(cur.skills || {})])) cmp('skills/' + k, bundle.skills?.[k] ? 'present' : null, cur.skills?.[k] ? 'present' : null)
   return drifts
 }
-// map a team repo (owner/name) to a local clone — moved to lib/clone.mjs so server modules can use it
-// without importing this file (which mounts them, so the dependency would be a cycle).
 app.get('/api/gov/team', async (req, res) => {
   const meta = readMeta()
   const file = req.query.file || meta.teamHarness || null
@@ -3795,7 +3468,6 @@ app.get('/api/gov/team', async (req, res) => {
   })
   res.json({ plane: 'work', file, hasBaseline: !!bundle, provenance: bundle?.provenance || null, repos })
 })
-// pin the team baseline: point at a team-harness.json committed in a shared repo (read from git working copy)
 app.post('/api/gov/team/baseline', (req, res) => {
   const { file } = req.body
   if (!file || !fs.existsSync(file)) return res.status(400).json({ error: 'team-harness.json not found at that path — clone the repo first' })
@@ -3806,7 +3478,6 @@ app.post('/api/gov/team/baseline', (req, res) => {
   respCache.clear()
   res.json({ ok: true, file })
 })
-// export THIS project's harness as the team baseline, written (tracked) to the shared repo path
 app.post('/api/gov/team/export', (req, res) => {
   const { project, file, dryRun } = req.body
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
@@ -3819,7 +3490,6 @@ app.post('/api/gov/team/export', (req, res) => {
   const meta = readMeta(); meta.teamHarness = target; fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2))
   res.json({ ok: true, file: target, note: 'commit and push team-harness.json to share it' })
 })
-// sync one team repo to the baseline — same dry-run guard + tracked-write path as /api/gov/drift/sync
 app.post('/api/gov/team/sync', (req, res) => {
   const { project, fields, dryRun } = req.body
   const bundle = readJson(readMeta().teamHarness || '', null)
@@ -3879,7 +3549,7 @@ app.post('/api/scaffold', (req, res) => {
   if (dryRun) return res.json({ files: files.map(f => ({ ...f, exists: fs.existsSync(path.join(dir, f.rel)) })) })
   const written = []
   for (const f of files) { track(path.join(dir, f.rel), f.content, { scope: dir, summary: 'scaffold harness' }); written.push(f.rel) }
-  try { // register so it shows up in Projects
+  try {
     const cj = readClaudeJson()
     if (!cj.projects?.[dir]) { (cj.projects ||= {})[dir] = {}; backup(CLAUDE_JSON); fs.writeFileSync(CLAUDE_JSON, JSON.stringify(cj, null, 2)) }
   } catch {}
@@ -3995,8 +3665,6 @@ app.post('/api/notify/test', async (req, res) => {
     res.json({ ok: r.ok, status: r.status })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
-// push new error/warning inbox items to slack (dedup per server run)
-// (this is the viewer's own webhook, to themselves — no auto-nudge is ever sent to anyone else)
 const slackNotified = new Set()
 setInterval(async () => {
   const hook = (readMeta().notify || {}).slackWebhook
@@ -4022,7 +3690,6 @@ app.post('/api/team/flag', (req, res) => {
   s.env ||= {}
   if (req.body.enable === false) delete s.env[TEAMS_FLAG]
   else s.env[TEAMS_FLAG] = '1'
-  // applied directly (not proposed): explicitly user-initiated, versioned & reversible in Governance
   track(file, JSON.stringify(s, null, 2), { summary: (req.body.enable === false ? 'disable' : 'enable') + ' agent teams flag' })
   res.json({ ok: true, enabled: req.body.enable !== false })
 })
@@ -4034,7 +3701,6 @@ app.put('/api/team/designs', (req, res) => {
   res.json({ ok: true })
 })
 
-// AI review of a team design — same claude -p mechanism the eval runner uses
 app.post('/api/team/design/review', (req, res) => {
   const design = req.body.design
   if (!design?.name || !Array.isArray(design.members)) return res.status(400).json({ error: 'design needs a name and members[]' })
@@ -4077,10 +3743,10 @@ const writeBugs = b => track(BUGS_FILE, JSON.stringify(b, null, 2), { summary: '
 function parseTrace(text) {
   const frames = [], seen = new Set()
   const push = (file, line, fn) => { const k = file + ':' + line; if (!seen.has(k) && frames.length < 20 && !/node_modules/.test(file)) { seen.add(k); frames.push({ file, line: Number(line) || null, fn: fn || null }) } }
-  for (const m of text.matchAll(/at (\S+) \((.*?):(\d+):\d+\)/g)) push(m[2], m[3], m[1])              // js: at fn (file:l:c)
-  for (const m of text.matchAll(/at ((?:\/|\.{1,2}\/|[A-Za-z]:\\)[^\s():]+):(\d+):\d+/g)) push(m[1], m[2]) // js: at file:l:c
-  for (const m of text.matchAll(/File "(.*?)", line (\d+)(?:, in (\S+))?/g)) push(m[1], m[2], m[3])   // python
-  for (const m of text.matchAll(/((?:\/|\.{1,2}\/)[\w./-]+\.\w{1,5}):(\d+)/g)) push(m[1], m[2])       // generic path:line
+  for (const m of text.matchAll(/at (\S+) \((.*?):(\d+):\d+\)/g)) push(m[2], m[3], m[1])
+  for (const m of text.matchAll(/at ((?:\/|\.{1,2}\/|[A-Za-z]:\\)[^\s():]+):(\d+):\d+/g)) push(m[1], m[2])
+  for (const m of text.matchAll(/File "(.*?)", line (\d+)(?:, in (\S+))?/g)) push(m[1], m[2], m[3])
+  for (const m of text.matchAll(/((?:\/|\.{1,2}\/)[\w./-]+\.\w{1,5}):(\d+)/g)) push(m[1], m[2])
   const links = [...text.matchAll(/https?:\/\/\S+/g)].map(m => m[0]).slice(0, 5)
   return { frames, links }
 }
@@ -4090,8 +3756,6 @@ app.post('/api/bugs', (req, res) => {
   if (!title?.trim()) return res.status(400).json({ error: 'title required' })
   const bugs = readBugs()
   const bug = { id: 'bug' + Date.now().toString(36), project: project || null, title: title.trim(), severity: severity || 'medium', status: 'open', intake: String(intake || '').slice(0, 20000), ...parseTrace(String(intake || '')), createdAt: Date.now(), fix: null, boardTicketId: null }
-  // Cross-link (not merge): a project bug also becomes a Board type:'bug' ticket so the two stores
-  // share one source of truth per bug. Each references the other; bug status stays authoritative here.
   if (project && fs.existsSync(project)) {
     try {
       const board = readBoard()
@@ -4137,8 +3801,7 @@ app.post('/api/chat-review', (req, res) => {
   res.json({ ok: true, entry })
 })
 
-// auto-bisect: async, poll status — culprit commit + diffstat + author
-const bisects = new Map() // bugId -> {status, log, culprit}
+const bisects = new Map()
 app.post('/api/bugs/:id/bisect', (req, res) => {
   const bug = readBugs().find(b => b.id === req.params.id)
   const { good, cmd } = req.body
@@ -4168,7 +3831,6 @@ app.post('/api/bugs/:id/bisect', (req, res) => {
     finally { g(['bisect', 'reset']) }
   })()
 })
-// root-cause session prompt: trace + suspect files + git blame for the suspect lines
 app.get('/api/bugs/:id/context', (req, res) => {
   const bug = readBugs().find(b => b.id === req.params.id)
   if (!bug) return res.status(404).json({ error: 'no such bug' })
@@ -4229,8 +3891,6 @@ app.get('/api/hooks/health', (req, res) => {
     // ponytail: firings counted from transcript hook-context lines — latency is not recorded there; measure a hook's cost with dry-run
     note: 'firings parsed from transcript hook-output lines · per-call latency not in transcripts — use dry-run to time a hook' })
 })
-// PostToolUse cap: exits 0 (never blocks) when the result is small; when it is oversized it emits the head of the
-// result plus an explicit "cut N chars" note as additionalContext, so the model sees a bounded, honest result.
 const truncateCmd = (tool, max) => `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);const r=j.tool_response;const t=typeof r==='string'?r:JSON.stringify(r==null?'':r);if(t.length<=${max})process.exit(0);const note='[truncate-tool-result] ${tool} returned '+t.length+' chars, capped at ${max}. First ${max} chars follow; re-read a narrower range (offset/limit, head, grep) for the rest.\\n\\n'+t.slice(0,${max});console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:note},systemMessage:'${tool} result capped: '+t.length+' → ${max} chars'}))})"`
 const HOOK_LIBRARY = [
   { name: 'block-prod-file-edit', event: 'PreToolUse', matcher: 'Edit|Write', description: 'blocks edits to .env, secrets, and prod-named paths',
@@ -4241,18 +3901,15 @@ const HOOK_LIBRARY = [
     command: `sh -c 'CH=$(git diff --name-only HEAD 2>/dev/null); echo "$CH" | grep -qE "\\.(ts|js|py|go|tsx)$" || exit 0; echo "$CH" | grep -qE "(test|spec)" && exit 0; echo "source changed but no tests touched" >&2; exit 2'` },
   { name: 'log-tool-usage', event: 'PostToolUse', matcher: '', description: 'appends every tool call to ~/.claude/tool-log.jsonl for auditing',
     command: `node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);require('fs').appendFileSync(require('os').homedir()+'/.claude/tool-log.jsonl',JSON.stringify({t:Date.now(),tool:j.tool_name})+'\\n')})"` },
-  // "Cap this tool" installs this one. Parameterised: params are merged from the install body, so ONE pattern
-  // covers any tool whose median result blows out the context window (Read is ~57% of every byte pulled in).
   { name: 'truncate-tool-result', event: 'PostToolUse', matcher: 'Read', description: 'caps an oversized tool result — keeps the head, tells the model what was cut (params: tool, maxChars)',
     params: { tool: 'Read', maxChars: 20000 }, command: truncateCmd('Read', 20000) },
 ]
-app.get('/api/hooks/library', (req, res) => res.json(HOOK_LIBRARY)) // `command` is the default rendering; params are re-applied on install
-// name + optional params → the concrete pattern to write. Parameterless patterns are returned untouched.
+app.get('/api/hooks/library', (req, res) => res.json(HOOK_LIBRARY))
 function resolvePattern(name, params) {
   const pat = HOOK_LIBRARY.find(h => h.name === name)
   if (!pat || !pat.params) return pat
   const p = { ...pat.params, ...(params || {}) }
-  const tool = String(p.tool || pat.params.tool).replace(/[^\w|]/g, '')          // matcher is a regex — keep it a tool name
+  const tool = String(p.tool || pat.params.tool).replace(/[^\w|]/g, '')
   const maxChars = Math.max(500, Math.min(500_000, Number(p.maxChars) || pat.params.maxChars))
   return { ...pat, matcher: tool, params: { tool, maxChars }, command: truncateCmd(tool, maxChars) }
 }
@@ -4323,14 +3980,13 @@ app.post('/api/ci/generate', (req, res) => {
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   const files = [
     { rel: path.relative(project, ciWorkflowPath(project, provider)), content: ciYaml(provider, minPass) },
-    { rel: '.claude/harness-evals.json', content: JSON.stringify(readJson(EVALS_FILE, DEFAULT_EVALS), null, 2) }, // evals must live in-repo for CI
+    { rel: '.claude/harness-evals.json', content: JSON.stringify(readJson(EVALS_FILE, DEFAULT_EVALS), null, 2) },
   ]
   if (dryRun) return res.json({ files: files.map(f => ({ ...f, exists: fs.existsSync(path.join(project, f.rel)) })) })
   for (const f of files) track(path.join(project, f.rel), f.content, { scope: project, summary: `CI eval gate (${provider}, min ${Math.round(minPass * 100)}%)` })
   res.json({ ok: true, written: files.map(f => f.rel), note: 'set the ANTHROPIC_API_KEY secret in your repo settings' })
 })
 // ---------- 4: cross-repo CI health (main-branch failure rate, time-to-green, flakes) ----------
-// Plane A. One `gh run list` per repo from projects.json, existing gh auth, 10-min cache.
 const ghAvailable = () => { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
 async function engProjectList() {
   engMod ||= await import('./eng.mjs')
@@ -4354,13 +4010,11 @@ function repoCI(repo, project, days) {
     .sort((a, b) => a.at - b.at)
   const done = runs.filter(r => r.conclusion === 'success' || r.conclusion === 'failure')
   const fails = done.filter(r => r.conclusion === 'failure')
-  // time-to-green: from a red main to the next green run of the same workflow
   const greens = []
   for (const f of fails) {
     const fix = done.find(r => r.workflowName === f.workflowName && r.at > f.at && r.conclusion === 'success')
     if (fix) greens.push((fix.at - f.at) / 60000)
   }
-  // flaky = the SAME headSha produced both a failure and a success
   const bySha = {}
   for (const r of done) { const s = (bySha[r.headSha] ||= { ok: 0, bad: 0, wf: new Set(), last: 0 }); if (r.conclusion === 'success') s.ok++; else s.bad++; s.wf.add(r.workflowName); s.last = Math.max(s.last, r.at) }
   const flakySha = Object.entries(bySha).filter(([, s]) => s.ok && s.bad)
@@ -4382,7 +4036,6 @@ function repoCI(repo, project, days) {
 }
 const ciCache = { at: 0, data: null }
 const CI_TTL = 10 * 60_000
-// wait=false (the inbox): never shell out to gh inside the poll — serve the cache, refresh behind it
 async function ciHealth(days = 14, fresh = false, wait = true) {
   if (!fresh && ciCache.data && Date.now() - ciCache.at < CI_TTL && ciCache.data.days === days) return ciCache.data
   if (!wait) {
@@ -4390,7 +4043,7 @@ async function ciHealth(days = 14, fresh = false, wait = true) {
     return ciCache.data || { days, ghAvailable: false, repos: [], redRepos: [], cold: true }
   }
   engMod ||= await import('./eng.mjs')
-  if (typeof engMod.ciHealth === 'function') return await engMod.ciHealth(days) // server-eng owns it if it ever exports one
+  if (typeof engMod.ciHealth === 'function') return await engMod.ciHealth(days)
   const gh = ghAvailable()
   const projects = gh ? await engProjectList().catch(() => []) : []
   const repos = []
@@ -4403,7 +4056,6 @@ async function ciHealth(days = 14, fresh = false, wait = true) {
   ciCache.at = Date.now(); ciCache.data = data
   return data
 }
-// ?project=<local dir> keeps the old harness-evals workflow view; otherwise: cross-repo main-branch health.
 app.get('/api/ci/runs', async (req, res) => {
   const project = req.query.project
   if (project) {
@@ -4429,7 +4081,7 @@ app.post('/api/ci/rerun', (req, res) => {
 const TRACK_RE = /(?:\.|\b)(track|capture|logEvent|trackEvent|recordEvent)\s*\(\s*['"`]([\w .:/-]{3,60})['"`]/
 const SRC_EXT = /\.(js|jsx|ts|tsx|py|swift|kt|java|vue|rb)$/
 function scanTracking(project) {
-  const events = new Map() // name -> {locations, props}
+  const events = new Map()
   let filesScanned = 0
   const walkT = (d, depth) => {
     if (depth > 6 || filesScanned > 4000) return
@@ -4461,7 +4113,7 @@ const taxonomyPath = project => path.join(project, '.claude', 'analytics-taxonom
 function analyticsRegistry(project) {
   const { events, filesScanned } = scanTracking(project)
   const tax = readJson(taxonomyPath(project), null)
-  const convention = tax?.convention || (() => { // derive dominant style
+  const convention = tax?.convention || (() => {
     const c = {}; for (const e of events) c[caseOf(e.name)] = (c[caseOf(e.name)] || 0) + 1
     return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || null
   })()
@@ -4472,7 +4124,6 @@ function analyticsRegistry(project) {
     if (tax && !known.has(e.name)) issues.push('not in taxonomy')
     const req = (tax?.events || []).find(x => x.name === e.name)?.required || []
     for (const r of req) if (!e.props.includes(r)) issues.push(`missing required property "${r}"`)
-    // near-duplicate name check
     const twin = events.find(o => o !== e && o.name.toLowerCase().replace(/[_.\s-]/g, '') === e.name.toLowerCase().replace(/[_.\s-]/g, ''))
     if (twin) issues.push(`near-duplicate of "${twin.name}"`)
     return { ...e, count: e.locations.length, issues, ok: issues.length === 0 }
@@ -4485,7 +4136,7 @@ app.get('/api/analytics/registry', (req, res) => {
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   res.json(analyticsRegistry(project))
 })
-app.post('/api/analytics/taxonomy', (req, res) => { // bootstrap taxonomy from what the code does today
+app.post('/api/analytics/taxonomy', (req, res) => {
   const project = req.body.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   const reg = analyticsRegistry(project)
@@ -4493,7 +4144,7 @@ app.post('/api/analytics/taxonomy', (req, res) => { // bootstrap taxonomy from w
   track(taxonomyPath(project), JSON.stringify(tax, null, 2), { scope: project, summary: 'bootstrap analytics taxonomy from code' })
   res.json({ ok: true, path: taxonomyPath(project), events: tax.events.length })
 })
-app.get('/api/analytics/drift', (req, res) => { // uncommitted new events vs taxonomy — catch drift before commit
+app.get('/api/analytics/drift', (req, res) => {
   const project = req.query.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   const r = spawnSync('git', ['-C', project, 'diff', 'HEAD', '--unified=0'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 })
@@ -4514,7 +4165,7 @@ function scanComponents(project) {
   const comps = new Map()
   let n = 0
   let dirs = ['src/components', 'src/ui', 'components', 'app/components', 'src'].map(d => path.join(project, d)).filter(fs.existsSync)
-  if (!dirs.length) dirs = [project] // monorepo / nested layout — walk the root instead
+  if (!dirs.length) dirs = [project]
   const walkC = (d, depth) => {
     if (depth > 4 || n > 1500) return
     let entries; try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
@@ -4536,13 +4187,6 @@ function scanComponents(project) {
   for (const d of [...new Set(dirs)]) walkC(d, 0)
   return [...comps.values()]
 }
-// Is this manifest capable of detecting drift at all?
-//
-// POST /api/design/manifest bootstraps the manifest BY SCANNING THE CODE. Diffing that against the
-// same code is diffing a file against a photocopy of itself: drift is zero by construction, and the
-// UI used to render that as a green "code and manifest agree". A manifest only carries information
-// once someone has enriched it from the DESIGN side — real figmaNode ids and real variant lists.
-// Until then we report "cannot detect drift", not "no drift".
 function manifestStatus(manifest) {
   if (!manifest) return { state: 'none', enriched: 0, total: 0, driftDetectable: false }
   const comps = Object.values(manifest.components || {})
@@ -4551,17 +4195,12 @@ function manifestStatus(manifest) {
     return { state: 'baseline-only', enriched: 0, total: comps.length, driftDetectable: false }
   return { state: 'enriched', enriched, total: comps.length, driftDetectable: true }
 }
-// A Figma deep link needs the file key as well as the node id; the manifest may carry it per
-// component or once at the top level. Without it the UI shows the node id as text rather than a
-// link that cannot resolve.
 const fileKeyFor = (manifest, spec) => spec.figmaFileKey || manifest.figmaFileKey || null
 function designDrift(project) {
   const manifest = readJson(manifestPath(project), null)
   const code = scanComponents(project)
   const status = manifestStatus(manifest)
   if (!manifest) return { manifest: null, code: code.length, drifts: [], status }
-  // A code-generated baseline cannot contradict the code it came from. Say so rather than
-  // returning an empty drift list that reads as a clean bill of health.
   if (!status.driftDetectable) return { manifest: manifestPath(project), code: code.length, drifts: [], status }
   const drifts = []
   const byName = Object.fromEntries(code.map(c => [c.name, c]))
@@ -4569,10 +4208,6 @@ function designDrift(project) {
     const c = byName[name]
     if (!c) { drifts.push({ component: name, type: 'missing-in-code', detail: 'in the Figma manifest but not implemented', figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec) }); continue }
     for (const p of spec.props || []) if (!c.props.includes(p)) drifts.push({ component: name, type: 'prop-drift', detail: `manifest prop "${p}" not in code (${c.file}) — renamed or dropped?`, figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec) })
-    // Was: `for (const v of spec.variants || []) if (…) continue` — a loop whose entire body was
-    // `continue`, so variants were never checked at all. The prop scan cannot see variant VALUES,
-    // only prop names, so the honest check is the one it can actually make: the design declares
-    // variants, and the component exposes no way to select one.
     if ((spec.variants || []).length && !c.props.includes('variant'))
       drifts.push({
         component: name, type: 'variant-drift', figmaNode: spec.figmaNode || null, figmaFileKey: fileKeyFor(manifest, spec),
@@ -4585,7 +4220,6 @@ function designDrift(project) {
 app.get('/api/design/drift', (req, res) => {
   const project = req.query.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
-  // figma MCP usage from transcripts — call budget awareness for batch design work
   const { invocations } = scanTranscripts()
   const proj = mangle(project)
   const figma = invocations.filter(i => i.kind === 'mcp' && /figma/i.test(i.name))
@@ -4595,13 +4229,12 @@ app.get('/api/design/drift', (req, res) => {
     figmaCalls: { day: figma.filter(i => i.proj === proj && i.t >= day).length, week: figma.filter(i => i.proj === proj && i.t >= week).length, allProjectsDay: figma.filter(i => i.t >= day).length },
   })
 })
-app.post('/api/design/manifest', (req, res) => { // bootstrap manifest from code — a Figma MCP session can then enrich it with node ids/variants
+app.post('/api/design/manifest', (req, res) => {
   const project = req.body.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
   const comps = scanComponents(project)
   const manifest = {
     generatedFrom: 'code', createdAt: Date.now(),
-    // Stated in the artifact itself, so it survives being read by anything other than this UI.
     _note: 'Bootstrapped FROM THE CODE. Until figmaNode ids and variants are filled in from the design side, this file cannot detect drift — it is a copy of the code, and diffing it against the code will always agree. /api/design/drift reports status.state="baseline-only" until then.',
     components: Object.fromEntries(comps.map(c => [c.name, { props: c.props, variants: [], figmaNode: null }])),
   }
@@ -4620,12 +4253,10 @@ function reviewData(project) {
     fixed: r.findings.filter(f => f.outcome === 'fixed').length,
     dismissed: r.findings.filter(f => f.outcome === 'skipped' || f.outcome === 'no_change_needed').length,
   }))
-  // recurring: same category across ≥3 distinct review passes
   const byCat = {}
   for (const r of rel) for (const f of r.findings) { const c = byCat[f.category] ||= { category: f.category, count: 0, passes: new Set(), examples: [] }; c.count++; c.passes.add(r.sessionId); if (c.examples.length < 3) c.examples.push(f.summary) }
   const recurring = Object.values(byCat).filter(c => c.passes.size >= 3).map(c => ({ category: c.category, count: c.count, passes: c.passes.size, examples: c.examples }))
     .sort((a, b) => b.count - a.count)
-  // fold in Loush code-reviewer output (review.json, contract §14) so run reviews sit beside transcript-scraped ones
   const runReviews = []
   for (const proj of (project ? [path.resolve(project)] : [...projectDirs()])) {
     try {
@@ -4642,12 +4273,12 @@ const BOARD_FILE = path.join(CLAUDE, 'taskboard.json')
 const WORKTREES = path.join(CLAUDE, 'board-worktrees')
 const DEFAULT_STAGES = ['backlog', 'in-progress', 'code-review', 'fixing', 'ready-for-qa', 'qa-running', 'bug-reported', 'ready-for-release', 'released']
 const DEFAULT_BOARD = {
-  teams: [], // {id, name, version, stages: {dev|review|qa: {model, instructions}}}
+  teams: [],
   pipelines: [
     { id: 'default', name: 'Team Production', version: 1, stages: DEFAULT_STAGES, wip: {} },
     { id: 'solo', name: 'Solo Side Project', version: 1, stages: ['backlog', 'in-progress', 'ready-for-release', 'released'], wip: {} },
   ],
-  projects: {}, // proj -> {pipeline, base, branchPrefix, mergeMethod, requirePr, defaultModel, previewCmd, previewStopCmd, previewIdleMin, qaSeesFindings}
+  projects: {},
   tickets: [],
 }
 const readBoard = () => { const b = readJson(BOARD_FILE, {}); return { ...DEFAULT_BOARD, ...b, pipelines: b.pipelines?.length ? b.pipelines : DEFAULT_BOARD.pipelines } }
@@ -4659,11 +4290,7 @@ const blockT = (t, by, category, reason, needed) => { t.blocked = { at: Date.now
 const pct = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))] }
 const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { const m = re.exec(s || ''); if (m) try { return JSON.parse(m[0]) } catch {} } return null }
 
-// one-shot headless agent run — same claude -p pattern as evals/team-plan; BLOCKED: marker = feature 34
-const boardRuns = new Map() // ticketId -> {kind, startedAt}
-// runAgent moved to lib/agent.mjs (with a streaming sibling, spawnAgent) — same reason as
-// localCloneOf above: server/ticket.mjs needs it and cannot import this file.
-// Unify board runs into the Loush Runs model: each ticket becomes a .loush/<id>/ run in its repo.
+const boardRuns = new Map()
 function loushRunEmit(project, ticket, type, data) {
   if (!project || !fs.existsSync(project)) return
   try {
@@ -4686,14 +4313,13 @@ function loushRunState(project, ticket, phase, phase_status) {
   } catch {}
 }
 function recordRun(t, kind, model, r, handoff) {
-  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff }) // handoff = feature 36 audit: what was passed vs deliberately excluded
+  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff })
   loushRunEmit(t.project, t.id, 'step.completed', { label: kind, agent: 'board:' + kind, status: r.error ? 'failed' : r.blocked ? 'blocked' : 'passed' })
   loushRunState(t.project, t.id, kind, 'running')
 }
 const teamStage = (board, t, stageKind) => { const team = board.teams.find(x => x.id === t.team); const s = team?.stages?.[stageKind] || {}; return { model: t.model || s.model || projCfg(board, t.project).defaultModel || undefined, instructions: s.instructions || '' } }
 const gitB = (project, args, timeout = 60_000) => spawnSync('git', ['-C', project, ...args], { timeout, maxBuffer: 8 * 1024 * 1024 })
 const changedFiles = (project, base, ref) => { const r = gitB(project, ['diff', '--name-only', `${base}...${ref}`]); return r.status === 0 ? r.stdout.toString().trim().split('\n').filter(Boolean) : [] }
-// 35: early conflict warning — overlapping changed files vs other in-flight branches (best-effort, after work exists)
 function conflictScan(board, t) {
   if (!t.branch || !fs.existsSync(t.project)) return
   const cfg = projCfg(board, t.project)
@@ -4711,12 +4337,11 @@ function ensureWorktree(board, t) {
   t.worktree ||= path.join(WORKTREES, t.id)
   if (fs.existsSync(path.join(t.worktree, '.git'))) return null
   fs.mkdirSync(WORKTREES, { recursive: true })
-  // 35 stacked mode: dependent branches base on their blocker's branch when it exists
   const dep = (t.deps || []).map(d => tkt(board, d)).find(d => d?.branch && d.project === t.project)
   const baseRef = dep?.branch && gitB(t.project, ['rev-parse', '--verify', dep.branch]).status === 0 ? dep.branch : cfg.base
   const r = gitB(t.project, ['worktree', 'add', t.worktree, '-b', t.branch, baseRef])
   if (r.status !== 0) {
-    const r2 = gitB(t.project, ['worktree', 'add', t.worktree, t.branch]) // branch already exists — reattach
+    const r2 = gitB(t.project, ['worktree', 'add', t.worktree, t.branch])
     if (r2.status !== 0) return (r.stderr.toString() + r2.stderr.toString()).slice(0, 800)
   }
   t.basedOn = baseRef
@@ -4734,10 +4359,6 @@ app.get('/api/board', (req, res) => {
   res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
 })
 app.post('/api/board/tickets', (req, res) => {
-  // `jiraKey` and `designDoc` make the Ticket-section handoff BIDIRECTIONAL. Without them the
-  // handoff is a one-way paste — everything ends up stuffed into `desc`, the board has no idea the
-  // ticket came from JIRA, and the Ticket tab can never show "this is now in code review". Two
-  // optional fields are what make it an integration rather than a copy.
   const { project, title, desc, parent, deps, team, model, type, jiraKey, designDoc } = req.body
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'valid project required' })
   if (!title?.trim()) return res.status(400).json({ error: 'title required' })
@@ -4750,7 +4371,7 @@ app.post('/api/board/tickets', (req, res) => {
     parent: parent || null, deps: deps || [], team: team || null, model: model || null,
     jiraKey: typeof jiraKey === 'string' && jiraKey ? jiraKey.toUpperCase() : null,
     designDoc: typeof designDoc === 'string' && designDoc ? designDoc : null,
-    stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`, // 37: in-flight tickets keep the template version they started on
+    stage: 'backlog', stages: pipe.stages, pipelineVersion: `${pipe.id}@v${pipe.version}`,
     blocked: null, branch: null, worktree: null, qa: null, qaResults: [], findings: [], runs: [], conflictRisk: [], preview: null, proposal: null,
     history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created' }], createdAt: Date.now(), releasedAt: null,
   }
@@ -4775,7 +4396,6 @@ app.delete('/api/board/tickets/:id', (req, res) => {
   writeBoard(board); res.json({ ok: true })
 })
 
-// 31: intake analysis — agent proposes an independently-workable sub-ticket breakdown
 app.post('/api/board/tickets/:id/analyze', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t) return res.status(404).json({ error: 'no such ticket' })
@@ -4794,7 +4414,7 @@ app.post('/api/board/tickets/:id/analyze', (req, res) => {
     writeBoard(b2)
   })().catch(() => boardRuns.delete(t.id))
 })
-app.post('/api/board/tickets/:id/breakdown', (req, res) => { // accept (possibly user-edited) breakdown → child tickets
+app.post('/api/board/tickets/:id/breakdown', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t) return res.status(404).json({ error: 'no such ticket' })
   const subs = (req.body.subs || []).filter(s => s.title?.trim())
@@ -4810,7 +4430,6 @@ app.post('/api/board/tickets/:id/breakdown', (req, res) => { // accept (possibly
   writeBoard(board); res.json({ ok: true, created: ids.length })
 })
 
-// Backlog → In Progress: dev agent in an isolated worktree branch. 36: gets ticket + breakdown + linked context, NOT prior tickets' history.
 function startTicket(id, { model: modelOverride, reply, resume } = {}, res) {
   const board = readBoard(); const t = tkt(board, id)
   if (!t) return res.status(404).json({ error: 'no such ticket' })
@@ -4820,7 +4439,7 @@ function startTicket(id, { model: modelOverride, reply, resume } = {}, res) {
   const pipe = board.pipelines.find(p => p.id === projCfg(board, t.project).pipeline) || board.pipelines[0]
   const wip = pipe.wip?.['in-progress']
   if (wip && board.tickets.filter(x => x.project === t.project && x.stage === 'in-progress').length >= wip) return res.status(400).json({ error: `WIP limit for in-progress is ${wip}` })
-  if (modelOverride) t.model = modelOverride // mid-flight escalation lives on the ticket
+  if (modelOverride) t.model = modelOverride
   const wtErr = ensureWorktree(board, t)
   if (wtErr) { blockT(t, 'system', 'provision', 'worktree/branch creation failed: ' + wtErr); writeBoard(board); return res.status(400).json({ error: wtErr }) }
   const { model, instructions } = teamStage(board, t, 'dev')
@@ -4851,7 +4470,6 @@ function startTicket(id, { model: modelOverride, reply, resume } = {}, res) {
 }
 app.post('/api/board/tickets/:id/start', (req, res) => startTicket(req.params.id, req.body, res))
 
-// Code Review (manual trigger). 36: review agent gets diff + ticket + dev summary — not the dev transcript.
 app.post('/api/board/tickets/:id/review', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t?.worktree) return res.status(400).json({ error: 'no worktree — start the ticket first' })
@@ -4878,14 +4496,13 @@ app.post('/api/board/tickets/:id/review', (req, res) => {
     else {
       t2.findings = (extractJson(r.result) || []).filter(f => f.summary).map(f => ({ ...f, at: Date.now() }))
       const blocking = t2.findings.filter(f => ['critical', 'high'].includes(f.severity))
-      if (!blocking.length) { stamp(t2, 'ready-for-qa', `review clean (${t2.findings.length} minor) — idle until you run QA`); startPreview(b2, t2) } // 33: auto-provision on review-clean
+      if (!blocking.length) { stamp(t2, 'ready-for-qa', `review clean (${t2.findings.length} minor) — idle until you run QA`); startPreview(b2, t2) }
       else stamp(t2, 'code-review', `${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}`)
     }
     writeBoard(b2)
   })().catch(() => boardRuns.delete(t.id))
 })
 
-// fix loop: dev agent gets findings + diff context, not a codebase re-read. Cap 3 iterations → Blocked (34).
 app.post('/api/board/tickets/:id/fix', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t?.findings?.length) return res.status(400).json({ error: 'no findings to fix' })
@@ -4911,8 +4528,7 @@ app.post('/api/board/tickets/:id/fix', (req, res) => {
   })().catch(() => boardRuns.delete(t.id))
 })
 
-// 33: preview environments — plug-in point is a per-project shell command; URL parsed from its output
-const previews = new Map() // ticketId -> child
+const previews = new Map()
 function startPreview(board, t) {
   const cfg = projCfg(board, t.project)
   if (!cfg.previewCmd || previews.has(t.id)) return
@@ -4930,7 +4546,7 @@ function startPreview(board, t) {
   child.stdout.on('data', onData); child.stderr.on('data', onData)
   child.on('exit', code => {
     previews.delete(t.id)
-    if (code && !out.includes('http')) { // build/migration failure before serving → Blocked, not a silently broken ready-for-qa
+    if (code && !out.includes('http')) {
       const b2 = readBoard(); const t2 = tkt(b2, t.id)
       if (t2 && t2.stage === 'ready-for-qa') { blockT(t2, 'preview provisioning', 'provision', 'preview command exited ' + code + ':\n' + out.slice(-1200)); writeBoard(b2) }
     }
@@ -4943,13 +4559,12 @@ function stopPreview(t) {
 }
 app.post('/api/board/tickets/:id/preview', (req, res) => { const b = readBoard(); const t = tkt(b, req.params.id); if (!t) return res.status(404).json({ error: 'no such ticket' }); startPreview(b, t); writeBoard(b); res.json({ ok: true }) })
 app.delete('/api/board/tickets/:id/preview', (req, res) => { const b = readBoard(); const t = tkt(b, req.params.id); if (t) { stopPreview(t); writeBoard(b) } res.json({ ok: true }) })
-setInterval(() => { // idle teardown — preview cost shouldn't outlive attention
+setInterval(() => {
   const b = readBoard(); let dirty = false
   for (const t of b.tickets) if (t.preview && Date.now() - t.preview.startedAt > projCfg(b, t.project).previewIdleMin * 60_000) { stopPreview(t); dirty = true }
   if (dirty) writeBoard(b)
 }, 600_000).unref()
 
-// Ready for QA → QA Running (manual trigger). 36: QA gets ticket+AC+changed files+preview URL — NOT review findings unless opted in.
 app.post('/api/board/tickets/:id/qa', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t?.worktree) return res.status(400).json({ error: 'no worktree — start the ticket first' })
@@ -4957,7 +4572,7 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
   const pipe = board.pipelines.find(p => p.id === projCfg(board, t.project).pipeline) || board.pipelines[0]
   const wip = pipe.wip?.['qa-running']
   if (wip && board.tickets.filter(x => x.project === t.project && x.stage === 'qa-running').length >= wip) return res.status(400).json({ error: `WIP limit for qa-running is ${wip}` })
-  t.qa = { ...(t.qa || {}), ...req.body } // baseUrl, scope, env, login, notes
+  t.qa = { ...(t.qa || {}), ...req.body }
   const cfg = projCfg(board, t.project)
   const { model, instructions } = teamStage(board, t, 'qa')
   const files = changedFiles(t.project, cfg.base, t.branch || 'HEAD')
@@ -4983,10 +4598,10 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
     if (r.error) return blockT(t2, 'QA agent', 'agent-error', r.error), writeBoard(b2)
     const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
     const failed = cases.filter(c => c.pass === false)
-    ;(t2.qaResults ||= []).push({ at: Date.now(), cases, pass: !failed.length }) // saved per ticket — regression pack for future runs (feeds feature 4)
+    ;(t2.qaResults ||= []).push({ at: Date.now(), cases, pass: !failed.length })
     if (failed.length) {
       stamp(t2, 'bug-reported', `${failed.length} QA failure${failed.length === 1 ? '' : 's'} — bugs filed`)
-      for (const c of failed.slice(0, 5)) b2.tickets.push({ // QA auto-files linked bug sub-tickets with repro + evidence + exact commit
+      for (const c of failed.slice(0, 5)) b2.tickets.push({
         id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
         project: t2.project, title: 'QA bug: ' + c.name, type: 'bug', parent: t2.id,
         desc: `QA-found on ${t2.branch} @ ${gitB(t2.project, ['rev-parse', '--short', t2.branch]).stdout?.toString().trim() || '?'}\nseverity: ${c.severity || 'medium'}\n\nrepro / evidence:\n${c.evidence || '(see QA run)'}`,
@@ -5000,13 +4615,12 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
   })().catch(() => boardRuns.delete(t.id))
 })
 
-// 35: release — merge queue (per-repo lock, no races), rebase attempt on conflict → Blocked with hunks. Human gate: only ever manual.
-const mergeLocks = new Map() // project -> Promise
+const mergeLocks = new Map()
 app.post('/api/board/tickets/:id/release', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t) return res.status(404).json({ error: 'no such ticket' })
   const cfg = projCfg(board, t.project)
-  if (cfg.requirePr) { // human-approved PR path: don't merge, hand over the command
+  if (cfg.requirePr) {
     stamp(t, 'released', 'marked released (PR flow)'); t.releasedAt = Date.now(); stopPreview(t); writeBoard(board)
     return res.json({ ok: true, prCmd: `cd ${t.project} && gh pr create --head ${t.branch} --base ${cfg.base} --title "${t.title.replace(/"/g, '')}" --body "Ticket ${t.id}"` })
   }
@@ -5017,7 +4631,6 @@ app.post('/api/board/tickets/:id/release', (req, res) => {
     const dirty = gitB(t2.project, ['status', '--porcelain']).stdout.toString().trim()
     if (dirty) { blockT(t2, 'merge', 'merge-conflict', 'main working tree is dirty — commit or stash before releasing'); writeBoard(b2); return }
     gitB(t2.project, ['checkout', cfg.base])
-    // second-to-merge rebases forward first; on conflict → Blocked with the conflicting hunks, never auto-resolved
     const reb = spawnSync('git', ['-C', t2.worktree, 'rebase', cfg.base], { timeout: 120_000 })
     if (reb.status !== 0) {
       const hunks = spawnSync('git', ['-C', t2.worktree, 'diff'], { timeout: 30_000 }).stdout.toString().slice(0, 3000)
@@ -5030,7 +4643,7 @@ app.post('/api/board/tickets/:id/release', (req, res) => {
     if (m.status !== 0) { gitB(t2.project, ['merge', '--abort']); blockT(t2, 'merge', 'merge-conflict', m.stderr.toString().slice(0, 2000)); writeBoard(b2); return }
     if (cfg.mergeMethod === 'squash') gitB(t2.project, ['commit', '-m', `${t2.title} (${t2.id})`])
     const sha = gitB(t2.project, ['rev-parse', '--short', 'HEAD']).stdout.toString().trim()
-    stamp(t2, 'released', `merged ${t2.branch} → ${cfg.base} @ ${sha} (${cfg.mergeMethod})`) // audit: ticket + commit + agent/model in history & runs
+    stamp(t2, 'released', `merged ${t2.branch} → ${cfg.base} @ ${sha} (${cfg.mergeMethod})`)
     t2.releasedAt = Date.now(); stopPreview(t2)
     if (t2.worktree && fs.existsSync(t2.worktree)) gitB(t2.project, ['worktree', 'remove', '--force', t2.worktree])
     writeBoard(b2)
@@ -5040,19 +4653,17 @@ app.post('/api/board/tickets/:id/release', (req, res) => {
   res.json({ ok: true, queued: true })
 })
 
-// 34: unblock — reply resumes the same agent with the answer injected
 app.post('/api/board/tickets/:id/unblock', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t?.blocked) return res.status(400).json({ error: 'ticket is not blocked' })
   const lastSession = (t.runs || []).filter(r => r.sessionId).pop()?.sessionId
   t.blocked = null
-  t.stage = 'backlog' // re-enters the dev flow; startTicket stamps in-progress
+  t.stage = 'backlog'
   ;(t.history ||= []).push({ at: Date.now(), from: 'blocked', to: 'backlog', note: 'unblocked with reply' })
   writeBoard(board)
   startTicket(t.id, { reply: req.body.reply || '', resume: lastSession }, res)
 })
 
-// teams / pipelines / per-project config (8-style versioning: bumped on every save)
 app.post('/api/board/teams', (req, res) => {
   const board = readBoard(); const team = req.body
   if (!team.name?.trim()) return res.status(400).json({ error: 'name required' })
@@ -5078,7 +4689,6 @@ app.post('/api/board/config', (req, res) => {
   writeBoard(board); res.json(board.projects[project])
 })
 
-// 32: task board analytics — all computed live from ticket history/runs, no stored numbers
 app.get('/api/board/analytics', (req, res) => {
   const board = readBoard()
   const days = Number(req.query.days) || 30
@@ -5087,7 +4697,6 @@ app.get('/api/board/analytics', (req, res) => {
   const stageSet = [...new Set([...DEFAULT_STAGES, ...board.pipelines.flatMap(p => p.stages)])]
   const columns = Object.fromEntries(stageSet.map(s => [s, tickets.filter(t => t.stage === s && !t.blocked).length]))
   const blockedNow = tickets.filter(t => t.blocked)
-  // time-in-stage from history pairs (current stage counts up to now unless released)
   const stageDur = {}, blockedDur = {}
   for (const t of tickets) {
     const h = t.history || []
@@ -5103,7 +4712,6 @@ app.get('/api/board/analytics', (req, res) => {
   const perDay = {}
   for (const t of released) { const k = new Date(t.releasedAt).toISOString().slice(0, 10); perDay[k] = (perDay[k] || 0) + 1 }
   const bugs = tickets.filter(t => t.type === 'bug' && t.parent)
-  // per team/model/agent quality + cost breakdowns
   const groupBy = key => {
     const g = {}
     for (const t of tickets) {
@@ -5116,16 +4724,14 @@ app.get('/api/board/analytics', (req, res) => {
       o.cost += (t.runs || []).reduce((s, r) => s + (r.cost || 0), 0)
       const models = new Set((t.runs || []).map(r => r.model))
       if (models.size > 1) o.escalations++
-      o.touches += (t.runs || []).filter(r => ['review', 'qa', 'fix'].includes(r.kind)).length // manual triggers = human-touch proxy
+      o.touches += (t.runs || []).filter(r => ['review', 'qa', 'fix'].includes(r.kind)).length
     }
     return Object.fromEntries(Object.entries(g).map(([k, o]) => [k, { ...o, avgCycleH: o.cycles.length ? Math.round(o.cycles.reduce((a, b) => a + b, 0) / o.cycles.length / 3600_000 * 10) / 10 : null, bugRatio: o.released ? Math.round(o.bugs / o.released * 100) / 100 : null, cycles: undefined }]))
   }
-  // QA cycles per released ticket: bug-free first pass vs 1/2/3+
   const qaDist = { 0: 0, 1: 0, 2: 0, '3+': 0 }
   for (const t of released) { const fails = (t.qaResults || []).filter(q => !q.pass).length; qaDist[fails >= 3 ? '3+' : fails]++ }
   const runCost = kind => tickets.reduce((s, t) => s + (t.runs || []).filter(r => r.kind === kind).reduce((a, r) => a + (r.cost || 0), 0), 0)
   const sunk = tickets.filter(t => !t.releasedAt).reduce((s, t) => s + (t.runs || []).reduce((a, r) => a + (r.cost || 0), 0), 0)
-  // regression pack effectiveness: cases seen ≥2 runs — do they ever catch anything?
   const caseStats = {}
   for (const t of tickets) for (const q of t.qaResults || []) for (const c of q.cases || []) { const o = caseStats[c.name] ||= { runs: 0, fails: 0 }; o.runs++; if (c.pass === false) o.fails++ }
   const stale = Object.entries(caseStats).filter(([, o]) => o.runs >= 2 && !o.fails).length
@@ -5147,14 +4753,12 @@ app.get('/api/board/analytics', (req, res) => {
 })
 
 // ---------- loush runs: .loush/<ticket>/ across known repos (contract §12–16) ----------
-// The orchestrators write state.json + events.jsonl into each target repo's .loush/. We scan
-// every known project repo for those and surface runs, a live event tail, and the approval gate.
 function projectDirs() {
   const s = new Set([PROJECT])
   try { for (const d of Object.keys(readClaudeJson().projects || {})) s.add(path.resolve(d)) } catch {}
   return s
 }
-function loushSafe(proj, ...rel) { // validate proj is a known repo and the path stays under its .loush
+function loushSafe(proj, ...rel) {
   const P = path.resolve(String(proj || ''))
   if (!projectDirs().has(P)) throw Object.assign(new Error('unknown project'), { status: 403 })
   const base = path.join(P, '.loush')
@@ -5162,17 +4766,13 @@ function loushSafe(proj, ...rel) { // validate proj is a known repo and the path
   if (p !== base && !p.startsWith(base + path.sep)) throw Object.assign(new Error('path escapes .loush'), { status: 403 })
   return p
 }
-const eventsCache = new Map() // file -> {mtime, size, events} — the runs list polls every 5s; skip re-parsing unchanged files
-// Coerce a raw event to the canonical contract-§13 shape {seq,t,type,phase,data} that scanRuns and
-// deriveRunMetrics read. Some flows emit a divergent shape ({ts,event,flow,...} instead of
-// {t,type,data}); tolerate both so every run renders regardless of which the flow wrote.
+const eventsCache = new Map()
 function normalizeEvent(e, i) {
-  if (e.seq == null) e.seq = i + 1 // fallback seq so a missing-seq file still tails
+  if (e.seq == null) e.seq = i + 1
   if (e.t == null && e.ts != null) e.t = e.ts
   if (e.type == null && e.event != null) e.type = e.event
   if (e.data == null || typeof e.data !== 'object') e.data = {}
   if (e.type === 'run.started' && e.data.flow == null && e.flow != null) e.data.flow = e.flow
-  // step events key on data.label; divergent flows put the phase name at top level instead
   if ((e.type === 'step.started' || e.type === 'step.completed') && e.data.label == null && e.phase != null) e.data.label = e.phase
   return e
 }
@@ -5189,13 +4789,12 @@ function readEvents(file) {
   eventsCache.set(file, { mtime: st.mtimeMs, size: st.size, events })
   return events
 }
-function runDir(proj, ticket) { // a run lives at .loush/<ticket>/ or (legacy single-run) .loush/ itself
+function runDir(proj, ticket) {
   const base = loushSafe(proj)
   const sub = loushSafe(proj, String(ticket || ''))
   return (fs.existsSync(path.join(sub, 'events.jsonl')) || fs.existsSync(path.join(sub, 'state.json'))) ? sub : base
 }
 const asMs = v => (typeof v === 'number' ? v : Date.parse(v) || null)
-// verdict = the run's review.json (if any) fed into the pure gate logic in run-verdict.mjs.
 function computeVerdict(dir, state, term, awaitingApproval) {
   let review = null
   try { review = JSON.parse(fs.readFileSync(path.join(dir, 'review.json'), 'utf8')) } catch {}
@@ -5226,7 +4825,7 @@ function scanRuns() {
         headSha: state.head_sha || null, updatedAt: asMs(state.updated_at) || (fs.existsSync(evF) ? fs.statSync(evF).mtimeMs : null),
         events: events.length, startedAt: asMs(events[0]?.t), endedAt: asMs(term?.t), status,
         branch: state.branch || null, base: state.base || null, note: state.note || null,
-        decision: state.decision || term?.data?.decision || null, // pr-review / fix outcome, if the flow recorded one
+        decision: state.decision || term?.data?.decision || null,
         hasReview: fs.existsSync(path.join(dir, 'review.json')),
         awaitingApproval: state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json')),
         verdict: computeVerdict(dir, state, term, state.phase_status === 'blocked' && !fs.existsSync(path.join(dir, 'approvals.json'))),
@@ -5235,7 +4834,6 @@ function scanRuns() {
   }
   return runs.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 }
-// estimate a run's $ from transcript entries in its time window (same estimator Reliability uses).
 // ponytail: time-window join — no sessionId plumbing needed. Exact only if one run per repo at a time.
 function joinRunCost(runs) {
   let entries = []
@@ -5269,14 +4867,12 @@ app.get('/api/runs/events', (req, res) => {
   const after = Number(req.query.after) || 0
   res.json({ events: events.filter(e => (e.seq || 0) > after) })
 })
-// every file the flow left in .loush/<ticket>/ — the change requested (jira.md), the reviewed
-// code (scoped.diff), findings (review.md), etc. Content is fetched per-file via /artifact.
 app.get('/api/runs/files', (req, res) => {
   const dir = runDir(req.query.proj, req.query.ticket)
   let files = []
   try {
     files = fs.readdirSync(dir, { withFileTypes: true })
-      .filter(e => e.isFile() && e.name !== 'events.jsonl') // events have their own viewer
+      .filter(e => e.isFile() && e.name !== 'events.jsonl')
       .map(e => { const st = fs.statSync(path.join(dir, e.name)); return { name: e.name, size: st.size, mtime: st.mtimeMs } })
       .sort((a, b) => a.name.localeCompare(b.name))
   } catch {}
@@ -5297,7 +4893,6 @@ app.post('/api/runs/approve', (req, res) => {
   fs.writeFileSync(path.join(dir, 'approvals.json'), JSON.stringify({ artifact: artifact || 'test-plan', decision, comments: comments || [] }, null, 2))
   res.json({ ok: true })
 })
-// batch approve — the L2 shift: the human supervises a converged batch instead of one run at a time.
 app.post('/api/runs/approve-batch', (req, res) => {
   const { runs, decision, comments } = req.body
   if (!['approve', 'revise'].includes(decision)) return res.status(400).json({ error: 'decision must be approve|revise' })
@@ -5310,7 +4905,6 @@ app.post('/api/runs/approve-batch', (req, res) => {
   })
   res.json({ ok: results.every(r => r.ok), results })
 })
-// dispatch a fresh loush run: spawn `claude -p /<flow> <ticket>` in the repo; the flow owns .loush/<ticket>/ from there.
 const LOUSH_FLOWS = ['loush-jira-implement', 'loush-feature', 'loush-pr-review', 'loush-test-cases', 'loush-bug-fix']
 app.post('/api/runs/dispatch', (req, res) => {
   const { proj, flow } = req.body || {}
@@ -5323,11 +4917,10 @@ app.post('/api/runs/dispatch', (req, res) => {
     return res.status(409).json({ error: 'a run for this ticket already exists — clear .loush/' + ticket + '/ first' })
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ ticket_id: ticket, flow, phase: 'dispatch', phase_status: 'running', updated_at: new Date().toISOString() }, null, 2))
-  runAgent({ cwd: path.resolve(proj), prompt: `/${flow} ${ticket}`, timeoutMs: 4 * 3600_000 }).catch(() => {}) // fire-and-forget; long-running
+  runAgent({ cwd: path.resolve(proj), prompt: `/${flow} ${ticket}`, timeoutMs: 4 * 3600_000 }).catch(() => {})
   res.json({ ok: true })
 })
 
-// Gap B scheduler config — enable/disable the cadence loop and edit its jobs. enabled defaults false.
 app.get('/api/scheduler', (req, res) => res.json(readSchedulerConfig(CLAUDE)))
 app.put('/api/scheduler', (req, res) => res.json(writeSchedulerConfig(CLAUDE, req.body || {})))
 
@@ -5336,21 +4929,13 @@ app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, pro
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))
 const server = app.listen(PORT, bindHost(), () => {
   const host = bindHost()
-  // Publish where we are listening so the hook script, which runs from an arbitrary cwd, can
-  // find us without configuration.
   try { publishInstance({ port: PORT, host }) } catch (e) { console.warn('[claude-dashboard] could not publish instance for hooks:', e.message) }
   console.log(`[claude-dashboard] API on http://localhost:${PORT}`)
-  // Binding beyond loopback puts a server that reads transcripts and writes config on the
-  // network. Deliberate is fine; silent is not.
   if (isExposedBind(host)) console.warn(`[claude-dashboard] WARNING: bound to ${host}, not loopback — this dashboard is reachable from other machines`)
-  // start the plane-A fetch at boot, not at first request: the inbox badge/notification/Slack push are wrong
-  // until it lands, so the clock should start now. Failure is fine — it retries (short backoff), it never caches null.
   engSnapshot(true).then(s => console.log(`[claude-dashboard] eng snapshot ${s?.available ? 'warm' : 'unavailable (will retry)'}`)).catch(() => {})
-  startScheduler({ CLAUDE, port: PORT, runAgent, log: console.log }) // Gap B: cadence loop (opt-in, info-only)
+  startScheduler({ CLAUDE, port: PORT, runAgent, log: console.log })
 })
 
-// Drop our entry from the hook registry on the way out, so the hook script does not keep
-// POSTing at a port nothing is listening on.
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
   try { unpublishInstance() } catch {}
   server.close(() => process.exit(0))

@@ -1,6 +1,3 @@
-// Constitution insights — reads a repo's .wakeel/constitution knowledge base and serves
-// aggregate insights + a citation graph for the D3 view. Shared by the Claude and Cursor
-// dashboards (same data, both shells mount /api/constitution/*). Read-only, fails soft.
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -28,7 +25,6 @@ function candidateRepos() {
   return [...dirs].filter(hasConstitution).sort()
 }
 
-// frontmatter parse without a YAML dep — the generator only emits flat lists + single-line scalars
 function fm(mdFile) {
   let src; try { src = fs.readFileSync(mdFile, 'utf8') } catch { return { paths: [] } }
   const m = src.match(/^---\n([\s\S]*?)\n---/)
@@ -47,7 +43,6 @@ function fm(mdFile) {
   return { paths, description: scalar('description'), whenToUse: scalar('when_to_use') }
 }
 
-// md path for an artifact — shared by the collector and the /artifact endpoint
 function mdPath(root, kind, name) {
   if (/[\\/]|\.\./.test(name)) throw Object.assign(new Error('bad name'), { status: 400 })
   return kind === 'constitution' ? path.join(root, 'constitution.md')
@@ -77,8 +72,8 @@ function* collectArtifacts(root) {
 function buildInsights(repo) {
   const root = constDir(repo)
   const artifacts = []
-  const fileCites = new Map() // codeFile -> Map(label -> count)
-  const coverage = new Map() // governed path -> Set(label)
+  const fileCites = new Map()
+  const coverage = new Map()
   const wfFiles = {}
   const debt = []
 
@@ -125,7 +120,6 @@ function buildInsights(repo) {
     }
   workflowOverlaps.sort((x, y) => y.shared.length - x.shared.length)
 
-  // graph: artifact nodes + code-file nodes, links = citations. Client filters by degree.
   const nodes = artifacts.map(a => ({ id: a.label, kind: a.kind, atoms: a.atoms }))
   const links = []
   for (const f of hotFiles) {
@@ -162,8 +156,6 @@ export default function mountConstitution(app) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // export — client snapshots the rendered DOM and posts pages here; we write a shareable
-  // folder of linked HTML files to ~/Downloads. Own body parser: exports run tens of MB.
   app.post('/api/constitution/export', express.json({ limit: '300mb' }), (req, res) => {
     try {
       const { name, files } = req.body || {}
@@ -175,7 +167,6 @@ export default function mountConstitution(app) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // raw markdown of one artifact — the browse-detail "view source"
   app.get('/api/constitution/artifact', (req, res) => {
     try {
       const repo = path.resolve(String(req.query.repo || ''))

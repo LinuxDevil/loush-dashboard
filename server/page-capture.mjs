@@ -1,15 +1,3 @@
-// Live-page style capture. Sibling to figma-capture.mjs, and deliberately writes into the same
-// <repo>/.claude/figma-captures/<slug>/ layout — capture.json + screenshot.png + annotations.json
-// — so the existing Captures UI lists and annotates a captured web page with no changes.
-//
-// The premise, from the Perfect-Web-Clone / "Nexting" writeup in RESEARCH_MERGED.md: describe a
-// page by the CSS and structured blocks it is actually built from, not by a screenshot. A
-// screenshot tells an agent what a page looks like; this tells it what the page is made of —
-// which values are design tokens, where the breakpoints are, how the sections are laid out.
-//
-// That upstream project ships no LICENSE file (GitHub reports license: null; the README's MIT
-// badge is a static image, not a grant), so no code here is derived from it. This is written
-// from the capability description in our own research notes.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -20,16 +8,6 @@ const captureDir = (repo, slug) => path.join(capturesDir(repo), slug)
 const slugify = s => String(s || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'page'
 const shortHash = s => crypto.createHash('sha1').update(s).digest('hex').slice(0, 8)
 
-// Only http(s), and by default never a host on this machine or its network.
-//
-// The dashboard binds to loopback and sits in front of other local services, so an unguarded
-// "capture this URL" is a request-forgery primitive: a page the user happens to be browsing can
-// POST here and have the result — including whatever an internal service returned — written to
-// disk as a capture. That is worth blocking even though the server is local-only.
-//
-// Capturing your own dev server is also the single most obvious use of this feature, so the
-// block is lifted by PAGE_CAPTURE_ALLOW_LOCAL=1. It is an env var specifically because a
-// cross-site request can set any JSON body it likes but cannot set the server's environment.
 const BLOCKED_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'])
 export const localCaptureAllowed = () => process.env.PAGE_CAPTURE_ALLOW_LOCAL === '1'
 export function assertCapturableUrl(input, { allowLocal = localCaptureAllowed() } = {}) {
@@ -40,16 +18,11 @@ export function assertCapturableUrl(input, { allowLocal = localCaptureAllowed() 
   const host = u.hostname.toLowerCase()
   const hint = ' (set PAGE_CAPTURE_ALLOW_LOCAL=1 to capture your own dev server)'
   if (BLOCKED_HOSTS.has(host) || host.endsWith('.localhost')) throw Object.assign(new Error('refusing to capture a loopback address' + hint), { status: 400 })
-  // Literal private ranges. DNS names that resolve into them are not caught here — this is a
-  // guard against the obvious footgun, not a full SSRF defence.
   if (/^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host))
     throw Object.assign(new Error('refusing to capture a private-network address' + hint), { status: 400 })
   return u.toString()
 }
 
-// Runs inside the page. Returns raw tallies rather than per-element records: a large page has
-// tens of thousands of elements and shipping them all back is pointless when the question is
-// "which values repeat". getComputedStyle normalises colours to rgb() for us.
 /* c8 ignore start — executes in the browser context, not under node */
 function collectInPage(maxElements) {
   const counts = { color: {}, backgroundColor: {}, borderColor: {}, fontFamily: {}, fontSize: {}, fontWeight: {}, lineHeight: {}, spacing: {}, borderRadius: {}, boxShadow: {} }
@@ -61,7 +34,7 @@ function collectInPage(maxElements) {
   let sampled = 0
   for (const el of els) {
     const r = el.getBoundingClientRect()
-    if (!r.width || !r.height) continue // invisible elements are not part of the visual design
+    if (!r.width || !r.height) continue
     const s = getComputedStyle(el)
     sampled++
     bump('color', s.color)
@@ -77,7 +50,6 @@ function collectInPage(maxElements) {
       bump('spacing', s[p])
   }
 
-  // Author-declared custom properties on :root — the closest thing to a declared token set.
   const cssVariables = {}
   const rootStyle = getComputedStyle(document.documentElement)
   for (const name of Array.from(rootStyle)) {
@@ -86,7 +58,6 @@ function collectInPage(maxElements) {
     if (v) cssVariables[name] = v
   }
 
-  // Same-origin stylesheets only; a cross-origin sheet throws on .cssRules access.
   const mediaQueries = [], keyframes = [], sheets = []
   for (const sheet of Array.from(document.styleSheets)) {
     let rules
@@ -103,8 +74,6 @@ function collectInPage(maxElements) {
     walk(rules)
   }
 
-  // Structured blocks: landmark elements plus anything large enough to read as a section, with
-  // boxes in page coordinates. Shaped like figma-capture's nodeTree so the annotation UI works.
   const seen = new Set()
   const blocks = []
   const push = (el, kind) => {
@@ -128,7 +97,6 @@ function collectInPage(maxElements) {
 
   return {
     counts, cssVariables, mediaQueries: mediaQueries.filter(Boolean), keyframes, sheets, blocks,
-    // The theme signal. body first, then html — body is frequently transparent over a styled html.
     bodyBackground: (() => {
       for (const el of [document.body, document.documentElement]) {
         const bg = el && getComputedStyle(el).backgroundColor
@@ -147,8 +115,6 @@ function collectInPage(maxElements) {
 
 const MAX_ELEMENTS = 8000
 
-// Hover/focus/active are captured by forcing the state on a sample of interactive elements and
-// re-reading the computed style — the deltas are what a static screenshot can never show.
 /* c8 ignore start — browser context */
 async function captureInteractionStates(page, limit = 25) {
   const targets = await page.$$('a, button, [role="button"], input, select, textarea')
@@ -164,7 +130,7 @@ async function captureInteractionStates(page, limit = 25) {
         const label = await el.evaluate(n => (n.textContent || n.getAttribute('aria-label') || n.tagName).trim().slice(0, 40))
         out.push({ label, changed, base: before, hover })
       }
-    } catch { /* an element that moved or detached mid-hover is not worth failing the capture over */ }
+    } catch { }
   }
   return out
 }
@@ -173,9 +139,6 @@ async function captureInteractionStates(page, limit = 25) {
 export async function capturePage({ url, viewport = { width: 1440, height: 900 }, colorScheme = 'light', interactions = true }) {
   const safeUrl = assertCapturableUrl(url)
   const { chromium } = await import('playwright')
-  // Normally Playwright finds its own browser. PAGE_CAPTURE_CHROMIUM points at an existing
-  // Chromium instead, for images that ship one whose build number does not match the pinned
-  // playwright package — the alternative is re-downloading a browser at runtime.
   const executablePath = process.env.PAGE_CAPTURE_CHROMIUM || undefined
   const browser = await chromium.launch(executablePath ? { executablePath } : {})
   try {
@@ -185,9 +148,6 @@ export async function capturePage({ url, viewport = { width: 1440, height: 900 }
     const raw = await page.evaluate(collectInPage, MAX_ELEMENTS)
     const interactionStates = interactions ? await captureInteractionStates(page) : []
 
-    // Does the page actually respond to the OS theme, or does it just have one look? Answered by
-    // re-reading the dominant background under the opposite scheme rather than by trusting a
-    // media query to exist — plenty of sites declare one and change nothing visible.
     const otherScheme = colorScheme === 'dark' ? 'light' : 'dark'
     await page.emulateMedia({ colorScheme: otherScheme })
     const alt = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
@@ -206,7 +166,6 @@ export async function capturePage({ url, viewport = { width: 1440, height: 900 }
         fetchedAt: new Date().toISOString(),
         screenshotFile: 'screenshot.png',
         viewport, colorScheme,
-        // figma-capture's annotation UI reads nodeTree — the page's structured blocks fill it.
         nodeTree: raw.blocks,
         styleSummary,
         cssVariables: raw.cssVariables,
@@ -222,12 +181,9 @@ export async function capturePage({ url, viewport = { width: 1440, height: 900 }
   } finally { await browser.close() }
 }
 
-// A capture is a lot of nested JSON. This is the flat view an agent can actually act on.
 export function contextMarkdown(capture) {
   const s = capture.styleSummary || {}
   const list = (rows, fmt) => (rows || []).slice(0, 12).map(fmt).join('\n') || '_none captured_'
-  // Anything missing prints as "unknown" — this file gets read by an agent, and a literal
-  // "undefined" in a table cell is the kind of thing that ends up quoted back as a value.
   const or = v => (v == null || v === '' ? 'unknown' : v)
   const vp = capture.viewport?.width && capture.viewport?.height ? `${capture.viewport.width}×${capture.viewport.height}` : 'unknown'
   return [

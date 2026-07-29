@@ -1,37 +1,7 @@
-// Local-only security hardening: loopback bind, Host-header allowlist, loopback CORS, optional
-// token gate. Feature 005.
-//
-// WHY THIS EXISTS AT ALL, given the server only listens on 127.0.0.1:
-//
-// "Loopback-only" stops another *machine* from connecting. It does not stop another *website*
-// from making the user's own browser connect. The attack is DNS rebinding:
-//
-//   1. The user visits evil.example while the dashboard is running.
-//   2. evil.example's DNS answers with a short TTL, first with its real IP, then with 127.0.0.1.
-//   3. The page fetches http://evil.example:5178/api/... — the browser now resolves that name to
-//      loopback, so the request lands on THIS server, originating from the user's own machine.
-//   4. Same-origin policy does not help: as far as the browser is concerned the origin is still
-//      evil.example, so the page may read the responses it gets back.
-//
-// The only part of that request the attacker cannot forge is the `Host` header — it is whatever
-// name the page had to use, i.e. `evil.example`, never `localhost`. Rejecting any Host outside a
-// loopback allowlist is therefore the defence, and it is the reason this check must NOT be
-// "simplified away" later on the grounds that the server is already loopback-only. It isn't
-// redundant with the bind address; it covers a case the bind address cannot.
-//
-// CCAM, the upstream project this was mined from, shipped a CVE on exactly this surface
-// (GHSA-gr74-4xfh-6jw9). Loush's server reads transcripts and writes config, so the blast radius
-// here is the same: read every conversation on the machine, rewrite the agent's configuration.
-//
-// Every guard here defaults to SAFE (guarding). Opening one up is an explicit act — an option or
-// an env var — never the default and never a silent fallback.
 import crypto from 'node:crypto'
 
 // ---------------------------------------------------------------------------------------------
-// Host parsing
 
-// Loopback names a browser can legitimately use to reach this process. IPv4 loopback is the whole
-// 127.0.0.0/8 block, not just 127.0.0.1 — some setups use 127.0.0.2 and friends.
 const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '::1', '0:0:0:0:0:0:0:1'])
 const IPV4_LOOPBACK = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 
@@ -42,7 +12,6 @@ const IPV4_LOOPBACK = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
 export function parseHost(raw) {
   const s = String(raw ?? '').trim()
   if (!s) return null
-  // [::1]:5178 / [::1]
   if (s.startsWith('[')) {
     const close = s.indexOf(']')
     if (close < 0) return null
@@ -52,19 +21,16 @@ export function parseHost(raw) {
     return { host, port: rest.slice(1) || '' }
   }
   const colons = s.split(':')
-  // A bare IPv6 literal with no brackets and no port (some clients send this).
   if (colons.length > 2) return { host: s.toLowerCase(), port: '' }
   if (colons.length === 2) {
     const [host, port] = colons
     if (!host) return null
-    // Only digits are a port; anything else means a malformed header we should not guess at.
     if (port && !/^\d+$/.test(port)) return null
     return { host: host.toLowerCase(), port }
   }
   return { host: s.toLowerCase(), port: '' }
 }
 
-/** True when a bare hostname (no port) refers to this machine's loopback interface. */
 export function isLoopbackHost(host) {
   const h = String(host ?? '').trim().toLowerCase().replace(/^\[|\]$/g, '')
   if (!h) return false
@@ -77,7 +43,6 @@ export function isLoopbackHost(host) {
 const splitList = v => String(v ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
 
 // ---------------------------------------------------------------------------------------------
-// 1. Host header allowlist (DNS-rebinding defence)
 
 export const HOST_DENIED = 'Host header not allowed'
 
@@ -109,7 +74,6 @@ export function hostHeaderGuard(opts = {}) {
     const parsed = parseHost(raw)
     if (!parsed) return false
     if (isLoopbackHost(parsed.host)) return true
-    // Exact match with port, or name-only match ignoring port.
     const withPort = parsed.port ? `${parsed.host}:${parsed.port}` : parsed.host
     return extra.has(withPort) || extra.has(parsed.host)
   }
@@ -118,8 +82,6 @@ export function hostHeaderGuard(opts = {}) {
     if (!enabled) return next()
     const raw = req.headers?.host ?? req.get?.('host')
     if (permitted(raw)) return next()
-    // 403 with an explanation, never a silent drop: a user who has legitimately put the dashboard
-    // behind a name will otherwise see an unexplained failure and have nothing to search for.
     return res.status(403).json({
       error: HOST_DENIED,
       host: raw ? String(raw) : null,
@@ -130,12 +92,11 @@ export function hostHeaderGuard(opts = {}) {
       howToPermit: 'Set DASH_ALLOWED_HOSTS to a comma-separated list of host names (e.g. DASH_ALLOWED_HOSTS=dash.local:5178) if you genuinely need to reach the dashboard under another name.',
     })
   }
-  mw.permits = permitted   // exposed for the WS upgrade handler, which has no (req,res,next)
+  mw.permits = permitted
   return mw
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2. Loopback CORS / Origin guard
 
 export const ORIGIN_DENIED = 'Origin not allowed'
 
@@ -167,9 +128,9 @@ export function loopbackCorsGuard(opts = {}) {
 
   const permitted = origin => {
     const o = String(origin ?? '').trim()
-    if (!o) return true                       // no Origin: not a cross-origin browser request
+    if (!o) return true
     if (extra.has(o.toLowerCase())) return true
-    if (o === 'null') return false            // sandboxed iframe / file:// — opaque, do not trust
+    if (o === 'null') return false
     let url
     try { url = new URL(o) } catch { return false }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
@@ -189,8 +150,6 @@ export function loopbackCorsGuard(opts = {}) {
       })
     }
     if (origin) {
-      // Echo the specific origin rather than `*`: `*` is incompatible with credentials, and being
-      // explicit keeps the response uncacheable across origins.
       res.set?.('Access-Control-Allow-Origin', String(origin))
       res.set?.('Vary', 'Origin')
       if (credentials) res.set?.('Access-Control-Allow-Credentials', 'true')
@@ -205,7 +164,6 @@ export function loopbackCorsGuard(opts = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 3. Optional token gate
 
 export const TOKEN_DENIED = 'Dashboard token required'
 
@@ -223,7 +181,6 @@ export function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb)
 }
 
-/** Pull a presented token out of a request: `Authorization: Bearer x` or `x-dashboard-token: x`. */
 export function presentedToken(req) {
   const h = req?.headers || {}
   const get = n => h[n] ?? req?.get?.(n)
@@ -255,8 +212,6 @@ export function tokenGate(opts = {}) {
   const permitted = req => !configured || safeEqual(presentedToken(req), token)
 
   const mw = (req, res, next) => {
-    // No token configured -> the gate is off. Documented above; do not "harden" this into a
-    // default-deny without also giving users a way to obtain a token, or the dashboard bricks.
     if (!enabled || !configured) return next()
     if (permitted(req)) return next()
     const presented = presentedToken(req)
@@ -274,7 +229,6 @@ export function tokenGate(opts = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Bind address
 
 export const DEFAULT_BIND_HOST = '127.0.0.1'
 
@@ -291,7 +245,6 @@ export function bindHost(env = process.env) {
   return v || DEFAULT_BIND_HOST
 }
 
-/** True when the configured bind address exposes the server beyond this machine. */
 export function isExposedBind(host = bindHost()) {
   const h = String(host).trim().toLowerCase().replace(/^\[|\]$/g, '')
   if (!h) return false

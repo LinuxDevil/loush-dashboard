@@ -420,3 +420,104 @@ test('an append landing between the stat and the read is left for the next call'
   const final = await stat(file)
   assert.equal(secondBatch.offset, final.size, 'the offset lands exactly on EOF, never past it')
 })
+
+// ---------------------------------------------------------------------------------------------
+// The malformed-line cap. A malformed entry holds the FULL TEXT of the bad line, so a wholly
+// corrupt file — a truncated sync, a binary blob with a .jsonl name — otherwise costs memory
+// proportional to the garbage while telling a reader nothing the first few lines don't.
+// ---------------------------------------------------------------------------------------------
+
+test('malformed lines are capped, and the number dropped is reported', async t => {
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'garbage.jsonl')
+  await writeFile(file, Array.from({ length: 50 }, (_, i) => `not json ${i}`).join('\n') + '\n')
+
+  const tailer = createTailer({ maxMalformedPerFile: 10 })
+  const r = await tailer.read(file)
+  assert.equal(r.ok, true)
+  assert.equal(r.malformed.length, 10, 'the cap holds')
+  assert.equal(r.malformedDropped, 40, 'and says exactly how many it left out')
+  assert.equal(r.maxMalformedPerFile, 10, 'the bound travels with the result, not just the docs')
+  // No silent caps: 10 shown must never be mistakable for "there were only 10".
+  assert.equal(r.malformed.length + r.malformedDropped, 50)
+})
+
+test('the cap keeps the most recent bad lines and each keeps its real file index', async t => {
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'garbage.jsonl')
+  await writeFile(file, Array.from({ length: 20 }, (_, i) => `bad ${i}`).join('\n') + '\n')
+
+  const tailer = createTailer({ maxMalformedPerFile: 3 })
+  const r = await tailer.read(file)
+  assert.deepEqual(r.malformed.map(m => m.line), ['bad 17', 'bad 18', 'bad 19'])
+  // `index` is the line's position in the file, not its position in the surviving array, so a
+  // reader can still locate the gap even after 17 entries were dropped.
+  assert.deepEqual(r.malformed.map(m => m.index), [17, 18, 19])
+})
+
+test('good records are never dropped, however much garbage surrounds them', async t => {
+  // The load-bearing assertion in this file. `records` feeds the usage walker, which sums every
+  // record to produce the cost of a session — capping it to bound memory would silently
+  // understate money on screen. Only `malformed` is ever capped.
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'mixed.jsonl')
+  const rows = []
+  for (let i = 0; i < 100; i++) { rows.push(`bad ${i}`); rows.push(JSON.stringify({ n: i })) }
+  await writeFile(file, rows.join('\n') + '\n')
+
+  const tailer = createTailer({ maxMalformedPerFile: 5 })
+  const r = await tailer.read(file)
+  assert.equal(r.records.length, 100, 'every good record survives the malformed cap')
+  assert.deepEqual(r.records.map(x => x.n), Array.from({ length: 100 }, (_, i) => i))
+  assert.equal(r.malformed.length, 5)
+  assert.equal(r.malformedDropped, 95)
+})
+
+test('a clean file reports zero dropped rather than omitting the field', async t => {
+  // "0 dropped" and "we did not check" must be distinguishable at the call site.
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 's.jsonl')
+  await writeFile(file, jsonl({ n: 1 }, { n: 2 }))
+
+  const tailer = createTailer()
+  const r = await tailer.read(file)
+  assert.equal(r.malformed.length, 0)
+  assert.equal(r.malformedDropped, 0)
+})
+
+test('the cached read reports the same drop count as the parse that produced it', async t => {
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'garbage.jsonl')
+  await writeFile(file, Array.from({ length: 30 }, (_, i) => `bad ${i}`).join('\n') + '\n')
+
+  const tailer = createTailer({ maxMalformedPerFile: 4 })
+  const first = await tailer.read(file)
+  const second = await tailer.read(file)
+  assert.equal(second.cached, true)
+  assert.equal(second.malformedDropped, first.malformedDropped, 'a cache hit must not lose the caveat')
+  assert.equal(second.malformed.length, first.malformed.length)
+})
+
+test('stats reports the bound and the running drop total', async t => {
+  const dir = await scratch()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, 'garbage.jsonl')
+  await writeFile(file, Array.from({ length: 12 }, (_, i) => `bad ${i}`).join('\n') + '\n')
+
+  const tailer = createTailer({ maxMalformedPerFile: 2 })
+  assert.equal(tailer.stats().malformedDropped, 0)
+  await tailer.read(file)
+  const s = tailer.stats()
+  assert.equal(s.maxMalformedPerFile, 2)
+  assert.equal(s.malformedDropped, 10)
+})
+
+test('a non-positive cap is rejected at construction', async () => {
+  assert.throws(() => createTailer({ maxMalformedPerFile: 0 }), TypeError)
+  assert.throws(() => createTailer({ maxMalformedPerFile: -1 }), TypeError)
+})

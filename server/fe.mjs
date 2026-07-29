@@ -1,27 +1,3 @@
-// server-fe.mjs — /api/fe/* — "The Working Set"
-//
-// WHY THIS EXISTS
-// Five independent audits of this repo reached the same conclusion: the expensive parsing was already
-// done and pointed at the wrong subject. server.mjs parses Edit/Write `structuredPatch` blocks — it has
-// the file path AND up to 24 lines of real diff text per agent edit — and renders "lines · 7d", one
-// integer summed across every project you own. Meanwhile nothing anywhere joins that history to the
-// codebase it happened to.
-//
-// This module performs that join. It is the only thing in the app that answers a question about YOUR
-// CODE rather than about your harness, your tokens, or your JIRA board.
-//
-// CONSTRAINTS (deliberate, and the reason the rest of the app fails the daily-use test)
-//   * ZERO external config. No JIRA, no gh, no Slack, no team file, no tokens. One engineer, one laptop,
-//     valuable five minutes after install. Everything here comes from ~/.claude transcripts + the repo on disk.
-//   * NULL IS NOT ZERO. Every field that has no data is `null` and renders as "—". A dashboard that shows
-//     a green 0% when it has never read a file is lying. `n` travels with every aggregate.
-//   * NO MAGIC WEIGHTS IN THE DARK. The one ranking heuristic (REWORK_WEIGHTS) is exported, its inputs
-//     are returned alongside the score, and the UI shows the arithmetic. It is labelled a rank, not a metric.
-//   * EVERY ROW ENDS IN AN ACTION. Open the dossier, resume the session that made the mess, start a new
-//     session pre-loaded with the blast radius, or mute the file. No dead-end numbers.
-//
-// PLANE: this is plane B (self-only harness data) joined to local source. No endpoint here accepts a
-// user/machine/engineer parameter and no aggregate here is keyed by a person. Same boundary as server.mjs.
 
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
@@ -31,10 +7,9 @@ import { execFile } from 'node:child_process'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
-const STORE = path.join(CLAUDE, 'fe-worksheet.json') // mutes only — inside the existing ~/.claude jail
+const STORE = path.join(CLAUDE, 'fe-worksheet.json')
 
 // ---------------------------------------------------------------------------
-// pure helpers (exported for test/fe-workingset.test.js)
 // ---------------------------------------------------------------------------
 
 export const SOURCE_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '.svelte'])
@@ -44,8 +19,6 @@ export const IGNORE_DIRS = new Set([
   'coverage', '.nyc_output', 'vendor', '__snapshots__', '.venv', 'venv', '.output', 'storybook-static',
 ])
 
-// Files that legitimately have zero importers — never flag these as orphans.
-// `[cm]?` matters: without it `server.mjs` — this app's own entry point — is reported as dead code.
 const ENTRY_RE = /(^|\/)(main|index|app|root|entry|server|middleware|layout|page|route|loading|error|not-found|template|default)\.[cm]?[jt]sx?$/i
 const CONFIG_RE = /(^|\/)[\w.-]*\.config\.[cm]?[jt]sx?$/i
 const ROUTE_DIR_RE = /(^|\/)(pages|app|routes)\//
@@ -63,21 +36,15 @@ export function classify(rel) {
   return 'other'
 }
 
-// Strip line/block comments so a commented-out import is not counted. Cheap and good enough;
-// it is not an AST and does not claim to be — string literals containing "//" survive as noise.
 const stripComments = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 
 const IMPORT_RES = [
-  // The clause before `from` must not cross a quote. With `[\s\S]*?` a side-effect import
-  // (`import './a.css'`) gets swallowed into the NEXT statement's `from` and silently vanishes —
-  // caught by test/fe-workingset.test.js. Newlines are still allowed, for multi-line destructuring.
-  /\bimport\s+(?:[^'"]*?\sfrom\s*)??['"]([^'"\n]+)['"]/g, // import x from 'y' | import 'y'
-  /\bexport\s+(?:\*|\{[\s\S]*?\})\s*from\s*['"]([^'"\n]+)['"]/g, // re-exports
+  /\bimport\s+(?:[^'"]*?\sfrom\s*)??['"]([^'"\n]+)['"]/g,
+  /\bexport\s+(?:\*|\{[\s\S]*?\})\s*from\s*['"]([^'"\n]+)['"]/g,
   /\brequire\(\s*['"]([^'"\n]+)['"]\s*\)/g,
-  /\bimport\(\s*['"]([^'"\n]+)['"]\s*\)/g, // dynamic import — code-splitting boundaries count
+  /\bimport\(\s*['"]([^'"\n]+)['"]\s*\)/g,
 ]
 
-/** Every module specifier a source file references. Order-preserving, de-duplicated. */
 export function extractImports(src) {
   const clean = stripComments(String(src || ''))
   const out = []
@@ -112,7 +79,7 @@ export function resolveSpecifier(fromRel, spec, fileSet, aliasRoot = 'src') {
   } else if (spec.startsWith('/')) {
     base = spec.replace(/^\/+/, '')
   } else {
-    return null // bare specifier: npm dependency, not our code
+    return null
   }
   if (base.startsWith('..')) return null
   for (const e of RESOLVE_EXTS) { const c = base + e; if (fileSet.has(c)) return c }
@@ -149,7 +116,6 @@ export function buildImportGraph(sources, fileSet, aliasRoot = 'src') {
   return { importers, imports, stats: { resolved, external, unresolved } }
 }
 
-/** Does `rel` have a colocated story / test? Looks for sibling and __tests__/__stories__ conventions. */
 export function siblingsFor(rel, fileSet) {
   const dir = path.posix.dirname(rel)
   const stem = path.posix.basename(rel).replace(/\.[cm]?[jt]sx?$|\.vue$|\.svelte$/i, '')
@@ -163,16 +129,6 @@ export function siblingsFor(rel, fileSet) {
   }
 }
 
-// The one ranking heuristic in this module. Exported, shown in the UI, and every input is returned
-// with the row so the number is never a black box.
-//
-//   revisitSessions  you came BACK to this file in a NEW session          (the agent did not get it right)
-//   revisitDays      you came back on a DIFFERENT day                     (it was not one sitting)
-//   failures         tool errors attributed to this exact file            (it actively fought you)
-//   extraEdits       edits beyond one per session                         (thrash within a session)
-//
-// A file edited in exactly one session scores `null`, not 0 — that is work, not rework, and calling it
-// 0 would rank it against files we do have evidence about.
 export const REWORK_WEIGHTS = { revisitSession: 3, revisitDay: 2, failure: 2, extraEdit: 1 }
 export const REWORK_MIN_SESSIONS = 2
 
@@ -225,7 +181,7 @@ export function aggregateFiles({ edits = [], errors = [], root }) {
     if (!er.file || !er.file.startsWith(root + path.sep)) continue
     const r = rel(er.file)
     const x = rows.get(r)
-    if (!x) continue // an error on a file the agent never successfully edited is not rework evidence
+    if (!x) continue
     x.failures++
     if (x.errSamples.length < 5) x.errSamples.push({ t: er.t, tool: er.tool, text: er.text, sessionId: er.sessionId })
   }
@@ -262,7 +218,6 @@ export function coverageOf(rel, importerNames = [], fileSet = new Set()) {
   }
 }
 
-/** An orphan candidate is a source file nobody imports that is not an entry point, route, config, test or story. */
 export function isOrphanCandidate(rel, importerCount) {
   if (importerCount !== 0) return false
   if (classify(rel) !== 'source') return false
@@ -270,12 +225,10 @@ export function isOrphanCandidate(rel, importerCount) {
   return true
 }
 
-/** Prompt → edit → error, in time order, for one file. The causal chain git never recorded. */
 export function buildTimeline({ file, edits, errors, prompts, limit = 60 }) {
   const ev = []
   for (const e of edits) if (e.file === file) ev.push({ kind: 'edit', t: e.t, sessionId: e.sessionId, add: e.add, del: e.del, hunk: e.hunk })
   for (const er of errors) if (er.file === file) ev.push({ kind: 'error', t: er.t, sessionId: er.sessionId, tool: er.tool, text: er.text })
-  // the user prompt that immediately precedes an edit, within the same session — the instruction that caused it
   const bySession = new Map()
   for (const p of prompts) {
     if (!bySession.has(p.sessionId)) bySession.set(p.sessionId, [])
@@ -298,7 +251,6 @@ export function buildTimeline({ file, edits, errors, prompts, limit = 60 }) {
   return ev.slice(-limit)
 }
 
-/** The paste-ready preamble: what this file is, who depends on it, and how the agent last changed it. */
 export function contextBundle({ rel, importers = [], importsOf = [], hunks = [], failures = [] }) {
   const L = []
   L.push(`## Working context for \`${rel}\``, '')
@@ -320,13 +272,11 @@ export function contextBundle({ rel, importers = [], importsOf = [], hunks = [],
 }
 
 // ---------------------------------------------------------------------------
-// IO — async, capped, cached. (server.mjs makes 424 blocking sync fs calls; this module makes none
-// on the request path. A dashboard that stalls its own event loop to draw a chart is not a tool.)
 // ---------------------------------------------------------------------------
 
 const WALK_CAP = 5000
 const MAX_SRC_BYTES = 400_000
-const repoCache = new Map() // root -> {at, data}
+const repoCache = new Map()
 const REPO_TTL = 60_000
 
 async function walkRepo(root) {
@@ -363,7 +313,7 @@ const git = (root, args) => new Promise(resolve => {
 
 async function dirtyFiles(root) {
   const out = await git(root, ['status', '--porcelain'])
-  if (out == null) return null // not a git repo / git missing → null, NOT an empty array
+  if (out == null) return null
   return out.split('\n').map(l => l.slice(3).trim()).filter(Boolean).map(l => l.split(' -> ').pop())
 }
 
@@ -383,7 +333,6 @@ async function repoIndex(root, fresh) {
 const readStore = () => { try { return JSON.parse(fs.readFileSync(STORE, 'utf8')) } catch { return { muted: {} } } }
 
 // ---------------------------------------------------------------------------
-// mount
 // ---------------------------------------------------------------------------
 
 export default function mountFe(app, deps = {}) {
@@ -391,8 +340,6 @@ export default function mountFe(app, deps = {}) {
   if (typeof scanTranscripts !== 'function' || typeof failStats !== 'function')
     throw new Error('mountFe requires { scanTranscripts, failStats }')
 
-  // Everything the agent has ever edited, grouped by the repo it happened in. Zero config: the repo
-  // list comes from the cwd recorded in your own transcripts.
   const harvest = days => {
     const all = scanTranscripts()
     const cutoff = days ? Date.now() - days * 86_400_000 : 0
@@ -410,12 +357,9 @@ export default function mountFe(app, deps = {}) {
     return { all, edits, errors, prompts, cwdOf }
   }
 
-  // Which repos do we have agent history for? Ranked by edit volume, not session count —
-  // "where did the agent change code" beats "where did you sit".
   const repoList = ({ edits, cwdOf }) => {
     const byRoot = new Map()
     const roots = [...new Set(cwdOf.values())].filter(c => { try { return fs.statSync(c).isDirectory() } catch { return false } })
-    // longest-prefix match so a session started in a subdirectory still attributes to the repo root
     const sorted = [...roots].sort((a, b) => b.length - a.length)
     for (const e of edits) {
       const root = sorted.find(r => e.file.startsWith(r + path.sep))
@@ -442,7 +386,6 @@ export default function mountFe(app, deps = {}) {
       const h = harvest(days)
       const repos = repoList(h)
       if (!repos.length) {
-        // Honest empty state. Not a green all-clear, not a zero — a statement about what is missing.
         return res.json({
           available: false,
           reason: 'no-agent-history',
@@ -458,7 +401,6 @@ export default function mountFe(app, deps = {}) {
       for (const r of rows) {
         const importerSet = idx.graph.importers.get(r.rel)
         const known = idx.fileSet.has(r.rel)
-        // A file we never walked (deleted, gitignored, outside the walk cap) gets null — not 0 importers.
         r.exists = known
         r.importers = known ? (importerSet ? importerSet.size : 0) : null
         r.importerFiles = known && importerSet ? [...importerSet].slice(0, 50) : null
@@ -470,14 +412,10 @@ export default function mountFe(app, deps = {}) {
           r.testedBy = cov.testedBy
           r.storiedBy = cov.storiedBy
         } else { r.hasTest = null; r.hasStory = null; r.testedBy = null; r.storiedBy = null }
-        // A test or story importing you is not blast radius — it is coverage. Product code that
-        // depends on you is the number that should make you careful.
-        // 0 when we walked the file and nothing imports it; null ONLY when we never saw the file.
         r.productImporters = !known ? null
           : importerSet ? [...importerSet].filter(f => !isTestFile(f) && !isStoryFile(f)).length : 0
         r.orphan = known ? isOrphanCandidate(r.rel, r.importers) : null
         r.muted = !!muted[root + '::' + r.rel]
-        // exposure = how much PRODUCT code is downstream of a file the agent has been struggling with
         r.exposure = r.productImporters != null && r.score != null ? r.score * (1 + r.productImporters) : null
       }
 
@@ -533,7 +471,6 @@ export default function mountFe(app, deps = {}) {
       const hunks = timeline.filter(e => e.kind === 'edit' && e.hunk).slice(-3).reverse().map(e => e.hunk)
       const failures = timeline.filter(e => e.kind === 'error').slice(-5)
 
-      // Sessions that touched this file, newest first — this is what the resume action targets.
       const sessions = []
       const seen = new Set()
       for (const e of [...timeline].reverse()) {
@@ -557,8 +494,6 @@ export default function mountFe(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
-  // Mute a file so a known-noisy path (a generated file, a lockfile you keep regenerating) stops
-  // dominating the rank. Backed up through the same versioned path as every other write in this app.
   app.post('/api/fe/mute', (req, res) => {
     try {
       const { root, file, muted } = req.body || {}

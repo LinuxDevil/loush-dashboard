@@ -14,7 +14,19 @@ const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 10
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd' }
 
+// Where a name came from, spelled out on hover. A title the user set means something different from
+// one we lifted off the first prompt, and a row that cannot tell you which is quietly asking you to
+// trust both equally.
+const NAME_SOURCE = {
+  custom: 'you titled this session (/rename, claude -n, or Ctrl+R in the picker)',
+  ai: 'auto-generated title from the conversation',
+  prompt: 'no title was ever set — this is the first thing you asked, truncated',
+}
+
 const COLS = [
+  // The name first, because it is the only column a human can act on. Sorting by it sorts by the
+  // fallback id for unnamed rows, which is the same thing the cell shows.
+  ['name', 'Session', r => r.name || r.sessionId],
   ['project', 'Project', r => r.project], ['branch', 'Branch', r => r.branch || ''],
   ['cost', '$', r => r.cost], ['out', 'Out tok', r => r.out], ['cacheReadPct', 'Cache read', r => r.cacheReadPct],
   ['durationMs', 'Duration', r => r.durationMs], ['toolCalls', 'Tools', r => r.toolCalls],
@@ -71,15 +83,25 @@ export default function SessionsSection() {
   const filterRef = useRef(null)
   const bodyRef = useRef(null)
 
-  useEffect(() => { setD(null); api.get(`/api/sessions?days=${days}&limit=200`).then(setD).catch(() => {}) }, [days])
+  // The search runs on the SERVER now. It used to filter the rows already loaded, which meant a
+  // query only ever searched the current window's first 200 — you could type the exact name of a
+  // session and get "no sessions" because it was row 201. Debounced so a keystroke is not a request.
+  const [qLive, setQLive] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setQLive(q), 300)
+    return () => clearTimeout(t)
+  }, [q])
+  useEffect(() => {
+    setD(null)
+    api.get(`/api/sessions?days=${days}&limit=200&q=${encodeURIComponent(qLive)}`).then(setD).catch(() => {})
+  }, [days, qLive])
   useEffect(() => { api.get('/api/usage').then(setUsage).catch(() => {}) }, [])
 
   const rows = useMemo(() => {
     if (!d) return []
     const get = COLS.find(c => c[0] === sort.col)?.[2] || (r => r[sort.col])
-    const f = d.sessions.filter(s => !q || (s.project + ' ' + (s.branch || '') + ' ' + s.sessionId + ' ' + s.cwd).toLowerCase().includes(q.toLowerCase()))
-    return [...f].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
-  }, [d, q, sort])
+    return [...d.sessions].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
+  }, [d, sort])
 
   // Resume IN-APP. This used to copy `claude --resume <id>` for you to paste into a terminal,
   // while POST /api/chat {resume} — which does it properly — already existed and was used by Chat.
@@ -137,8 +159,15 @@ export default function SessionsSection() {
 
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
-          <h3>Session ledger <span className="muted">{rows.length} sessions · plane: this machine only</span></h3>
-          <input ref={filterRef} placeholder="filter project, branch, id… ( / )" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }} />
+          <h3>Session ledger <span className="muted">
+            {/* `total` is the whole matched set; `rows.length` is what this page holds. Saying only
+                one of them would let a bounded page read as everything there was. */}
+            {d.total} session{d.total === 1 ? '' : 's'}{rows.length < d.total ? ` · showing ${rows.length}` : ''}
+            {d.named < d.total ? ` · ${d.total - d.named} never titled` : ''}
+            {d.q ? ` · matching “${d.q}”` : ''} · plane: this machine only
+          </span></h3>
+          <input ref={filterRef} placeholder="search name, id, path… ( / )" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }}
+            title="searched on the server across the whole window, not just the rows on screen" />
           <select value={days} onChange={e => setDays(Number(e.target.value))}>
             <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
           </select>
@@ -157,6 +186,19 @@ export default function SessionsSection() {
               {rows.map((r, i) => [
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
                   style={{ background: i === cur ? 'var(--accent-bg)' : undefined, cursor: 'pointer' }}>
+                  {/* A name the human chose reads as authoritative; an inferred one is dimmer and
+                      says where it came from on hover. An unnamed session shows its short id in the
+                      tertiary colour rather than a blank cell — "we don't know" must look different
+                      from "it has no name". */}
+                  <td style={{ maxWidth: 260 }} title={r.name ? `${NAME_SOURCE[r.nameSource] || ''}\n${r.cwd}` : `this session was never titled\n${r.cwd}`}>
+                    <span style={{
+                      display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      color: r.name ? (r.nameSource === 'custom' ? 'var(--text-primary)' : 'var(--text-secondary)') : 'var(--text-tertiary)',
+                      font: r.name ? '500 12px sans-serif' : `400 11px ${MONO}`,
+                    }}>
+                      {r.name || r.sessionId.slice(0, 8)}
+                    </span>
+                  </td>
                   <td className="mono" style={{ color: 'var(--text-primary)' }} title={r.cwd}>{r.project}</td>
                   <td className="mono" style={{ color: r.branch ? 'var(--violet)' : DIM }}>{r.branch || '—'}</td>
                   <td className="num" style={{ color: r.cost > 20 ? GOLD : 'var(--text-primary)' }}>${r.cost.toFixed(2)}</td>
@@ -180,11 +222,11 @@ export default function SessionsSection() {
                 </tr>,
                 events === r.sessionId ? (
                   <tr key={r.sessionId + ':events'}>
-                    <td colSpan={11} style={{ background: 'var(--bg-base)' }}><SessionEvents sessionId={r.sessionId} /></td>
+                    <td colSpan={12} style={{ background: 'var(--bg-base)' }}><SessionEvents sessionId={r.sessionId} /></td>
                   </tr>
                 ) : null,
               ]).flat().filter(Boolean)}
-              {rows.length === 0 && <tr><td colSpan={11} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={12} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
             </Stagger>
           </table>
         </div>

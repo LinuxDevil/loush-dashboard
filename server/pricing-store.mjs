@@ -1,27 +1,9 @@
-// Where the model rate table lives when it is not the code default, and the two routes that
-// read and write it.
-//
-// lib/pricing.mjs is pure and knows nothing about disk. This is the half that does: it reads
-// the stored table out of ~/.claude/dashboard-meta.json at boot, hands it to setPriceTable(),
-// and hands it over again whenever the user edits it. Code table is the seeded default;
-// stored rules, if any, replace it wholesale.
-//
-// dashboard-meta.json rather than config.json or projects.json: a rate table is per-user
-// state, like tags and baselines and pins, not repo configuration and not a credential.
-//
-// NOT mounted under /api/eng/* — test/server/eng-privacy.test.js bans the field names
-// price|pricing|cost|usd|spend on that surface, and rightly so. This is the opposite kind of
-// endpoint and belongs on its own path.
 import { DEFAULT_PRICE_TABLE, RATE_KEYS, setPriceTable } from '../lib/pricing.mjs'
 
 export const MAX_RULES = 200
 const MAX_MATCH_LEN = 200
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-// This is a trust boundary: everything below is untrusted input from a PUT body, and a
-// malformed rate that gets stored is a wrong dollar figure on every screen until someone
-// notices. Reject with a reason rather than coercing — a silently-repaired rate is the same
-// class of bug as a silent fallback rate.
 const rateSet = (o, where) => {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return `${where} must be an object`
   for (const k of RATE_KEYS) {
@@ -54,9 +36,6 @@ export function validateRules(rules) {
   return null
 }
 
-// Only the fields the pricing module reads are persisted. An editor is free to POST extra
-// keys; they are dropped rather than stored, so the file cannot accumulate a second, shadow
-// schema that nothing honours.
 const pick = r => {
   const out = {}
   if (r.id != null) out.id = r.id; else out.match = r.match
@@ -74,9 +53,6 @@ const stored = meta => {
   return p && Array.isArray(p.rules) && p.rules.length && !validateRules(p.rules) ? p : null
 }
 
-// The response body, and the request body for PUT. One shape both ways so an editor can round
-// trip what it was given:
-//   { rules: [...], source: 'default' | 'stored', updatedAt: <ms epoch> | null }
 const payload = meta => {
   const s = stored(meta)
   return {
@@ -86,8 +62,6 @@ const payload = meta => {
   }
 }
 
-// Called at mount and after every successful write. Anything that has already priced entries
-// against the old table is stale the moment this runs, which is what onChange is for.
 export function applyStoredRates(readMeta) {
   const s = stored(readMeta())
   setPriceTable(s ? s.rules : null)
@@ -99,8 +73,6 @@ export default function mountPricing(app, { readMeta, writeMeta, onChange } = {}
 
   app.get('/api/pricing', (req, res) => res.json(payload(readMeta())))
 
-  // PUT { rules: [...] } replaces the table. PUT { rules: null } clears the override and
-  // restores the code defaults — the reset button, without a second endpoint.
   app.put('/api/pricing', (req, res) => {
     const rules = req.body?.rules
     const meta = readMeta()
