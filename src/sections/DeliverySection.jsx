@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import Hub from '../ui/Hub.jsx'
 import Skeleton from '../ui/Skeleton.jsx'
 import EngDashboard from './EngDashboard.jsx'
+import EngineeringSection from './EngineeringSection.jsx'
 import { api, toast } from '../lib/api.js'
 
 // ---------- 2: Eng folds into the shell as the Delivery section ----------
@@ -28,15 +29,22 @@ const NotWired = ({ s }) => (
 )
 
 export default function DeliverySection({ onNav }) {
-  return (
-    <Hub items={[
-      { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 8, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
-      { label: 'Idea → prod funnel', el: <Funnel /> },
-      { label: 'AI ROI', el: <Roi /> },
-      { label: 'DORA', el: <Dora /> },
-      { label: '1:1 prep', el: <OneOnOne /> },
-    ]} />
-  )
+  // The Quality & risk tab reads snapshot.quality — escape rate, area hotspots and ownership
+  // concentration — which server/eng.mjs has always computed and nothing ever displayed. It lives
+  // here rather than as its own nav entry because the restored Engineering dashboard is already
+  // on this screen and two top-level entries called "Engineering" would be worse than useless.
+  // Gated on the `Engineering` key in projects.json; hidden entirely when that is off.
+  const [features, setFeatures] = useState(null)
+  useEffect(() => { api.get('/api/features').then(setFeatures).catch(() => setFeatures({})) }, [])
+  const items = [
+    { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 8, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
+    { label: 'Idea → prod funnel', el: <Funnel /> },
+    { label: 'AI ROI', el: <Roi /> },
+    { label: 'DORA', el: <Dora /> },
+    { label: '1:1 prep', el: <OneOnOne /> },
+  ]
+  if (features?.engineering) items.splice(1, 0, { label: 'Quality & risk', el: <EngineeringSection /> })
+  return <Hub items={items} />
 }
 
 // ---------- 11: idea→prod funnel — with the QUEUE half included ----------

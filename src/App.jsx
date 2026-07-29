@@ -6,7 +6,6 @@ import HooksSection from './sections/HooksSection.jsx';
 import ArtifactsSection from './sections/ArtifactsSection.jsx';
 import Overview from './sections/Overview.jsx';
 import LiveSection from './sections/LiveSection.jsx';
-import EngineeringSection from './sections/EngineeringSection.jsx';
 import TeamsSection from './sections/TeamsSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
 import ChatSection from './sections/ChatSection.jsx';
@@ -274,27 +273,10 @@ const COMPANY_SECTION = {
     />
   ),
 };
-// Engineering metrics — escape rate, area hotspots, ownership concentration. Behind the
-// `Engineering` key in projects.json, mirroring Company_Tools, and off by default: every number
-// comes from the JIRA/GitHub snapshot, so without credentials it is an empty frame. Sits next to
-// Delivery because it is the same subject read a level deeper.
-const ENGINEERING_SECTION = {
-  id: 'engineering',
-  label: 'Engineering',
-  icon: '◭',
-  kicker: 'Delivery',
-  title: 'Engineering — escape rate, hotspots & ownership risk',
-  el: <EngineeringSection />,
-};
-
 const sectionsFor = (features) => {
   const out = [...BASE_SECTIONS];
-  if (features?.engineering) {
-    // Immediately after Delivery/Ticket rather than appended, so it reads as part of the
-    // delivery story instead of a bolt-on at the bottom of the rail.
-    const at = out.findIndex(s => s.id === 'ticket');
-    out.splice(at >= 0 ? at + 1 : out.length, 0, ENGINEERING_SECTION);
-  }
+  // The Engineering flag no longer adds a nav entry: the quality metrics render as a tab inside
+  // Delivery, next to the restored Engineering dashboard, so there is one place for this subject.
   if (features?.companyTools) out.push(COMPANY_SECTION);
   return out;
 };
