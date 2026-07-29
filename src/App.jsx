@@ -7,6 +7,7 @@ import ArtifactsSection from './sections/ArtifactsSection.jsx';
 import Overview from './sections/Overview.jsx';
 import LiveSection from './sections/LiveSection.jsx';
 import EngineeringSection from './sections/EngineeringSection.jsx';
+import TeamsSection from './sections/TeamsSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
 import ChatSection from './sections/ChatSection.jsx';
 import HarnessSection from './sections/HarnessSection.jsx';
@@ -31,6 +32,7 @@ import SetupSection from './sections/SetupSection.jsx';
 import TicketSection from './sections/TicketSection.jsx';
 import ConstitutionSection from './company/ConstitutionSection.jsx';
 import FigmaCaptureSection from './company/FigmaCaptureSection.jsx';
+import DesignMapSection from './company/DesignMapSection.jsx';
 import CapabilityLedger, { Inventory } from './sections/CapabilityLedger.jsx';
 import SessionsSection from './sections/SessionsSection.jsx';
 import ForensicsSection from './sections/ForensicsSection.jsx';
@@ -138,6 +140,10 @@ const BASE_SECTIONS = [
           { label: 'Quality', el: <QualitySection /> },
           { label: 'Bugs', el: <BugsSection /> },
           { label: 'Reliability', el: <ReliabilitySection /> },
+          // /api/team has been served since PR #3 with nothing reading it. It belongs here
+          // rather than at top level: an agent team is a way of doing agent work, which is
+          // what this hub already collects.
+          { label: 'Agent Teams', el: <TeamsSection /> },
         ]}
       />
     ),
@@ -248,6 +254,10 @@ const COMPANY_SECTION = {
       items={[
         { label: 'Constitution', el: <ConstitutionSection /> },
         { label: 'Figma Capture', el: <FigmaCaptureSection /> },
+        // lib/design-map.mjs had neither an endpoint nor a screen since PR #4; it sits here
+        // because it answers the question next to Capture's — which component in code is a
+        // given frame supposed to be.
+        { label: 'Design Map', el: <DesignMapSection /> },
       ]}
     />
   ),

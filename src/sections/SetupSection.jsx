@@ -45,6 +45,41 @@ const Section = ({ title, sub, children, right }) => (
 const Dot = ({ ok, warn }) => <span style={{ width: 8, height: 8, borderRadius: 4, display: 'inline-block', background: ok ? GREEN : warn ? GOLD : DIM, flexShrink: 0 }} />
 const emails = s => String(s || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
 
+// /api/meta has existed since PR #3 with nothing reading it. It answers a question this app
+// otherwise only implies: which directories does it actually read from and write to. Worth
+// showing plainly on a screen that is already about "where does my configuration live", not
+// least because every path here is one a user may need to back up or inspect by hand.
+function Paths() {
+  const [m, setM] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/meta').then(setM).catch(e => setErr(e.message)) }, [])
+  const rows = [
+    ['home', m?.home, 'your home directory'],
+    ['Claude config', m?.claudeDir, 'skills, commands, agents, settings.json and the transcripts this dashboard reads'],
+    ['current project', m?.project, 'the checkout most screens default to'],
+    ['backups', m?.backups, 'every file this app overwrites is copied here first'],
+  ]
+  return (
+    <div style={card}>
+      <b>Paths</b>
+      <div style={{ color: DIM, font: '400 12px sans-serif', margin: '6px 0 10px' }}>
+        Where this dashboard reads and writes. Nothing here is editable — these come from the server.
+      </div>
+      {err && <div style={{ color: RED, font: '400 12px monospace' }}>{err}</div>}
+      {!m && !err && <div style={{ color: DIM, font: '400 12px monospace' }}>loading…</div>}
+      {m && rows.map(([label, value, gloss]) => (
+        <div key={label} style={{ display: 'flex', gap: 12, padding: '4px 0', font: '400 12px monospace', alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <span style={{ color: DIM, width: 130, flexShrink: 0 }}>{label}</span>
+          {/* An absent path is reported as unknown rather than as an empty string, which would
+              read as "nowhere" instead of "the server did not say". */}
+          <span style={{ color: value ? 'var(--text-primary)' : DIM }}>{value || 'unknown'}</span>
+          <span style={{ color: DIM, flexBasis: '100%', fontSize: 11 }}>{gloss}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function SetupSection() {
   const [d, setD] = useState(null)
   const [err, setErr] = useState(null)
@@ -67,6 +102,7 @@ export default function SetupSection() {
       <StoryPoints d={d} reload={load} />
       <OrgTools d={d} reload={load} />
       <Notifications d={d} reload={load} />
+      <Paths />
     </div>
   )
 }

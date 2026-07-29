@@ -26,6 +26,7 @@ import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { createTailer } from '../lib/transcript-tail.mjs'
 import { detectFramework, lintFrontmatter, declaredDependencies, checkDependencies } from '../lib/capability-provenance.mjs'
 import { auditRepo } from '../lib/freeze-audit.mjs'
+import { buildMap } from '../lib/design-map.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -431,14 +432,27 @@ app.put('/api/hooks', (req, res) => {
   fs.writeFileSync(file, JSON.stringify(settings, null, 2))
   res.json({ ok: true, backup: bak })
 })
+// Superseded by PUT /api/harness/raw, which is what the UI actually calls. Kept because an
+// external script may still use it, but no longer as a second way to write config:
+//
+// as written it took a full settings object and wrote it straight to disk — no approval step for
+// global scope, and no track() entry. That made it an unaudited write path around the exact
+// governance this app claims to provide: a global settings change through here never appeared in
+// the audit log and never waited for review, while the same change through the UI did both.
+//
+// It now routes through the identical path as /api/harness/raw. Behaviour for a project scope is
+// unchanged apart from being recorded; a global edit now returns a proposal instead of having
+// silently applied.
 app.put('/api/settings', (req, res) => {
   const { scope, settings } = req.body // full settings object, already-parsed JSON
   const file = SETTINGS_FILES[scope]
   if (!file) return res.status(400).json({ error: 'bad scope' })
-  const bak = backup(file)
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2))
-  res.json({ ok: true, backup: bak })
+  if (settings == null || typeof settings !== 'object') return res.status(400).json({ error: 'settings must be an object' })
+  const content = JSON.stringify(settings, null, 2)
+  if (scope === 'user' || scope === 'global')
+    return res.json({ ok: true, proposed: propose(file, content, 'edit settings.json (api/settings)'), superseded: 'PUT /api/harness/raw' })
+  track(file, content, { scope, summary: 'edit settings.json (api/settings)' })
+  res.json({ ok: true, superseded: 'PUT /api/harness/raw' })
 })
 
 // ---------- Customize: one unified inventory + REAL enable/disable across every category ----------
@@ -920,6 +934,33 @@ async function parsedRecords(file) {
   const r = await analysisTailer.read(file)
   return r.ok ? { records: r.records, malformed: r.malformed?.length || 0, cached: r.cached } : { records: [], malformed: 0, cached: false, error: r.error }
 }
+
+// ---------- design map ----------
+// lib/design-map.mjs has had no endpoint since it was added, so nothing could call it. It maps a
+// design-system repo's components to their Figma nodes by harvesting story files, and flags
+// collisions where two stories claim the same node.
+app.get('/api/design-map', (req, res) => {
+  try {
+    const dsRepo = path.resolve(String(req.query.repo || ''))
+    if (!req.query.repo) return res.status(400).json({ error: 'repo required — the path to a design-system checkout' })
+    if (!fs.existsSync(dsRepo)) return res.status(404).json({ error: 'repo not found: ' + dsRepo })
+    const map = buildMap(dsRepo)
+    const rows = Array.isArray(map) ? map : map.rows || []
+    res.json({
+      repo: dsRepo,
+      rows,
+      summary: {
+        total: rows.length,
+        mapped: rows.filter(r => r.figma).length,
+        // Unmapped is a real state worth counting, not an error: it means the component exists
+        // in code and no story claims a Figma node for it.
+        unmapped: rows.filter(r => !r.figma).length,
+        collisions: rows.filter(r => r.evidence?.collisionWith?.length).length,
+      },
+      importFrom: rows[0]?.importFrom ?? null,
+    })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 
 // ---------- freeze audit ----------
 // Which stack tags a checkout actually warrants. Without this every repo fails the checks
