@@ -4,9 +4,6 @@ import Skeleton from '../ui/Skeleton.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 10: session ledger — real $, terminal escape hatches, keyboard layer ----------
-// The app's only previous "resume" spawned the session INSIDE the dashboard's chat pane, which is not
-// what a terminal-first dev wants. This copies `cd <cwd> && claude --resume <id>` and gets out of the way.
-// Plane B: this machine's own transcripts. There is no user/machine parameter and there never will be.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)'
@@ -14,9 +11,6 @@ const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 10
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd' }
 
-// Where a name came from, spelled out on hover. A title the user set means something different from
-// one we lifted off the first prompt, and a row that cannot tell you which is quietly asking you to
-// trust both equally.
 const NAME_SOURCE = {
   custom: 'you titled this session (/rename, claude -n, or Ctrl+R in the picker)',
   ai: 'auto-generated title from the conversation',
@@ -24,8 +18,6 @@ const NAME_SOURCE = {
 }
 
 const COLS = [
-  // The name first, because it is the only column a human can act on. Sorting by it sorts by the
-  // fallback id for unnamed rows, which is the same thing the cell shows.
   ['name', 'Session', r => r.name || r.sessionId],
   ['project', 'Project', r => r.project], ['branch', 'Branch', r => r.branch || ''],
   ['cost', '$', r => r.cost], ['out', 'Out tok', r => r.out], ['cacheReadPct', 'Cache read', r => r.cacheReadPct],
@@ -33,10 +25,6 @@ const COLS = [
   ['compactions', 'Compact', r => r.compactions], ['errors', 'Errors', r => r.errors], ['last', 'Last', r => r.last],
 ]
 
-// Readable rows for one session's tool calls, from /api/session/events. A timeline that said
-// "Edit" now says what was edited and, where a diff was recorded, which function it landed in.
-// Tool input VALUES never reach this response — a Bash command could carry a token — so titles
-// show the binary and the detail shows key names only.
 function SessionEvents({ sessionId }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
@@ -48,9 +36,7 @@ function SessionEvents({ sessionId }) {
     <div style={{ padding: '6px 0 10px', font: '400 11px var(--mono)' }}>
       <div style={{ color: 'var(--text-tertiary)', marginBottom: 6 }}>
         {groups.length} rows
-        {/* Both are deliberate reports rather than silent behaviour: a capped list that looks
-            complete, or a sidechain record with no parent link quietly flattened, would each be
-            a small lie about what the transcript said. */}
+        {}
         {d.truncated?.omitted > 0 && ` · ${d.truncated.omitted} omitted by the ${d.truncated.limit} row cap`}
         {d.counts?.sidechainUnlinked > 0 && ` · ${d.counts.sidechainUnlinked} subagent record(s) carry no parent link and could not be nested`}
         {d.unparsableLines > 0 && ` · ${d.unparsableLines} unparsable line(s)`}
@@ -79,21 +65,20 @@ export default function SessionsSection() {
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'last', dir: -1 })
   const [cur, setCur] = useState(0)
-  const [events, setEvents] = useState(null) // sessionId whose tool-call rows are expanded
+  const [events, setEvents] = useState(null)
   const filterRef = useRef(null)
   const bodyRef = useRef(null)
 
-  // The search runs on the SERVER now. It used to filter the rows already loaded, which meant a
-  // query only ever searched the current window's first 200 — you could type the exact name of a
-  // session and get "no sessions" because it was row 201. Debounced so a keystroke is not a request.
   const [qLive, setQLive] = useState('')
   useEffect(() => {
     const t = setTimeout(() => setQLive(q), 300)
     return () => clearTimeout(t)
   }, [q])
+  const [pending, setPending] = useState(false)
   useEffect(() => {
-    setD(null)
-    api.get(`/api/sessions?days=${days}&limit=200&q=${encodeURIComponent(qLive)}`).then(setD).catch(() => {})
+    setPending(true)
+    api.get(`/api/sessions?days=${days}&limit=200&q=${encodeURIComponent(qLive)}`)
+      .then(setD).catch(() => {}).finally(() => setPending(false))
   }, [days, qLive])
   useEffect(() => { api.get('/api/usage').then(setUsage).catch(() => {}) }, [])
 
@@ -103,22 +88,17 @@ export default function SessionsSection() {
     return [...d.sessions].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
   }, [d, sort])
 
-  // Resume IN-APP. This used to copy `claude --resume <id>` for you to paste into a terminal,
-  // while POST /api/chat {resume} — which does it properly — already existed and was used by Chat.
   const resumeHere = r => {
     window.dispatchEvent(new CustomEvent('chat-open', { detail: { sessionId: r.sessionId, cwd: r.cwd } }))
     toast(`resuming ${String(r.sessionId).slice(0, 8)} — opening Chat`, 'success')
     window.dispatchEvent(new Event('nav-chat'))
   }
-  // Kept for the terminal case. The old version swallowed the rejection and toasted success anyway,
-  // so a blocked clipboard reported "copied".
   const copyResume = r => navigator.clipboard.writeText(r.resume).then(
     () => toast('copied · paste into a terminal: ' + r.resume, 'success'),
     () => toast('clipboard blocked by the browser', 'error'))
   const reveal = r => api.post('/api/artifacts/reveal', { path: r.transcript }).catch(e => toast(e.message, 'error'))
   const openRaw = r => window.open('/api/artifacts/download?path=' + encodeURIComponent(r.transcript), '_blank')
 
-  // keyboard layer: `/` focus filter · j/k move · `y` copy the resume line · Enter open the raw transcript
   useEffect(() => {
     const onKey = e => {
       const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)
@@ -160,11 +140,11 @@ export default function SessionsSection() {
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
           <h3>Session ledger <span className="muted">
-            {/* `total` is the whole matched set; `rows.length` is what this page holds. Saying only
-                one of them would let a bounded page read as everything there was. */}
+            {}
             {d.total} session{d.total === 1 ? '' : 's'}{rows.length < d.total ? ` · showing ${rows.length}` : ''}
             {d.named < d.total ? ` · ${d.total - d.named} never titled` : ''}
             {d.q ? ` · matching “${d.q}”` : ''} · plane: this machine only
+            {pending && ' · searching…'}
           </span></h3>
           <input ref={filterRef} placeholder="search name, id, path… ( / )" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }}
             title="searched on the server across the whole window, not just the rows on screen" />
@@ -186,10 +166,7 @@ export default function SessionsSection() {
               {rows.map((r, i) => [
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
                   style={{ background: i === cur ? 'var(--accent-bg)' : undefined, cursor: 'pointer' }}>
-                  {/* A name the human chose reads as authoritative; an inferred one is dimmer and
-                      says where it came from on hover. An unnamed session shows its short id in the
-                      tertiary colour rather than a blank cell — "we don't know" must look different
-                      from "it has no name". */}
+                  {}
                   <td style={{ maxWidth: 260 }} title={r.name ? `${NAME_SOURCE[r.nameSource] || ''}\n${r.cwd}` : `this session was never titled\n${r.cwd}`}>
                     <span style={{
                       display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
