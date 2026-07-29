@@ -23,12 +23,55 @@ export default function ReliabilitySection() {
   const [tab, setTab] = useState('Failures')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Failures', 'Traces', 'Evals', 'CI gate', 'Costs']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Failures', 'Error causes', 'Traces', 'Evals', 'CI gate', 'Costs']} tab={tab} setTab={setTab} />
       {tab === 'Failures' && <Failures />}
+      {tab === 'Error causes' && <ErrorCauses />}
       {tab === 'Traces' && <Traces />}
       {tab === 'Evals' && <Evals />}
       {tab === 'CI gate' && <CiGate />}
       {tab === 'Costs' && <Costs />}
+    </div>
+  )
+}
+
+// Groups failures by cause rather than listing them. A rate limit and a broken tool call read
+// identically in a raw transcript, and the difference decides whether you have a bug or a
+// retry policy problem.
+function ErrorCauses() {
+  const [days, setDays] = useState(30)
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { setD(null); api.get('/api/errors?days=' + days).then(setD).catch(e => setErr(e.message)) }, [days])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton />
+  const max = Math.max(1, ...d.groups.map(g => g.count))
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 10 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Error causes</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{d.scanned} classified</span>
+        <span style={{ marginLeft: 'auto' }}><DaysPick days={days} setDays={setDays} /></span>
+      </div>
+      {d.groups.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no errors recorded in this window</div>}
+      {d.groups.map(g => (
+        <div key={g.category} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '5px 0', font: `400 11px ${MONO}` }}>
+          <span style={{ width: 130, color: 'var(--text-secondary)' }}>{g.category.replace(/_/g, ' ')}</span>
+          <div style={{ flex: 1, height: 6, background: 'var(--border-subtle)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${(g.count / max) * 100}%`, height: '100%', background: g.retryable ? 'var(--amber, #d79921)' : 'var(--red)' }} />
+          </div>
+          <span style={{ width: 46, textAlign: 'right', color: 'var(--text-secondary)' }}>{g.count}</span>
+          {/* retryable null means we could not tell — shown as a question mark, not as "no". */}
+          <span style={{ width: 78, color: 'var(--text-tertiary)' }}>
+            {g.retryable === true ? 'retryable' : g.retryable === false ? 'not retryable' : 'retryable?'}
+          </span>
+        </div>
+      ))}
+      <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
+        {/* Both caveats come straight from the API rather than being restated here, so they
+            cannot drift apart from what the endpoint actually did. */}
+        {d.scope}
+        {d.samplesCapped && <div>sample list capped at {d.sampleCap} — counts above are complete, examples are not</div>}
+      </div>
     </div>
   )
 }

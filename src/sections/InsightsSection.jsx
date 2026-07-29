@@ -14,6 +14,53 @@ const pct = x => (x == null ? '—' : Math.round(x * 100) + '%')
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : m + 'm' }
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+const TIER_COLOR = { simple: 'var(--text-tertiary)', standard: 'var(--accent-light)', complex: 'var(--amber, #d79921)', reasoning: 'var(--red)' }
+
+// What tier of work you are asking for, scored offline from prompt text alone. Deliberately
+// shows a distribution and not a dollar figure: the boundaries have never been fitted against
+// real data, and pricing an uncalibrated classifier would dress a guess up as an invoice.
+function Complexity() {
+  const [days, setDays] = useState(30)
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { setD(null); api.get('/api/complexity?days=' + days).then(setD).catch(e => setErr(e.message)) }, [days])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton />
+  const dist = d.distribution || { counts: {} }
+  const total = dist.total || 0
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 10 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Prompt complexity</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{d.turns} turns scored</span>
+        <select style={{ marginLeft: 'auto' }} value={days} onChange={e => setDays(Number(e.target.value))}>
+          {[7, 14, 30, 90].map(n => <option key={n} value={n}>{n} days</option>)}
+        </select>
+      </div>
+      {total === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no scoreable turns in this window</div>}
+      {['simple', 'standard', 'complex', 'reasoning'].map(t => {
+        const n = dist.counts?.[t] || 0
+        return (
+          <div key={t} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '5px 0', font: `400 11px ${MONO}` }}>
+            <span style={{ width: 90, color: 'var(--text-secondary)' }}>{t}</span>
+            <div style={{ flex: 1, height: 6, background: 'var(--border-subtle)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: total ? `${(n / total) * 100}%` : 0, height: '100%', background: TIER_COLOR[t] }} />
+            </div>
+            <span style={{ width: 70, textAlign: 'right', color: 'var(--text-secondary)' }}>{n} · {total ? Math.round((n / total) * 100) : 0}%</span>
+          </div>
+        )
+      })}
+      <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--amber, #d79921)', lineHeight: 1.6 }}>
+        {/* The caveat is read from the API, not restated, so it cannot drift from the truth. */}
+        {!d.calibrated && <div>⚠ {d.caveat}</div>}
+        {dist.unknown > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.unknown} turn(s) unscoreable — counted separately, not folded into simple</div>}
+        {dist.lowConfidence > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.lowConfidence} of {total} scored below the confidence threshold</div>}
+        {d.capped && <div style={{ color: 'var(--text-tertiary)' }}>capped at {d.turnCap} turns — older turns in this window were not scored</div>}
+      </div>
+    </div>
+  )
+}
+
 function useFilters() {
   const [scopes, setScopes] = useState([])
   const [project, setProject] = useState('')
@@ -37,9 +84,10 @@ export default function InsightsSection() {
   const [tab, setTab] = useState('Stats')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Stats', 'Duplicate prompts']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Stats', 'Duplicate prompts', 'Prompt complexity']} tab={tab} setTab={setTab} />
       {tab === 'Stats' && <Stats />}
       {tab === 'Duplicate prompts' && <Dupes />}
+      {tab === 'Prompt complexity' && <Complexity />}
     </div>
   )
 }

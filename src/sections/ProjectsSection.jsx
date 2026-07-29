@@ -19,9 +19,23 @@ const sparkPts = (arr, h) => {
 
 function ResChips({ p }) {
   const groups = [['skills', p.skills], ['commands', p.commands], ['agents', p.agents], ['mcp', p.mcp]]
-  if (!groups.some(([, v]) => v.length)) return null
+  // How this project's tests run, detected from markers on disk. Rendered even when nothing was
+  // found, because "we could not tell" is a different answer from "it has no tests" and the
+  // detector deliberately declines rather than emitting a command that would vacuously pass.
+  const test = p.test
+  if (!groups.some(([, v]) => v.length) && !test) return null
   return (
     <div className="proj-res">
+      {test && test.command && (
+        <details>
+          <summary><b>tests</b> {test.command}</summary>
+          <div className="chips">
+            <span className="chip">detected from {test.marker}</span>
+            <span className="chip">{test.confidence} confidence</span>
+            {test.note && <span className="chip">{test.note}</span>}
+          </div>
+        </details>
+      )}
       {groups.map(([label, names]) => names.length > 0 && (
         <details key={label}>
           <summary><b>{names.length}</b> {label}</summary>

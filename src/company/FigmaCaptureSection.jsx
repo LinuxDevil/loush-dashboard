@@ -316,6 +316,47 @@ function Editor({ repo, slug, catalog, onBack }) {
   )
 }
 
+// A capture sourced from a live URL instead of a Figma frame. It writes the same capture.json
+// shape into the same directory, so everything below — the list, the annotator, the node picker
+// — works on it unchanged; the page's structured blocks fill the slot Figma's node tree fills.
+function CreatePageCaptureForm({ repo, onCreated }) {
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const [scheme, setScheme] = useState('light')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const create = () => {
+    setBusy(true); setErr(null)
+    api.post('/api/page-capture/create', { repo, url: url.trim(), colorScheme: scheme })
+      .then(r => { setOpen(false); setUrl(''); onCreated(r.slug) })
+      .catch(e => setErr(e.message))
+      .finally(() => setBusy(false))
+  }
+
+  if (!open) return <button onClick={() => setOpen(true)}>+ capture a web page</button>
+  return (
+    <div style={{ ...PANEL, display: 'grid', gap: 8 }}>
+      <Dim>Loads the page in a headless browser and records what it is built from — colour, type and spacing ranked by real usage, CSS variables, breakpoints, and hover states. Takes a few seconds.</Dim>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://example.com"
+          onKeyDown={e => { if (e.key === 'Enter' && url.trim() && !busy) create() }}
+          style={{ font: `400 12px ${MONO}`, flex: 1 }} />
+        <select value={scheme} onChange={e => setScheme(e.target.value)}>
+          <option value="light">light</option>
+          <option value="dark">dark</option>
+        </select>
+        <button onClick={create} disabled={busy || !url.trim()}>{busy ? 'capturing…' : 'capture'}</button>
+        <button onClick={() => setOpen(false)}>cancel</button>
+      </div>
+      {/* Loopback and private addresses are refused server-side unless PAGE_CAPTURE_ALLOW_LOCAL=1,
+          so say that here rather than letting the user meet it as a bare 400. */}
+      <Dim>Public URLs only. To capture your own dev server, start the dashboard with PAGE_CAPTURE_ALLOW_LOCAL=1.</Dim>
+      {err && <div style={{ font: `400 12px ${MONO}`, color: 'var(--red)' }}>{err}</div>}
+    </div>
+  )
+}
+
 function CreateCaptureForm({ repo, onCreated }) {
   const [open, setOpen] = useState(false)
   const [link, setLink] = useState('')
@@ -353,7 +394,10 @@ function CaptureList({ repo, onOpen }) {
   if (captures === null) return <Dim>loading captures…</Dim>
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <CreateCaptureForm repo={repo} onCreated={onOpen} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <CreateCaptureForm repo={repo} onCreated={onOpen} />
+        <CreatePageCaptureForm repo={repo} onCreated={onOpen} />
+      </div>
       {captures.length === 0 ? (
         <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>
           No Captures found under <span style={{ color: ACCENT }}>.claude/figma-captures/</span> in this repo yet.

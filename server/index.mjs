@@ -20,6 +20,9 @@ import { securityMiddleware, bindHost, isExposedBind } from './security.mjs'
 import { installNetworkGuard } from '../lib/network-guard.mjs'
 // contextPressure collides with the harness-metrics export above; the live board wants the
 // per-turn, model-aware one from session-status.
+import { detectTestCommand } from '../lib/testdetect.mjs'
+import { classifyError } from '../lib/error-taxonomy.mjs'
+import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
@@ -862,6 +865,97 @@ app.get('/api/usage', (req, res) => {
   })
 })
 
+// ---------- prompt complexity ----------
+// What tier of work you are actually asking for, scored offline from the prompt text. The
+// intended payoff is spotting expensive models doing cheap work — but the thresholds are not
+// calibrated yet, so this reports a distribution and says so rather than costing it out.
+app.get('/api/complexity', (req, res) => {
+  const days = Math.min(90, Number(req.query.days) || 7)
+  const since = Date.now() - days * 24 * 3600_000
+  const base = path.join(CLAUDE, 'projects')
+  const files = []
+  const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl') && fs.statSync(p).mtimeMs >= since) files.push(p) } } catch {} }
+  walk(base)
+  const MAX_TURNS = 500
+  const turns = []
+  let capped = false
+  for (const f of files) {
+    let lines
+    try { lines = fs.readFileSync(f, 'utf8').split('\n') } catch { continue }
+    for (const line of lines) {
+      if (!line.includes('"user"')) continue
+      let j
+      try { j = JSON.parse(line) } catch { continue }
+      if (j.type !== 'user' || j.isSidechain) continue
+      const t = Date.parse(j.timestamp || 0)
+      if (!t || t < since) continue
+      const c = j.message?.content
+      const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter(b => b?.type === 'text').map(b => b.text).join('\n') : ''
+      if (!text.trim()) continue
+      if (turns.length >= MAX_TURNS) { capped = true; break }
+      turns.push(text)
+    }
+    if (capped) break
+  }
+  const results = classifyConversation(turns)
+  res.json({
+    days, turns: turns.length, turnCap: MAX_TURNS, capped,
+    distribution: tierDistribution(results),
+    // Load-bearing caveat: these boundaries have never been fitted against real data, so the
+    // distribution shows how turns fall relative to each other, not what tier they truly are.
+    calibrated: false,
+    caveat: 'Tier boundaries are untuned heuristics — treat this as a relative distribution, not an empirical measurement.',
+  })
+})
+
+// ---------- error taxonomy ----------
+// Groups recent failures by cause. The point is the distinction the raw transcript loses: a
+// rate limit and a broken tool call both look like "an error" until something classifies them.
+app.get('/api/errors', (req, res) => {
+  const days = Math.min(90, Number(req.query.days) || 7)
+  const since = Date.now() - days * 24 * 3600_000
+  const base = path.join(CLAUDE, 'projects')
+  const files = []
+  const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.jsonl') && fs.statSync(p).mtimeMs >= since) files.push(p) } } catch {} }
+  walk(base)
+  const byCategory = {}, samples = []
+  let scanned = 0, capped = false
+  const MAX_SAMPLES = 200
+  for (const f of files) {
+    const proj = path.relative(base, f).split(path.sep)[0]
+    let lines
+    try { lines = fs.readFileSync(f, 'utf8').split('\n') } catch { continue }
+    for (const line of lines) {
+      if (!line.includes('is_error') && !line.includes('"error"')) continue
+      let j
+      try { j = JSON.parse(line) } catch { continue }
+      const t = Date.parse(j.timestamp || 0)
+      if (!t || t < since) continue
+      const blocks = Array.isArray(j.message?.content) ? j.message.content : []
+      for (const b of blocks) {
+        if (!b || b.is_error !== true) continue
+        scanned++
+        const text = typeof b.content === 'string' ? b.content : JSON.stringify(b.content || '')
+        const c = classifyError({ message: text, is_error: true })
+        const cat = c.category || 'unknown'
+        const g = (byCategory[cat] ||= { category: cat, count: 0, retryable: c.retryable })
+        g.count++
+        if (samples.length < MAX_SAMPLES) samples.push({ t, proj, category: cat, retryable: c.retryable, confidence: c.confidence, text: text.slice(0, 200) })
+        else capped = true
+      }
+    }
+  }
+  const groups = Object.values(byCategory).sort((a, b) => b.count - a.count)
+  res.json({
+    days, scanned, groups, samples,
+    // Say what was left out rather than presenting a capped list as the whole picture.
+    sampleCap: MAX_SAMPLES, samplesCapped: capped,
+    // Only tool-level errors are visible in transcripts; provider API errors are not recorded
+    // here, so this is a view of one class of failure, not of everything that can go wrong.
+    scope: 'tool-level errors recorded in transcripts; provider API errors are not captured here',
+  })
+})
+
 // ---------- live board ----------
 // "What is happening right now", derived from transcripts alone. The hook receiver sharpens
 // mid-turn accuracy when installed, but this must work without it — a dashboard that only
@@ -993,6 +1087,9 @@ app.get('/api/projects', (req, res) => {
     out.push({
       path: dir, name: path.basename(dir), exists, current: dir === PROJECT,
       sessions, running, runningAgents, progress, mcp,
+      // How this project's tests are run, detected from markers on disk. null means we could
+      // not tell — which is different from "it has no tests", and is shown as such.
+      test: exists ? (() => { try { return detectTestCommand(dir) } catch { return null } })() : null,
       commits: info.commits, langs: info.langs,
       skills: listDir(path.join(dir, '.claude', 'skills'), true),
       commands: listDir(path.join(dir, '.claude', 'commands'), false),
