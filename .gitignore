@@ -2,7 +2,7 @@ node_modules
 atoms/index.json
 atoms/reviewed.json
 
-# Delivery / Ticket JIRA creds (never commit)
+# Engineering Metrics dashboard JIRA creds (never commit)
 .eng.local.json
 config.json
 projects.json

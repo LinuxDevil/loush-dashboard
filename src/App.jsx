@@ -45,10 +45,9 @@ import { api, forceFresh } from './lib/api.js';
 // from a per-engineer leaderboard, at which point every number on this screen stops being trusted.
 // src/Gamification.jsx is deleted. Overview's XP bar, streak flame and 10 achievement badges are deleted.
 
-// The four-shell portal is DISSOLVED. Cursor and Career move out of the topbar (one click from an IC's
-// Overview is precisely what made this app feel like surveillance) into a sidebar-footer "switch
-// dashboard" menu. The Engineering Metrics dashboard that used to fold into `delivery` is DELETED —
-// Delivery keeps the panels that read the snapshot directly (funnel, ROI, DORA, 1:1 prep).
+// The four-shell portal is DISSOLVED. Eng folds in as `delivery`. Cursor and Career move out of the
+// topbar (one click from an IC's Overview is precisely what made this app feel like surveillance) into
+// a sidebar-footer "switch dashboard" menu.
 const BASE_SECTIONS = [
   {
     id: 'overview',
@@ -300,11 +299,15 @@ function useTheme() {
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [navOpen, setNavOpen] = useState(false);
-  const [section, setSection] = useState('overview');
+  // ?dash=eng no longer opens a separate shell — Eng IS the Delivery section now. The Eng panels write
+  // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
+  // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
+  const initial = new URLSearchParams(window.location.search).get('dash') || 'claude';
+  const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview');
   const [inboxCount, setInboxCount] = useState(0);
   const [stale, setStale] = useState(null);
   const [tick, setTick] = useState(0);
-  const [visited, setVisited] = useState({ overview: true });
+  const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true });
   const [toasts, setToasts] = useState([]);
   // Feature flags decide which nav entries exist at all. The server gates the same flag at mount
   // time, so this is presentation only — a stale client cannot reach a disabled route.
