@@ -170,7 +170,7 @@ function Roi() {
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 110 }}>
           {pts.map(t => (
             <div key={t.week} title={`${t.week}: $${t.perPoint}/pt · $${t.spend} · ${t.points} pts`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 4 }}>
-              <div style={{ width: '100%', height: (t.perPoint / max) * 90 + 'px', background: `linear-gradient(180deg, ${PURPLE}, ${PURPLE}77)`, borderRadius: 5 }} />
+              <div style={{ width: '100%', height: (t.perPoint / max) * 90 + 'px', background: PURPLE, borderRadius: 5 }} />
               <span style={{ font: `400 9px ${MONO}`, color: 'var(--text-tertiary)' }}>{t.week.slice(5)}</span>
             </div>
           ))}

@@ -7,7 +7,7 @@ import { Ring, StackedBar, Bars, Stepper, CoverageTreemap, DataTable, Facts } fr
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }
 const KIND_COLOR = { constitution: 'var(--violet)', rule: 'var(--accent)', skill: 'var(--green)', workflow: 'var(--blue)' }
 const TONE_COLOR = { must: 'var(--green)', 'must-not': 'var(--red)', should: 'var(--amber)', 'should-not': 'var(--accent)' }
 

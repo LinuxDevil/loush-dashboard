@@ -7,7 +7,7 @@ import ProjectHub from './ProjectHub.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const kTok = n => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n ?? 0))
 const OVR = () => <span style={{ font: `600 9px ${MONO}`, padding: '1px 6px', borderRadius: 5, background: 'var(--accent-bg)', color: 'var(--accent-light)' }}>OVR</span>
 const MODEL_HUES = {
@@ -137,7 +137,7 @@ export default function HarnessSection() {
               display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 6, cursor: 'pointer',
               font: "500 13px var(--body)", transition: 'all .16s',
               border: `1px solid ${active ? 'var(--accent-bg)' : 'var(--bg-surface-active)'}`,
-              background: active ? 'linear-gradient(90deg,var(--accent-bg),var(--accent-bg))' : 'var(--bg-surface)',
+              background: active ? 'var(--accent-bg)' : 'var(--bg-surface)',
               color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
             }}>
               <span style={{ fontSize: 13, opacity: 0.85 }}>{s.id === 'global' ? '◉' : '⌗'}</span>{s.label}

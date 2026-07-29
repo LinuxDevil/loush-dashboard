@@ -34,7 +34,7 @@ export const StageChip = ({ status, small }) => {
   return (
     <span title={m.hint} style={{
       font: `600 ${small ? 9 : 10}px ${MONO}`, letterSpacing: '0.04em', padding: small ? '1px 5px' : '2px 7px',
-      borderRadius: 9999, color: m.color, background: 'var(--bg-surface-active)', whiteSpace: 'nowrap',
+      borderRadius: 6, color: m.color, background: 'var(--bg-surface-active)', whiteSpace: 'nowrap',
     }}>{small ? m.short : m.label}</span>
   )
 }

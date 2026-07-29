@@ -6,7 +6,7 @@ import { api, tildify, fmtDate } from '../lib/api.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const kTok = n => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(n ?? 0)))
 const TYPE = {
   rule: 'var(--accent)', skill: 'var(--accent-light)', agent: 'var(--violet)', mcp: 'var(--blue)', adr: 'var(--green)', ref: 'var(--text-secondary)',

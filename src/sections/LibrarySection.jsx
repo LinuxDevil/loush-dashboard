@@ -6,7 +6,7 @@ import { Tabs } from '../ui/tabs.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { error: 'var(--red)', warning: 'var(--accent-light)', info: 'var(--text-secondary)' }
 
 function useScopes() {

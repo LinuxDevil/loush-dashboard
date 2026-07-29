@@ -73,7 +73,7 @@ export function Facts({ items }) {
     <div className="chart-fade" style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(110px, 1fr))`, gap: 8 }}>
       {items.filter(f => f.value != null && f.value !== '').map(f => (
         <div key={f.label} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '9px 12px' }}>
-          <div style={{ font: `700 16px ${HEAD}`, color: f.color || 'var(--text-primary)' }}>{f.value}</div>
+          <div style={{ font: `600 16px ${MONO}`, color: f.color || 'var(--text-primary)' }}>{f.value}</div>
           <div style={{ font: `400 9px ${MONO}`, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{f.label}</div>
         </div>
       ))}
@@ -96,7 +96,7 @@ export function Ring({ value, size = 64, stroke = 7, color = 'var(--green)', lab
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round"
             strokeDasharray={c} strokeDashoffset={off} style={{ stroke: (color), transition: 'stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)' }} />
         </svg>
-        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', font: `700 ${size / 4.2}px ${HEAD}`, color: 'var(--text-primary)' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', font: `600 ${size / 4.2}px ${MONO}`, color: 'var(--text-primary)' }}>
           {label ?? Math.round(v * 100) + '%'}
         </div>
       </div>
@@ -157,7 +157,7 @@ export function Stepper({ steps, accent = 'var(--blue)' }) {
         <div key={i} className="chart-fade" style={{ display: 'grid', gridTemplateColumns: '26px 1fr', gap: 10, animationDelay: i * 50 + 'ms' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <div style={{ width: 22, height: 22, borderRadius: 6, background: accent + '22', border: `1.5px solid ${accent}`, display: 'grid', placeItems: 'center', font: `700 10px ${MONO}`, color: accent, flexShrink: 0 }}>{i + 1}</div>
-            {i < steps.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 10, background: `linear-gradient(${accent}66, ${accent}22)` }} />}
+            {i < steps.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 10, background: "var(--border-default)" }} />}
           </div>
           <div style={{ paddingBottom: i < steps.length - 1 ? 14 : 0, minWidth: 0 }}>
             <div style={{ font: `500 12px var(--body)`, color: 'var(--text-primary)' }}>{s.title}</div>

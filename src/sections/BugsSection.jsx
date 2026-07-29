@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { critical: 'var(--red)', high: 'var(--accent-light)', medium: 'var(--amber)', low: 'var(--text-secondary)' }
 const STATUS = { open: 'var(--red)', 'in-session': 'var(--blue)', fixed: 'var(--green)', closed: 'var(--text-tertiary)' }
 const age = t => { const d = Math.floor((Date.now() - t) / 86400_000); return d === 0 ? 'today' : d + 'd' }

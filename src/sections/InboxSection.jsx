@@ -6,7 +6,7 @@ import { Stagger, CountUp } from '../ui/anim.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { error: 'var(--red)', warning: 'var(--amber)', info: 'var(--text-secondary)' }
 const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒', board: '▦', run: '⟳', action: '⚡', ticket: '◱', review: '⟨⟩', quality: '◈', ci: '⚙' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))

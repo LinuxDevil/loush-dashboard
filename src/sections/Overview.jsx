@@ -26,7 +26,10 @@ const Num = ({ value, ...rest }) =>
 // RERANKED: Top projects sorted by SESSIONS, not by output tokens (which rewarded whichever project
 //   made Claude write the most text).
 const A = 'var(--accent)'
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+// The category rotation is three non-semantic colours — blue, purple, green — and nothing else. The old
+// six-entry list reached for --accent, which is the ONE brand/interactive colour: a project dot painted
+// baby blue reads as "click me".
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)'
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -42,14 +45,19 @@ const sparkPts = (arr, h = 26) => {
 }
 const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" className={className} style={{ height: h }}>
-    <Draw><polyline points={sparkPts(data, h)} fill="none" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
+    <Draw><polyline points={sparkPts(data, h)} fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
   </svg>
 )
 
-function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint }) {
+// `risk` escalates the hairline to a danger-tinted border — reserved for a card that IS a risk metric,
+// never used to decorate. Everything else keeps the default --line.
+function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint, risk }) {
   return (
-    <div className={`kpi${onClick ? ' press' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
-      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
+    <div className={`kpi${onClick ? ' press' : ''}${risk ? ' risk' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
+      {/* A semantic tag is bare coloured mono text, not a tinted pill: `tag.color` is a var(), and the
+          old `tag.color + '22'` produced `var(--red)22` — invalid CSS that the browser dropped, so the
+          fill was never rendering anyway. Only the neutral `dim` tag gets a fill. */}
+      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: 'transparent', padding: 0 } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
       <div className="kpi-value"><Num value={value} /></div>
       <div className="kpi-sub">{sub}</div>
       {data && data.length > 1 && <Spark data={data} color={accent} />}
@@ -109,10 +117,10 @@ function DeliveryTiles({ snap, onNav }) {
         tag={t.delta == null ? { text: 'n<1', dim: true } : { text: `${t.delta > 0 ? '+' : ''}${d1(t.delta)}d`, color: t.delta > 0 ? RED : GREEN }}
         sub={t.p50 == null ? 'nothing shipped in 30d' : `p90 ${d1(t.p90)}d · n=${t.n}`} />
       <Kpi label="at-risk commitments" delay=".14s" accent={GOLD} onClick={go} hint="tickets past the budget for the stage they are sitting in"
-        value={t.atRisk} tag={{ text: `of ${t.inFlight}`, dim: true }}
+        value={t.atRisk} tag={{ text: `of ${t.inFlight}`, dim: true }} risk={t.atRisk > 0}
         sub={t.atRisk ? 'each one has a nudge line in the Inbox' : '✓ nothing over budget'} />
       <Kpi label="review queue" delay=".18s" accent={t.noReview ? RED : GREEN} onClick={go} hint="open PRs · oldest wait in working days"
-        value={t.openPrs} tag={t.noReview ? { text: `${t.noReview} unreviewed`, color: RED } : { text: 'all seen', color: GREEN }}
+        value={t.openPrs} tag={t.noReview ? { text: `${t.noReview} unreviewed`, color: RED } : { text: 'all seen', color: GREEN }} risk={t.noReview > 0}
         sub={t.openPrs ? `oldest has waited ${d1(t.oldestPr)} working days` : 'no open PRs'} />
     </div>
   )
@@ -124,27 +132,29 @@ function CiStrip({ onNav }) {
   useEffect(() => { api.get('/api/ci/health?days=14').then(setCi).catch(() => {}) }, [])
   if (!ci || !ci.repos?.length) return null
   const red = ci.repos.filter(r => r.mainRed)
+  // A callout banner, not a card, and only while something is actually red: the tinted background is
+  // reserved for the single most urgent item on the page. Green CI is just a panel.
   return (
-    <div className="panel" style={{ animationDelay: '.22s', borderColor: red.length ? 'var(--red-bg)' : undefined, background: red.length ? 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))' : undefined }}>
-      <div className="panel-head" style={{ marginBottom: 10 }}>
+    <div className={`panel${red.length ? ' callout danger' : ''}`} style={{ animationDelay: '.22s' }}>
+      <div className="panel-head">
         <h3>CI health <span className="muted">default branch · {ci.days}d · {ci.repos.length} repo{ci.repos.length === 1 ? '' : 's'}</span></h3>
-        {red.length > 0 && <span style={{ font: `700 10px ${MONO}`, letterSpacing: '0.08em', padding: '4px 9px', borderRadius: 6, color: '#fff', background: RED }}>MAIN IS RED</span>}
+        {red.length > 0 && <span className="alert-chip">MAIN IS RED</span>}
         <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('delivery')}>open CI</button>
       </div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         {ci.repos.map(r => (
-          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="lift"
-            style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 6, border: `1px solid ${r.mainRed ? RED + '66' : 'var(--bg-surface-hover)'}`, background: 'var(--bg-surface)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? 'var(--text-tertiary)' : r.mainRed ? RED : GREEN, boxShadow: `0 0 0 1px ${r.mainRed ? RED : GREEN}` }} />
+          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="callout-tile lift"
+            style={{ flex: '1 1 260px', minWidth: 0 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: r.error ? 'var(--text-tertiary)' : r.mainRed ? RED : GREEN }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ font: `500 13px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
-              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
+              <div style={{ font: `600 14px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
+              <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-secondary)', marginTop: 2 }}>
                 {r.error ? r.error.slice(0, 40)
                   : r.failureRate == null ? `no completed runs on ${r.branch} in ${ci.days}d`
                     : <><CountUp value={Math.round(r.failureRate * 100)} />% fail · {r.flaky.length} flaky · {r.medianDurationMin ?? '—'}m median</>}
               </div>
             </div>
-            {r.mainRed && <span style={{ font: `700 9px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
+            {r.mainRed && <span style={{ font: `700 11px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
           </a>
         ))}
       </div>
@@ -187,19 +197,26 @@ export default function Overview({ onNav }) {
 
   return (
     <div className="overview">
+      {/* Section labels, not headings: a small uppercase mono line coloured by INTENT, so the page reads
+          top-to-bottom by priority rather than by layout position. */}
+      <div className="sect-label danger"><span className="live-dot" />Attention</div>
       <DeliveryTiles snap={snap} onNav={onNav} />
       <CiStrip onNav={onNav} />
 
+      <div className="sect-label accent" style={{ marginTop: 26 }}>Usage &amp; spend</div>
+
       {cap?.headline?.deadCount > 0 && (
-        <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 6, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'var(--amber-bg)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
+        <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <span style={{ width: 38, height: 38, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'var(--accent-bg)', color: A, fontSize: 17 }}>✦</span>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>You pay <CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok every session for {cap.items.length} capabilities.</div>
-            <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-secondary)', marginTop: 3 }}>
-              <b style={{ color: RED }}><CountUp value={cap.headline.deadCount} /> have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
+            <div style={{ font: `500 14.5px ${HEAD}`, color: 'var(--text-primary)' }}>You pay <span className="mono"><CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</span> every session for <span className="mono">{cap.items.length} capabilities</span>.</div>
+            <div style={{ font: `400 13px ${HEAD}`, color: 'var(--text-secondary)', marginTop: 4 }}>
+              <b style={{ color: RED, fontWeight: 600 }}><CountUp value={cap.headline.deadCount} /> have never fired</b>{' '}
+              <span className="mono" style={{ fontSize: 12 }}>({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot</span>
             </div>
           </div>
-          <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
+          {/* the one primary action in this section — the only accent-outline button on the page */}
+          <button className="primary" onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
         </div>
       )}
 
@@ -221,12 +238,12 @@ export default function Overview({ onNav }) {
           <div className="mini-list">
             {top.map((p, i) => (
               <div className="mini-row" key={p.path}>
-                <span className="mini-sq" style={{ background: PROJ_COLORS[i % 6] }} />
+                <span className="mini-sq" style={{ background: PROJ_COLORS[i % PROJ_COLORS.length] }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="mini-name">{p.name}</div>
                   <div className="mini-meta">{p.sessions} sessions{p.commits ? ` · ${p.commits} commits` : ''}</div>
                 </div>
-                <Spark data={p.usage.spark} color={PROJ_COLORS[i % 6]} h={24} className="" />
+                <Spark data={p.usage.spark} color={PROJ_COLORS[i % PROJ_COLORS.length]} h={24} className="" />
                 <span className="mini-val">{p.sessions}</span>
               </div>
             ))}
@@ -249,7 +266,7 @@ export default function Overview({ onNav }) {
           ))}
           {(usage?.recentSessions || []).filter(s => !pins.some(p => p.sessionId === s.sessionId)).map((s, i) => (
             <div className="sess-row" key={s.sessionId || i}>
-              <span className="sess-dot" style={{ background: PROJ_COLORS[i % 6] }} />
+              <span className="sess-dot" style={{ background: PROJ_COLORS[i % PROJ_COLORS.length] }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="mini-name">{s.proj}</div>
                 <div className="mini-meta">{fmtTok(s.out)} tok · {s.msgs} msgs · {s.toolCalls} tools</div>
@@ -290,20 +307,21 @@ export default function Overview({ onNav }) {
         return (
           <div className="panel" style={{ animationDelay: '.52s' }}>
             <div className="panel-head">
-              <h3>✍ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
+              <h3>✍︎ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
               <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('authoring')}>open →</button>
             </div>
+            {/* Score bar: equal-width FULL-height blocks coloured green→amber→red by each dimension's own
+                score. The old variable-height version read as a chart with no axis — this reads as a
+                status strip, which is what a per-dimension score actually is. */}
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ font: `700 20px ${MONO}`, color: c }}>{pq.avg}<span style={{ color: 'var(--text-tertiary)', fontWeight: 400, fontSize: 12 }}>/10</span></div>
-              <div style={{ display: 'flex', gap: 5, flex: 1, minWidth: 200 }}>
+              <div className="seg-score" style={{ color: c }}>{pq.avg}<span>/10</span></div>
+              <div className="seg-bar">
                 {pq.dimensions.map((dm, i) => (
-                  <div key={i} title={`${dm.name}: ${dm.score}/10`} style={{ flex: 1, height: 28, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                    <div style={{ height: `${dm.score * 10}%`, borderRadius: 3, background: dm.score >= 8 ? GREEN : dm.score >= 6 ? GOLD : RED, opacity: 0.85 }} />
-                  </div>
+                  <i key={i} title={`${dm.name}: ${dm.score}/10`} style={{ background: dm.score >= 8 ? GREEN : dm.score >= 6 ? GOLD : RED }} />
                 ))}
               </div>
-              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', minWidth: 180 }}>
-                weakest: <span style={{ color: RED }}>{weakest.name}</span> ({weakest.score}/10)
+              <div style={{ font: `400 12.5px ${HEAD}`, color: 'var(--text-secondary)', minWidth: 180 }}>
+                weakest: <span style={{ color: RED }}>{weakest.name}</span> <span className="mono" style={{ fontSize: 11.5 }}>({weakest.score}/10)</span>
               </div>
             </div>
           </div>

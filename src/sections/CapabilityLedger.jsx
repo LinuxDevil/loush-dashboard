@@ -83,7 +83,7 @@ export default function CapabilityLedger() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="panel" style={{ marginBottom: 0, background: 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))', borderColor: 'var(--red)' }}>
+      <div className="panel callout danger" style={{ marginBottom: 0 }}>
         <div style={{ font: `600 16px ${HEAD}`, color: 'var(--text-primary)', lineHeight: 1.5 }}>
           You pay <b style={{ color: 'var(--accent)' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
           <b style={{ color: RED }}><CountUp value={h.deadCount} /> of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
@@ -92,8 +92,8 @@ export default function CapabilityLedger() {
         <div style={{ display: 'flex', gap: 22, marginTop: 12, flexWrap: 'wrap' }}>
           {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['NEW', h.newCount || 0, h.newTokens || 0], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens - (h.newTokens || 0)]].map(([v, n, tok]) => (
             <div key={v} title={VERDICT[v].hint}>
-              <div style={{ font: `700 18px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
-              <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.08em', color: DIM }}>{v} · {fmtTok(tok)} tok/session</div>
+              <div style={{ font: `600 26px ${MONO}`, lineHeight: 1, color: VERDICT[v].c }}><CountUp value={n} /></div>
+              <div style={{ font: `400 10.5px ${MONO}`, letterSpacing: '0.08em', color: DIM, marginTop: 6 }}>{v} · {fmtTok(tok)} tok/session</div>
             </div>
           ))}
           <div style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: DIM, maxWidth: 340, lineHeight: 1.6 }}>

@@ -3,7 +3,7 @@ import { api } from '../lib/api.js'
 
 const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
 // Everything here reads snapshot.quality, which server/eng.mjs already computes — escape rate,
 // area hotspots, ownership concentration and bus factor. None of it was reachable before.

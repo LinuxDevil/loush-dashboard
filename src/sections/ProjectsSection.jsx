@@ -3,11 +3,12 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { usePager } from '../ui/Pager.jsx'
 import { Stagger, CountUp, Draw } from '../ui/anim.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const LANG_COLOR = { TypeScript: 'var(--blue)', JavaScript: 'var(--amber)', Python: 'var(--green)', Go: 'var(--blue)', Rust: 'var(--red)', Ruby: 'var(--red)', CSS: 'var(--violet)', Markdown: 'var(--text-secondary)', Shell: 'var(--green)', Vue: 'var(--green)', PHP: 'var(--violet)', Java: 'var(--accent-light)', Kotlin: 'var(--violet)', Swift: 'var(--accent-light)', Dart: 'var(--blue)' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
@@ -213,7 +214,7 @@ export default function ProjectsSection() {
       </div>
       <Stagger className="proj-grid" step={40} max={360}>
         {slice.map((p, i) => {
-          const color = PROJ_COLORS[i % 6]
+          const color = PROJ_COLORS[i % PROJ_COLORS.length]
           const live = p.running + p.runningAgents > 0
           return (
             <div key={p.path} className="proj-card" style={{ '--pc': color }}>
@@ -247,7 +248,7 @@ export default function ProjectsSection() {
               <ResChips p={p} />
               <div className="proj-foot">
                 last active {p.usage ? ago(p.usage.last) : 'never'}
-                {p.usage?.topModel ? ` · mostly ${p.usage.topModel.replace(/^claude-/, '')}` : ''}
+                {p.usage?.topModel ? ` · mostly ${modelName(p.usage.topModel)}` : ''}
               </div>
             </div>
           )

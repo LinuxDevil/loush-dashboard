@@ -17,7 +17,7 @@ import { useGraphEditor } from '../ticket/useGraphEditor.js'
 // generate → review → export loop, and merging them is what makes the AC→test link visible.
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)', BODY = 'var(--body)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12 }
 const mini = { padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer', font: `500 11px ${BODY}`, whiteSpace: 'nowrap' }
 
 const fdt = s => (s ? new Date(s).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—')
@@ -695,7 +695,7 @@ function DesignTab({ t, onNav }) {
       {d?.warnings?.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
           {d.warnings.map((w, i) => (
-            <span key={i} title={w.detail} style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', background: 'var(--amber-bg)', border: '1px solid var(--amber)', borderRadius: 9999, padding: '1px 8px' }}>{w.detail}</span>
+            <span key={i} title={w.detail} style={{ font: `400 10px ${MONO}`, color: 'var(--amber)', background: 'var(--amber-bg)', border: '1px solid var(--amber)', borderRadius: 6, padding: '1px 8px' }}>{w.detail}</span>
           ))}
         </div>
       )}

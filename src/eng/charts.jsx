@@ -127,8 +127,8 @@ export function Split({ active, wait, height = 8, showLabels }) {
   const tot = (active || 0) + (wait || 0) || 1
   return <div>
     <div style={{ display: 'flex', height, borderRadius: 5, overflow: 'hidden', background: 'var(--bg-surface-hover)' }}>
-      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'linear-gradient(90deg,var(--green),var(--green))' }} />
-      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'linear-gradient(90deg,var(--amber),var(--amber))' }} />
+      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'var(--green)' }} />
+      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'var(--amber)' }} />
     </div>
     {showLabels && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, font: `500 9px ${MONO}` }}>
       <span style={{ color: GREEN }}>mine {(active || 0).toFixed(1)}d</span>
@@ -145,7 +145,7 @@ export function Spark({ values, color = BB, w = 64, h = 18 }) {
   const rng = max - min || 1
   const pts = values.map((x, i) => x == null ? null : [(i / (values.length - 1)) * w, h - ((x - min) / rng) * (h - 2) - 1]).filter(Boolean)
   return <svg width={w} height={h} style={{ display: 'block' }}>
-    <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" strokeWidth="1.6" strokeLinejoin="round"  style={{ stroke: (color) }} />
+    <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" strokeWidth="2" strokeLinejoin="round"  style={{ stroke: (color) }} />
     <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2"  style={{ fill: (color) }} />
   </svg>
 }

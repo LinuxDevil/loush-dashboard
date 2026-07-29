@@ -43,7 +43,8 @@ import { computeUsageHealth, computeRegression } from '../lib/harness-health.mjs
 import { localCloneOf } from '../lib/clone.mjs'
 import { runAgent } from '../lib/agent.mjs'
 import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyUsage, detectDailyAnomalies, projectMonthEnd } from '../lib/harness-usage-trends.mjs'
-import { PRICE_PER_M, isPriced, entryCost, dedupeTurns } from '../lib/pricing.mjs'
+import { PRICE_PER_M, isPriced, entryCost, entryCacheRates, splitCacheWrite, dedupeTurns } from '../lib/pricing.mjs'
+import mountPricing from './pricing-store.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // PLANE A (work artifacts: JIRA, GitHub PRs, reviews, CI, bugs) lives in server-eng.mjs. It is already
@@ -666,6 +667,11 @@ app.delete('/api/artifacts', (req, res) => {
 const META_FILE = path.join(CLAUDE, 'dashboard-meta.json')
 const readMeta = () => { try { return JSON.parse(fs.readFileSync(META_FILE, 'utf8')) } catch { return { tags: {} } } }
 const writeMeta = m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2))
+// /api/pricing — the model rate table, seeded from lib/pricing.mjs and overridable per user.
+// Mounted here rather than with the other modules above because it reads the stored table at
+// mount time and readMeta/writeMeta are declared on the two lines above this one. onChange
+// drops the per-file usage cache: every cached `cost` in it was computed with the old rates.
+mountPricing(app, { readMeta, writeMeta, onChange: () => usageCache.clear() })
 const tokens = s => Math.ceil((s || '').length / 4) // ~4 chars/token heuristic
 
 function scoreItem(fm, body, kind) {
@@ -791,10 +797,12 @@ function collectUsage() {
     const st = fs.statSync(f)
     const proj = path.relative(base, f).split(path.sep)[0]
     let rec = usageCache.get(f)
-    if (!rec || rec.v !== 3 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+    if (!rec || rec.v !== 4 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
       // v2: also keeps cwd + gitBranch + per-file $ / token / span totals (session ledger + /api/roi)
       // v3: dedups streamed turns by message.id (see below) — v2 caches over-count and must be rebuilt
-      rec = { v: 3, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
+      // v4: splits cache-creation into its 5m/1h tiers and prices them at their real, different
+      //     rates — a v3 cache holds costs computed with one rate for both and understates them
+      rec = { v: 4, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {} }
       try {
         // Streamed turns repeat across records sharing one message.id — dedupeTurns() keeps the
         // last of each. Collected first, folded into the totals below.
@@ -810,7 +818,14 @@ function collectUsage() {
               if (Array.isArray(j.message.content))
                 for (const c of j.message.content) if (c.type === 'tool_use') { tc++; tools[c.name] = (tools[c.name] || 0) + 1 }
               const t = Date.parse(j.timestamp)
-              const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0, tc }
+              // Cache creation is two products at two prices: the 5-minute tier costs 1.25x
+              // input, the 1-hour tier 2x. The flat cache_creation_input_tokens throws that
+              // away, so read the nested breakdown and keep both. `cc` stays the total, which
+              // is what the 17 other collectUsage() readers want and what the flat field
+              // always meant (verified: flat === 5m + 1h on 31,162 of 31,162 records).
+              // splitCacheWrite() owns the absent-breakdown fallback and counts it.
+              const { cc5, cc1h } = splitCacheWrite(u.cache_creation_input_tokens, u.cache_creation?.ephemeral_5m_input_tokens, u.cache_creation?.ephemeral_1h_input_tokens)
+              const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cc5, cc1h, cr: u.cache_read_input_tokens || 0, tc }
               records.push({ id: j.message?.id, e, tools, cwd: j.cwd || '', br: j.gitBranch || '' })
             } catch {}
           } else if (line.includes('"structuredPatch"')) {
@@ -843,18 +858,57 @@ function collectUsage() {
     for (const [k, v] of Object.entries(rec.tools)) all.toolTotals[k] = (all.toolTotals[k] || 0) + v
     all.files.push({
       path: f, proj, isAgent: f.includes('subagents'), mtime: st.mtimeMs, out: rec.out, msgs: rec.msgs, toolCalls: rec.toolCalls,
-      in: rec.in, cc: rec.cc, cr: rec.cr, cost: rec.cost, first: rec.first, last: rec.last, cwd: rec.cwd, branches: rec.branches,
+      in: rec.in, cc: rec.cc, cr: rec.cr, cost: rec.cost, subagentCost: 0, first: rec.first, last: rec.last, cwd: rec.cwd, branches: rec.branches,
       entries: rec.entries,
     })
   }
+  all.unattributedAgentCost = rollUpSubagents(all.files)
   all.entries.sort((a, b) => a.t - b.t)
   return all
+}
+// A subagent transcript lives at <project>/<parentSessionId>/subagents/<id>.jsonl, so its
+// parent session is the directory name above `subagents` — derivable from the path alone, no
+// .meta.json read, no toolUseId lookup. Measured on this machine: 567 of 567 subagent
+// transcripts resolve to a parent transcript that exists.
+const parentSessionPath = p => {
+  const parts = p.split(path.sep)
+  const i = parts.lastIndexOf('subagents')
+  return i < 1 ? null : [...parts.slice(0, i - 1), parts[i - 1] + '.jsonl'].join(path.sep)
+}
+// A subagent's tokens were spent by the session that spawned it, so they belong in that
+// session's spend. They were not: everything reading `all.entries` counted them (the global
+// KPI) and everything reading `all.files` dropped them via `!f.isAgent` (every per-session
+// row) — 47.6% of usage records, so the headline total and the sum of the rows under it
+// disagreed on the same screen, silently, with no third number to say why.
+//
+// This folds each agent file's spend into its parent and leaves the agent file in place, still
+// flagged. `!f.isAgent` keeps doing its real job — not listing a subagent as a session of its
+// own — without that filter also meaning "and forget what it cost". `subagentCost` carries the
+// rolled-up part separately so a row can show "incl. $X in subagents" rather than a total that
+// silently grew. Deepest paths first, so a nested subagent reaches its grandparent.
+//
+// Only the spend and the token counts it is computed from move. `msgs`, `toolCalls`,
+// `entries`, `first`/`last` and `branches` describe the conversation in that transcript, not
+// its cost, and stay where they are.
+function rollUpSubagents(files) {
+  const byPath = new Map(files.map(f => [f.path, f]))
+  let unattributed = 0
+  for (const f of [...files].filter(f => f.isAgent).sort((a, b) => b.path.length - a.path.length)) {
+    const parent = byPath.get(parentSessionPath(f.path))
+    // No parent transcript on disk: say so rather than pick one. An explicit gap in the
+    // payload beats a session row that quietly absorbed someone else's bill.
+    if (!parent) { unattributed += f.cost; continue }
+    parent.subagentCost += f.cost
+    parent.cost += f.cost
+    parent.in += f.in; parent.out += f.out; parent.cc += f.cc; parent.cr += f.cr
+  }
+  return unattributed
 }
 // est. $ saved by prompt caching: cache reads cost ~10% of input price → 90% saved
 // PRICE_PER_M / isPriced / entryCost / dedupeTurns live in lib/pricing.mjs — see the notes there.
 const HOUR = 3600_000, BLOCK = 5 * HOUR
 app.get('/api/usage', (req, res) => {
-  const { entries, lineEvents, toolTotals, files } = collectUsage()
+  const { entries, lineEvents, toolTotals, files, unattributedAgentCost } = collectUsage()
   const perModel = {}
   for (const e of entries) {
     const m = (perModel[e.model] ||= { msgs: 0, out: 0, in: 0, cache: 0 })
@@ -897,7 +951,9 @@ app.get('/api/usage', (req, res) => {
   const todayKey = dayOf(now)
   let lines7Add = 0, lines7Del = 0
   for (const l of lineEvents) if (l.t >= d7) { lines7Add += l.add; lines7Del += l.del }
-  const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * (PRICE_PER_M(e.model) || 0) * 0.9, 0)
+  // Priced at the rate in effect on the day of the entry, not today's — e.t is passed so an
+  // introductory rate that has since lapsed is still applied to the days it covered.
+  const costSaved = entries.reduce((s, e) => s + (e.cr / 1e6) * (PRICE_PER_M(e.model, e.t) || 0) * 0.9, 0)
   // Models we saw traffic for but hold no rate for — every $ figure below excludes them.
   const unpricedModels = [...new Set(entries.filter(e => !isPriced(e.model)).map(e => e.model))]
   const sessions30 = files.filter(f => !f.isAgent && f.mtime >= d30).length
@@ -910,7 +966,7 @@ app.get('/api/usage', (req, res) => {
   // cache TTL waste + daily anomalies + month-end projection — all pure trend reads over `entries`
   const { map: cacheMap, sortedDates: cacheDates } = buildDailyCacheMap(entries)
   const rollingEff = rollingCacheEfficiency(cacheMap, cacheDates)
-  const waste = cacheWasteCost(entries, m => PRICE_PER_M(m) || 0, rollingEff.bestEffPct / 100)
+  const waste = cacheWasteCost(entries, entryCacheRates, rollingEff.bestEffPct / 100)
   const { map: usageMap, sortedDates: usageDates } = buildDailyUsage(entries, entryCost)
   const anomalies = detectDailyAnomalies(usageMap, usageDates)
   const dailyCostMap = {}; for (const d of usageDates) dailyCostMap[d] = usageMap[d].cost
@@ -919,6 +975,10 @@ app.get('/api/usage', (req, res) => {
   res.json({
     perModel, activeBlock: active, totalMsgs: entries.length, since: entries[0]?.t || null,
     daily: series, streak, activeDays: days.length, tools, recentSessions, unpricedModels,
+    // Subagent spend that could not be traced back to a parent session, so it is in the global
+    // total but in no session row. 0 on this machine; a non-zero value is the gap made visible
+    // rather than a row quietly inheriting it.
+    unattributedAgentCost,
     health: computeUsageHealth(entries, entryCost, hiddenPerTurn, now),
     regression: computeRegression(entries, now),
     cacheTtl: { ...rollingEff, ...waste },

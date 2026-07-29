@@ -9,7 +9,7 @@ import { api, tildify } from '../lib/api.js'
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }
 const ACCENT = 'var(--blue)'
 const Dim = ({ children, style }) => <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', ...style }}>{children}</div>
 

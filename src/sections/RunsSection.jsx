@@ -7,7 +7,7 @@ import { useVisiblePoll } from '../lib/hooks.js'
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 // queued gray / running blue / completed green / failed red / aborted orange / blocked purple (feature 10)
 const STATUS = { unknown: 'var(--text-tertiary)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)', aborted: 'var(--accent-light)', blocked: 'var(--violet)' }
 const sc = s => STATUS[s] || STATUS.unknown
@@ -102,7 +102,7 @@ function Approval({ run, onDone }) {
   )
 }
 
-const PRE = { margin: 0, font: `400 11px/1.6 ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 420, overflow: 'auto', background: 'var(--bg-inset)', borderRadius: 8, padding: 12 }
+const PRE = { margin: 0, font: `400 11px/1.6 ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 420, overflow: 'auto', background: 'var(--bg-inset)', borderRadius: 12, padding: '16px 18px' }
 
 // render a run artifact — diffs get +/- coloring, everything else is monospace text
 function FileBody({ name, content }) {

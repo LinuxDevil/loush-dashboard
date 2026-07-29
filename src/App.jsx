@@ -224,7 +224,7 @@ const BASE_SECTIONS = [
   {
     id: 'authoring',
     label: 'Authoring',
-    icon: '✍',
+    icon: '✍︎',
     kicker: 'Authoring',
     title: 'Authoring — prompt studio & prompt quality',
     el: (
@@ -273,6 +273,26 @@ const COMPANY_SECTION = {
     />
   ),
 };
+// The sidebar groups under three uppercase mono micro-labels. Three, not one per `kicker`: there are
+// fourteen distinct kickers and a nav with fourteen headings is a nav with none. Kept as an id list
+// rather than a field on all eighteen sections so adding a section is still a one-line change — and
+// anything not listed lands in WORK rather than vanishing from the nav.
+const NAV_GROUPS = [
+  { label: 'WORK', ids: ['overview', 'live', 'workingset', 'todos', 'inbox', 'delivery', 'ticket', 'projects', 'chat', 'workflows'] },
+  { label: 'INTELLIGENCE', ids: ['capabilities', 'harness', 'authoring', 'hooks', 'artifacts'] },
+  { label: 'ADMIN', ids: ['governance', 'setup', 'company'] },
+];
+const groupSections = (sections) => {
+  const claimed = new Set(NAV_GROUPS.flatMap((g) => g.ids));
+  return NAV_GROUPS.map((g, i) => ({
+    label: g.label,
+    items: [
+      ...g.ids.map((id) => sections.find((s) => s.id === id)).filter(Boolean),
+      ...(i === 0 ? sections.filter((s) => !claimed.has(s.id)) : []),
+    ],
+  })).filter((g) => g.items.length);
+};
+
 const sectionsFor = (features) => {
   const out = [...BASE_SECTIONS];
   // The Engineering flag no longer adds a nav entry: the quality metrics render as a tab inside
@@ -448,19 +468,25 @@ export default function App() {
           <div className="brand-name">Loush</div>
           <span className="brand-beta">BETA</span>
         </div>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            className={section === s.id ? 'active' : ''}
-            title={s.label}
-            onClick={() => {
-              nav(s.id);
-              setNavOpen(false);
-            }}
-          >
-            <span className="nav-icon">{s.icon}</span> {s.label}
-            {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
-          </button>
+        {groupSections(SECTIONS).map((g) => (
+          <div className="nav-group" key={g.label}>
+            <div className="nav-group-label">{g.label}</div>
+            {g.items.map((s) => (
+              <button
+                key={s.id}
+                className={section === s.id ? 'active' : ''}
+                title={s.label}
+                onClick={() => {
+                  nav(s.id);
+                  setNavOpen(false);
+                }}
+              >
+                <span className="nav-dot" />
+                <span className="nav-icon">{s.icon}</span> {s.label}
+                {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
+              </button>
+            ))}
+          </div>
         ))}
         <SidebarFoot />
       </nav>
@@ -493,6 +519,7 @@ export default function App() {
             >
               {theme === 'dark' ? '☀' : '☾'}
             </button>
+            <div className="div" />
             <div className="avatar">AM</div>
           </div>
         </header>
@@ -534,9 +561,9 @@ export default function App() {
                   background: 'var(--bg-elevated)',
                   border: '1px solid var(--border-default)',
                   borderLeft: `2px solid ${c}`,
-                  borderRadius: 6,
-                  padding: '10px 12px',
-                  font: '400 11px var(--mono)',
+                  borderRadius: 10,
+                  padding: '12px 14px',
+                  font: '400 11.5px var(--mono)',
                   color: 'var(--text-primary)',
                   boxShadow: 'var(--shadow-md)',
                 }}

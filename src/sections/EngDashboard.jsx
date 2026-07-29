@@ -122,7 +122,7 @@ export default function EngDashboard({ onExit }) {
     ['okrs', 'OKRs', '◎'], ['export', 'Export', '↧'],
   ]
   const shell = children => (
-    <div style={{ minHeight: '100vh', color: 'var(--text-primary)', fontFamily: BODY, background: 'radial-gradient(950px 440px at 18% -10%,var(--bg-surface-active),transparent 60%),radial-gradient(760px 400px at 104% -4%,var(--blue-bg),transparent 55%),var(--bg-base)' }}>
+    <div style={{ minHeight: '100vh', color: 'var(--text-primary)', fontFamily: BODY, background: 'var(--bg-base)' }}>
       <TopBar team={S?.team} projects={projects} project={project} onProject={selectProject} nav={NAV}
         onAdd={() => setConfig({ mode: 'new' })} onEdit={() => project && project !== 'all' && setConfig({ mode: 'edit', key: project })}
         route={route} setRoute={r => setUrl({ route: r })} url={url} setUrl={setUrl} win={win} sprints={S?.sprints}
@@ -173,10 +173,10 @@ function TopBar({ team, projects, project, onProject, onAdd, onEdit, route, setR
   const repoShort = r => (r || '').split('/')[1] || r
   const activeName = project === 'all' ? 'All projects' : (projects.find(p => p.key === project)?.name || team?.name || '')
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', borderBottom: '1px solid var(--border-default)' }}>
+    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--bg-base)', borderBottom: '1px solid var(--border-default)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 22px 0', maxWidth: 1320, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--accent-light),var(--accent-dark))', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'none' }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'none' }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 20V11M10 20V4M16 20v-6M22 20V8" strokeWidth="2.6" strokeLinecap="round"  style={{ stroke: 'var(--bg-surface-active)' }} /></svg>
           </div>
           <div>
@@ -625,7 +625,7 @@ function TicketDetail({ issue: i, onClose }) {
   // bespoke slide-in. It was a full-bleed opaque takeover before — the page behind it went black,
   // which read as a modal, not a drawer.
   return <div className="drawer-overlay" onClick={onClose} style={{ zIndex: 90 }}>
-    <div className="drawer" onClick={e => e.stopPropagation()} style={{ zIndex: 91, width: 560, maxWidth: '96vw', overflowY: 'auto', background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', padding: '18px 20px 60px', gap: 14 }}>
+    <div className="drawer" onClick={e => e.stopPropagation()} style={{ zIndex: 91, width: 560, maxWidth: '96vw', overflowY: 'auto', background: 'var(--bg-elevated)', padding: '18px 20px 60px', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{i.status}</span></div>

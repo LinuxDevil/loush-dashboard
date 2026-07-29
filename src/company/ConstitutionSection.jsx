@@ -8,7 +8,7 @@ import { StackedBar, Bars, DataTable, Facts } from '../ui/charts.jsx'
 // pass accent to match the shell (claude amber vs cursor blue).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }
 const KIND_COLOR = { constitution: 'var(--violet)', rule: 'var(--accent)', skill: 'var(--green)', workflow: 'var(--blue)', file: 'var(--text-secondary)' }
 const KIND_LABEL = { constitution: 'constitution', rule: 'rules', skill: 'skills', workflow: 'workflows', file: 'code files' }
 

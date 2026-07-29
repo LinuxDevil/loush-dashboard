@@ -52,7 +52,7 @@ export default function ReviewFlow({ snap, project }) {
 
     {conc.top2Share != null && <Card style={{ borderColor: conc.flagged ? 'var(--red-bg)' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <span style={{ font: `700 18px ${HEAD}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
+        <span style={{ font: `600 18px ${MONO}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
         <span style={{ font: `500 13px ${BODY}`, color: TXTC }}>of all reviews in 90d were done by 2 of {conc.reviewerCount} reviewers{conc.flagged ? ' — the two people reviewing everything are the two people who will quit.' : '. Load is spread.'}</span>
         <span style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: DIM }}>top-1 {fx(conc.top1Share, 0)}% · {conc.total90} reviews</span>
       </div>

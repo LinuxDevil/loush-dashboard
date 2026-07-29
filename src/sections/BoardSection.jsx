@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const STAGE_C = { backlog: 'var(--text-secondary)', 'in-progress': 'var(--blue)', 'code-review': 'var(--amber)', fixing: 'var(--accent-light)', 'ready-for-qa': 'var(--violet)', 'qa-running': 'var(--blue)', 'bug-reported': 'var(--red)', 'ready-for-release': 'var(--green)', released: 'var(--text-tertiary)' }
 const TYPE_C = { feature: 'var(--blue)', sub: 'var(--text-secondary)', bug: 'var(--red)' }
 const MODELS = ['haiku', 'sonnet', 'opus']

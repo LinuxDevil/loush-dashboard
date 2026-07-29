@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import { modelName } from '../lib/modelName.js'
 
 // Context Window Explorer — replay of one real session's per-turn context occupancy.
 // e.in + e.cc + e.cr on a turn already IS the total prompt size the model saw for that turn
@@ -66,7 +67,7 @@ export default function ContextExplorerSection() {
                   <td className="mono">{s.project}</td>
                   <td className="num">{s.turns}</td>
                   <td className="num">{fmtTok(s.peak)}</td>
-                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{(s.model || '').replace('claude-', '')}</td>
+                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{modelName(s.model || '')}</td>
                   <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{new Date(s.last).toLocaleDateString()}</td>
                 </tr>
               ))}
@@ -99,7 +100,7 @@ export function ContextTimeline({ data, hover, setHover, playing, setPlaying, cu
   return (
     <div className="panel" style={{ marginBottom: 0 }}>
       <div className="panel-head">
-        <h3>{project} <span className="muted">{sessionId.slice(0, 8)}… · {(model || '').replace('claude-', '')}</span></h3>
+        <h3>{project} <span className="muted">{sessionId.slice(0, 8)}… · {modelName(model || '')}</span></h3>
         <button className="mini" onClick={() => setPlaying(p => !p)}>{playing ? '⏸ pause' : '▶ replay'}</button>
         {cursor >= 0 && <button className="mini" onClick={() => setCursor(-1)}>show all</button>}
       </div>

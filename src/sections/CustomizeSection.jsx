@@ -123,7 +123,7 @@ export default function CustomizeSection() {
   return (
     <div style={{ ...wrap, display: 'flex', flexDirection: 'column', gap: 16 }}>
       {banner && (
-        <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 6, border: '1px solid var(--blue)', background: 'linear-gradient(160deg,var(--bg-surface),var(--bg-inset))' }}>
+        <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 6, border: '1px solid var(--blue)', background: 'var(--bg-surface)' }}>
           <span style={{ fontSize: 16 }}>✦</span>
           <div style={{ flex: 1 }}>
             <div style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>Customize</div>
@@ -163,7 +163,7 @@ export default function CustomizeSection() {
               <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>· {items.filter(i => i.enabled).length} on</span>
             </div>
             {groupsOf(items).map(([group, rows]) => (
-              <div key={group} style={{ borderRadius: 6, border: '1px solid var(--blue)', background: 'linear-gradient(160deg,var(--bg-surface),var(--bg-inset))', overflow: 'hidden' }}>
+              <div key={group} style={{ borderRadius: 6, border: '1px solid var(--blue)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
                 {groupsOf(items).length > 1 && <div style={{ font: `600 9px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)', padding: '8px 14px 2px' }}>{group} · {rows.length}</div>}
                 {rows.map(i => <Card key={idOf(i)} item={i} busy={busy === idOf(i)} onToggle={toggle} onDelete={del} onCopy={copy} />)}
               </div>

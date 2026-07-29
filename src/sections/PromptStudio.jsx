@@ -4,7 +4,7 @@ import { api, fmtDate } from '../lib/api.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const CHIP = { text: ['✎', 'var(--accent-light)'], url: ['↗', 'var(--blue)'], file: ['▤', 'var(--violet)'], image: ['▣', 'var(--green)'], artifact: ['✦', 'var(--accent)'] }
 
 const empty = { id: null, title: '', tags: [], project: null, inputs: [], template: 'implementation', tone: 'direct', acceptance: '', output: '', versions: [] }

@@ -8,7 +8,7 @@ const fmtDur = ms => ms == null ? null : ms >= 60000 ? Math.round(ms / 60000) + 
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const C = { skill: 'var(--accent)', rule: 'var(--amber)', mcp: 'var(--green)', tool: 'var(--blue)' }
 const CW = 212, CH = 132, COLW = 262, ROWH = 156, PAD = 20
 

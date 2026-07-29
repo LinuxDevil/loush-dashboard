@@ -118,7 +118,7 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
             </div>
           </div>
           <div style={{ flexShrink: 0, textAlign: 'right', width: 84 }}>
-            <div style={{ font: `700 14px ${HEAD}`, color: r.overBudgetBy != null ? RED : HI }}>{r.ageWorkDays != null ? fx(r.ageWorkDays) + 'd' : '—'}</div>
+            <div style={{ font: `600 14px ${MONO}`, color: r.overBudgetBy != null ? RED : HI }}>{r.ageWorkDays != null ? fx(r.ageWorkDays) + 'd' : '—'}</div>
             <div style={{ font: `400 9px ${MONO}`, color: r.overBudgetBy != null ? RED : DIM }}>{r.overBudgetBy != null ? `+${fx(r.overBudgetBy)}d over` : 'in stage'}</div>
           </div>
           <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
