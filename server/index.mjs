@@ -10,6 +10,7 @@ import mountTicket from './ticket.mjs'
 import mountMemory, { retrieveContext } from './memory.mjs'
 import mountFe from './fe.mjs'
 import mountSetup from './setup.mjs'
+import mountTodos from './todos.mjs'
 import mountConstitution from './constitution.mjs'
 import mountAtoms from './atoms.mjs'
 import mountFigmaCapture from './figma-capture.mjs'
@@ -50,7 +51,7 @@ const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(express.json({ limit: '10mb' }))
-mountEng(app) // /api/eng/* — Engineering Metrics dashboard (JIRA changelog + GitHub PRs)
+mountEng(app) // /api/eng/* — the delivery snapshot (JIRA changelog + GitHub PRs)
 mountTicket(app) // /api/ticket/* — key-first ticket → AC/tests → design → canvas → files (PLANE B)
 mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + transcripts
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
@@ -59,6 +60,16 @@ mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...
 // /api/setup/* — visual config for everything the app needs, including credentials. Secret VALUES
 // are never returned by any endpoint there; the client only ever learns `set: true|false`.
 mountSetup(app, { readMeta: (...a) => readMeta(...a), writeMeta: m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2)) })
+// /api/todos/* — the human's day list: one day at a time, filed by directory and file, moving through
+// the delivery stages. Its suggestion panel reads the SAME transcripts Working Set reads, so a day
+// starts from what the agent actually touched rather than from an empty box. Writes go through
+// `track` so a todo edit is versioned and rollback-able like every other write here.
+mountTodos(app, {
+  scanTranscripts: (...a) => scanTranscripts(...a),
+  failStats: (...a) => failStats(...a),
+  track: (...a) => track(...a),
+  backup: (...a) => backup(...a),
+})
 
 // ---------- org-specific tool bundle: Company tools ----------
 // The Constitution reader needs a `.wakeel/constitution/` knowledge base and Figma Capture needs a
