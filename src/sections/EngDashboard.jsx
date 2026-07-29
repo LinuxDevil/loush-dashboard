@@ -434,11 +434,14 @@ const RoleChip = ({ label, name, c }) => <span style={{ display: 'inline-flex', 
 function ColumnsBoard({ items, minCol = 232, onOpen }) {
   const cols = colsFor(items)
   if (!items.length) return <Empty text="Nothing here." />
-  return <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6 }}>
+  // The board scrolls itself in BOTH axes rather than growing the page: with 96 tickets the tallest
+  // column was pushing the whole dashboard down, so the sprint stats scrolled away to read a card.
+  // Column headers stay pinned while their stack scrolls under them.
+  return <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, overflow: 'auto', maxHeight: 'calc(100vh - 250px)', paddingBottom: 6 }}>
     {cols.map(col => {
       const its = items.filter(i => lc(i.status) === lc(col))
       return <div key={col} style={{ flex: `0 0 ${minCol}px`, width: minCol, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 4px' }}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', gap: 7, padding: '2px 4px 6px' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(col) }} />
           <span style={{ font: `600 11px ${BODY}`, color: 'var(--text-secondary)' }}>{col}</span>
           <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{its.length}</span>
@@ -618,8 +621,11 @@ function TicketDetail({ issue: i, onClose }) {
   const artMeta = { ac: { title: 'Acceptance Criteria', noun: 'acceptance criteria' }, tests: { title: 'Test Cases', noun: 'test cases' } }
   const nudge = `${i.assignee?.name || 'team'}: ${i.key} "${i.summary}" has been in ${i.status} for ${fx(i.inCurrent)} working days${i.rec?.atRisk ? ` — ${fx(Math.abs(i.rec.remaining))}d over its ${fx(i.rec.budget)}d budget` : ''}. ${i.url || ''}`
 
-  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'var(--bg-base)', display: 'flex', justifyContent: 'flex-end' }}>
-    <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '96vw', height: '100vh', overflowY: 'auto', background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', borderLeft: '1px solid var(--border-default)', padding: '18px 20px 60px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+  // ponytail: reuses the app's existing .drawer-overlay / .drawer pair (styles.css) instead of a
+  // bespoke slide-in. It was a full-bleed opaque takeover before — the page behind it went black,
+  // which read as a modal, not a drawer.
+  return <div className="drawer-overlay" onClick={onClose} style={{ zIndex: 90 }}>
+    <div className="drawer" onClick={e => e.stopPropagation()} style={{ zIndex: 91, width: 560, maxWidth: '96vw', overflowY: 'auto', background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', padding: '18px 20px 60px', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{i.status}</span></div>
