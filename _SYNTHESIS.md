@@ -3,9 +3,13 @@
 Orchestrator comparison across 16 researched projects. Sources are the sibling files in this
 directory; every claim here traces to one of them. Written 2026-07-29.
 
-**Status:** 15 of 16 research files complete. `anthropic-official-github.md` is partial — section A
-(claude-code-action) is finished; sections B (security-review finding schema) and C (Agent SDK) are
-stubs. The agent died on a monthly spend limit, not on a research dead-end.
+**Status:** all 16 research files complete. Sixteen `SPEC-*.md` implementation specs followed, each
+written against a real checkout of this repo.
+
+> **READ §12 BEFORE ACTING ON THIS DOCUMENT.** The specs probed our code and a real transcript
+> corpus, and overturned several claims made below — including the retraction of §3, which this
+> document originally called our durable moat. Corrections are logged in §12 with the evidence.
+> Where §12 and an earlier section disagree, §12 wins.
 
 ---
 
@@ -16,8 +20,13 @@ findings are of three other kinds, and they should be actioned first:
 
 1. **Four defects in our own code**, three of which corrupt numbers we display as fact.
 2. **A structural blind spot**: our discovery layer misses config that exists on disk.
-3. **Three undocumented first-party data stores** that no project in a 690-entry survey reads —
-   the only finding here that constitutes a durable moat rather than catch-up.
+3. ~~**Three undocumented first-party data stores** that no project in a 690-entry survey reads —
+   the only finding here that constitutes a durable moat rather than catch-up.~~
+   **RETRACTED. See §12.1.** The stores exist at the named paths, but probing showed the conclusion
+   drawn from them was wrong: `usage-data/` is a dead one-shot report cache, `file-history/` covers
+   2 of 99 edited sessions, and `userModified` is never `true`. There is no moat here.
+   The real §0 item 3 is the security exposure in §2, which three agents confirmed independently
+   and pinned to an exact line.
 
 Feature adoption is section 6 onward. Sections 1–3 are corrections and should not wait for a
 roadmap decision.
@@ -383,9 +392,134 @@ summarises third-party repos.
 
 ## 11. Research still owed
 
-1. `anthropic-official-github.md` sections B (security-review finding schema) and C (Agent SDK) —
-   died on spend limit, section A complete.
-2. `davila7/claude-code-templates` (~30k★) — unflagged incumbent overlapping five of our sections.
-3. `daaain/claude-code-log` — the authoritative transcript schema reference.
-4. Cross-version verification of the three first-party stores (§3).
-5. Phase 2: per-project implementation specs (16 agents, blocked on spend limit).
+1. `davila7/claude-code-templates` (~30k★) — unflagged incumbent overlapping five of our sections.
+2. `daaain/claude-code-log` — the authoritative transcript schema reference.
+3. Correct pricing for `claude-opus-5` / `claude-sonnet-5` — **52.8% of our deduped records**, in no
+   researched pricing table, currently resolved by keyword fallback at unverified prices (§12.2).
+
+---
+
+## 12. Corrections from phase 2
+
+Sixteen implementation specs were written against a real checkout and a real transcript corpus.
+They contradicted this document in the following places. **Where §12 disagrees with an earlier
+section, §12 wins** — these are measurements, the earlier claims were inferences from other
+people's repos.
+
+### 12.1 §3 retracted — there is no first-party-store moat
+
+All three stores exist at the named paths with the named keys. The conclusion did not survive:
+
+| Claim in §3 | What probing found |
+|---|---|
+| `file-history/<hash>@vN` gives exact rework counts | Covers **2 session directories against 1,285 transcripts**; `structuredPatch` covers 99 sessions / 2,076 edits, file-history covers 2 of those 99. Max version `@v3` |
+| `usage-data/` is a live first-party metrics store | A **one-shot report cache**. All 92 files share mtimes inside a 0.4 s window on 2026-07-08, matching `report-2026-07-08-235809.html`. Nothing written in 21 days |
+| `userModified` = "the human corrected the agent" | Present on all 2,076 edit results, `true` **zero times**. The real signal is `attachment.type: "edited_text_file"` (79×) = "changed outside the agent" — a weaker, different claim |
+
+The spec's probe ladder settles it: **the rework rank is byte-identical at every rung.** Tier 3.1
+and 3.2 are demoted from "strategic moat" to "an evidence marker on a handful of rows".
+
+Salvaged: the version counter is readable from transcript `snapshot.trackedFileBackups` **without
+opening the store**; and a cross-check found a real defect in *our* number — first-party
+`lines_added` disagrees with ours in 33/47 sessions, almost always larger, likely because whole-file
+`Write` has no `structuredPatch` to sum.
+
+### 12.2 D1/D2 confirmed, and the magnitude is larger
+
+Measured over 1,283 files / 87,258 usage records:
+
+- **61.07% of usage records are duplicates.** Tokens inflated 2.52×.
+- **We display $22,746.67 all-time; corrected is $3,542.14 — 6.42× too high.** Dedupe ÷2.82,
+  price table ÷2.48, TTL split ×1.089.
+- The 24 h window driving the `dailyUSD` budget alert is **2.90×** off: a $20/day cap fires at ~$7.
+- Keep-last proven correct: of 16,611 differing duplicate pairs, **16,611 grew, 0 shrank**.
+
+Three mechanism claims in §1/§3 were wrong:
+- `message.usage.iterations[]` is a **no-op** — `length > 1` occurs zero times.
+- `requestId` adds nothing — identical partition to `message.id` alone.
+- **Per-file dedupe is insufficient.** 1,143 message ids span files via `--resume` replay; the pass
+  must be global. A naive per-file fix would look right and stay wrong.
+
+**Open:** `claude-opus-5` + `claude-sonnet-5` are 52.8% of deduped records and appear in no
+researched pricing table. Even after both fixes, the majority of spend is priced on a guess.
+
+### 12.3 The security exposure is worse and now has two vectors
+
+Three agents confirmed independently, from different starting points:
+- `server/index.mjs:4771` — `app.listen(PORT)` with no host binds `0.0.0.0`. 135 write routes, no
+  auth, no CORS, no token.
+- `POST /api/chat` (`:903`) accepts **any existing directory** and spawns
+  `claude --dangerously-skip-permissions` (`:916`).
+- **Second vector:** `/api/hooks/dryrun` (`:3640-3651`) hands client input to `spawn('sh', ['-c'…])`
+  by design. Structurally CVE-2026-31975.
+
+**Trap:** simply deleting the `--dangerously-skip-permissions` flag does **not** produce prompts.
+Probed against CLI 2.1.220 — there is no `control_request` frame on the stream-json protocol; the
+tool is silently denied and the model gives up. §2's implied fix is incomplete.
+
+### 12.4 Mechanism corrections to Tier 1 and 2
+
+| Item | §8 said | Phase 2 found |
+|---|---|---|
+| 1.7 network guard | Patch `connect`, block all — enforces zero telemetry | We make **deliberate** outbound calls (JIRA, Slack, MCP, Figma). Must be allowlist-and-audit. We have *declared* egress, not zero egress |
+| 2.3 permission prompts | Port siteboon's `canUseTool` | `canUseTool` is an **Agent SDK** API; we use the CLI. The working mechanism is a blocking **`PreToolUse` hook** — verified experimentally, zero new deps, and it **fails closed by construction** |
+| 2.4 WebSocket + eventBus | Adopt CCAM/siteboon's WS transport | Stay on **SSE**. `seq`+replay is native (`id:` lines + `Last-Event-ID`); siteboon wrote 500+ lines reconstructing it over WS, and a WS upgrade path isn't guarded by Express middleware — where their CVSS 9.8 RCE lived |
+| 2.7 parallel efficiency | `Task` blocks sharing a `message.id`, close via `tool_use_id` | Claude Code writes **one content block per line** — zero records with ≥2 `tool_use` blocks. Grouping across lines on `message.id` finds 223 real fan-outs. And `tool_use` timestamps are **completion-time** writes (8–40 ms pairs), so `end − start` yields ~0.02 s per child. Use subagent `.meta.json` sidecars (99.6% coverage) |
+| 3.4 widget registry | L, configurable Overview | Adopt the `getData → T\|null` **contract** as an invisible refactor; defer the editor. The null contract makes a fabricated zero structurally unreachable — worth more than configurability |
+| 3.5 durable store | JSON sidecar first | **Nothing yet.** Ship incremental parsing, measure cold boot, then decide. `node:sqlite` verified available (Node v26.2.0) but buys a query engine for a boot-time problem |
+
+### 12.5 D3 and D4 are both wider than reported
+
+- **D3:** not two scan loops but **six**, each independently one-level-deep (`:183, 375, 603, 831,
+  1004, 2421`). `.agent/**` is confirmed unscanned. And the largest blind spot is neither — the
+  `~/.claude/plugins/cache/**` tree ships **14 live skills** we never scan, rendered as one row with
+  `fullTokens: 0` and then filtered out by `CAP_KIND` (`:2848`). On this machine there is no
+  `~/.claude/commands` or `agents` dir at all, so **plugins are the entire invisible surface**.
+  Root cause: six loops re-derive "what is a capability" inline while analysis is factored into
+  tested modules. The fix is one extracted discovery module, not six recursive walks.
+- **D4:** three more untracked writers — `PUT /api/settings` (`:357`) and both
+  `POST /api/customize/toggle` branches (`:474`, `:489`).
+- **A fifth defect:** `SETTINGS_FILES.user` (`:329`) and `settingsFileFor('global')` (`:1335`) are
+  the same path, so Hooks Save edits global config directly while `/api/hooks/install` *proposes*
+  for that same file — contradicting the Approvals copy at `GovernanceSection.jsx:116`.
+
+### 12.6 Defects found that no upstream project prompted
+
+- **12 percentages in our UI render with no denominator anywhere** — not inline, not on hover.
+  Worst four in `InsightsSection`. `ProjectHub`'s always-on % contains three unmeasured constants
+  (`2100`, `1700`, `600`); change one and the number moves on identical data — literally ADR-0004.
+- `specificityOf()` (`:588`) awards **+10 for forbidding language**, scoring against the only A/B
+  evidence that exists (context-mode ADR-0002 found it degrades tool selection).
+- SSE reconnect **duplicates the transcript**: `:949` replays all events, `ChatSection.jsx:280`
+  appends. Same defect at `server/ticket.mjs:854`.
+- `scanRuns()` (`:4654-4656`) derives status from `.loush/state.json` — our one instance of ccpm's
+  self-report bug. `inFlight()`'s own comment already states the fix: *"A lock needs a way to be wrong."*
+- `lib/run-verdict.mjs:12-14` returns `null` ("still running") for a **finished** run with critical findings.
+- `/api/sessions:3030` discards all subagent transcripts — **1,159 of 1,278 files, 64% of the corpus**,
+  all carrying real `usage`. Subagent lines carry the parent `sessionId` verbatim, so attribution is exact.
+- Both CI readers query only the default branch (`eng.mjs:570`, `index.mjs:3783`) so they never see
+  `pull_request` runs, and count `success` as healthy — the exact blindness we claim to fix in GitHub.
+- `HooksSection.jsx:79` rejects 21 of the **30** hook events Anthropic documents.
+- A rejected approval leaves **no audit trace**; the `/api/batch` dry-run rule is only a client-side
+  `disabled` prop (`GovernanceSection.jsx:243`).
+- `/api/context`'s compaction heuristic fires falsely on partial duplicates;
+  `SessionsSection.jsx:91` renders a dollar value through the token formatter.
+
+### 12.7 Where we were already right, or better
+
+Recorded so nobody "fixes" these: we already price cache-write/read (`:1987`); we already have
+`safeResolve` (`:125`); our subagent parent-linking via `.meta.json` `toolUseId` beats CAST's
+`promptId` heuristic; we already have a model-aware context budget (`:3096`); we already count
+`AGENTS.md`; `failStats()` (`:1844-1873`) already computes per-tool bytes per session — context-mode
+built an MCP server to approximate this; `issue.links` (`eng.mjs:378-382`) is already built with
+zero consumers; `ensureWorktree` gives **per-ticket git-enforced** isolation where ccpm's is
+per-epic and advisory; and our cache denominator (`:3035`) already matches upstream exactly.
+
+### 12.8 Verdicts
+
+- **Agent SDK: do not adopt.** Zero of the specced features need it; `canUseTool` is step 6 of 6 and
+  auto-approved tools skip it; its session APIs read the store we already parse and cover 3 of 13
+  observed `type` values. `maxBudgetUsd` is the one real gap, and does not justify Anthropic
+  Commercial Terms plus branding constraints on a permissive stack.
+- **OAuth usage endpoint: leave it out** (unchanged from §8).
+- **Worktree panel: do not build** (unchanged; upstream's own docs say it goes unused).
