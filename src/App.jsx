@@ -5,6 +5,7 @@ import McpSection from './sections/McpSection.jsx';
 import HooksSection from './sections/HooksSection.jsx';
 import ArtifactsSection from './sections/ArtifactsSection.jsx';
 import Overview from './sections/Overview.jsx';
+import LiveSection from './sections/LiveSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
 import ChatSection from './sections/ChatSection.jsx';
 import HarnessSection from './sections/HarnessSection.jsx';
@@ -55,6 +56,17 @@ const BASE_SECTIONS = [
     kicker: 'Dashboard',
     title: 'What needs a human today',
     el: <Overview />,
+  },
+  // Directly under Overview because it answers the one question you have before any other when
+  // you open this app: is something running right now, and does it need me. Everything else here
+  // is retrospective; this is the only screen about the present tense.
+  {
+    id: 'live',
+    label: 'Now',
+    icon: '◉',
+    kicker: 'Dashboard',
+    title: 'Now — sessions running right now',
+    el: <LiveSection />,
   },
   // The only section in this app scoped to your CODE rather than your harness or your JIRA board, and
   // the only one that needs zero external config. It sits directly under Overview because Overview's
@@ -124,6 +136,7 @@ const BASE_SECTIONS = [
           { label: 'Loush Runs', el: <RunsSection /> },
           { label: 'Quality', el: <QualitySection /> },
           { label: 'Bugs', el: <BugsSection /> },
+          { label: 'Reliability', el: <ReliabilitySection /> },
         ]}
       />
     ),
@@ -146,16 +159,24 @@ const BASE_SECTIONS = [
           { label: 'Flow', el: <FlowSection /> },
           { label: 'Inventory (linter)', el: <Inventory /> },
           { label: 'Customize', el: <CustomizeSection /> },
+          { label: 'Library', el: <LibrarySection /> },
+          { label: 'MCP', el: <McpSection /> },
         ]}
       />
     ),
   },
+  // Harness had grown to ten children — a junk drawer nobody scans past the third item, with
+  // Governance (which now owns the project access matrix) buried two clicks deep. Split by the
+  // question each screen answers: Harness keeps "how is my harness set up and what did it do",
+  // Governance is promoted to top level because it is the control surface, and the two items
+  // that were only ever there by adjacency (Library, MCP) move to Capabilities where the rest of
+  // the installed-things live.
   {
     id: 'harness',
     label: 'Harness',
     icon: '⚙',
     kicker: 'Harness engineering',
-    title: 'Harness — sessions, forensics, config & governance',
+    title: 'Harness — sessions, forensics, usage & config',
     el: (
       <Hub
         items={[
@@ -164,14 +185,20 @@ const BASE_SECTIONS = [
           { label: 'Forensics', el: <ForensicsSection /> },
           { label: 'Usage', el: <UsagePanel /> },
           { label: 'Config', el: <HarnessSection /> },
-          { label: 'Governance', el: <GovernanceSection /> },
           { label: 'Team baseline', el: <TeamBaseline /> },
-          { label: 'Reliability', el: <ReliabilitySection /> },
-          { label: 'Library', el: <LibrarySection /> },
-          { label: 'MCP', el: <McpSection /> },
         ]}
       />
     ),
+  },
+  // Top level, not a hub child: this is where approvals, the audit log and the per-project rwx
+  // access matrix live. A security surface that takes two clicks to find is one that goes unread.
+  {
+    id: 'governance',
+    label: 'Governance',
+    icon: '⚖',
+    kicker: 'Control',
+    title: 'Governance — versions, approvals, access & audit',
+    el: <GovernanceSection />,
   },
   // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
   // top-level entries — they moved into COMPANY_SECTION below, behind the Company_Tools flag.

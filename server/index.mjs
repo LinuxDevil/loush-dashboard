@@ -15,8 +15,12 @@ import mountAtoms from './atoms.mjs'
 import mountFigmaCapture from './figma-capture.mjs'
 import mountPageCapture from './page-capture.mjs'
 import mountAccess from './access.mjs'
+import { mountHooksReceiver, publishInstance, unpublishInstance } from './hooks-receiver.mjs'
 import { securityMiddleware, bindHost, isExposedBind } from './security.mjs'
 import { installNetworkGuard } from '../lib/network-guard.mjs'
+// contextPressure collides with the harness-metrics export above; the live board wants the
+// per-turn, model-aware one from session-status.
+import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
 import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
@@ -74,6 +78,10 @@ mountMemory(app) // /api/memory/* — Memory Recall: search curated memory + tra
 // /api/access/* — per-(profile, project) rwx policy. Core governance, so it is mounted
 // unconditionally; `track` is hoisted from below and records each change in the audit log.
 mountAccess(app, { track: (...a) => track(...a) })
+// /api/hooks/event + /api/hooks/live — mid-turn state pushed by the hook script. Unauthenticated
+// by necessity (Claude Code spawns the hook with no way to hand it a secret), so the module
+// stores tool_input KEY NAMES only and never opens any path it is given.
+const hooksReceiver = mountHooksReceiver(app)
 // /api/fe/* — Working Set: agent edit history JOINED to the codebase it happened to. The only screen in
 // this app scoped to your CODE rather than your harness. Zero config — transcripts + the repo on disk.
 mountFe(app, { scanTranscripts: (...a) => scanTranscripts(...a), failStats: (...a) => failStats(...a), backup: (...a) => backup(...a) })
@@ -851,6 +859,82 @@ app.get('/api/usage', (req, res) => {
       toolCallsToday: daily[todayKey]?.tools || 0, toolCallsTotal: entries.reduce((s, e) => s + e.tc, 0),
       sessions30, costSaved: Math.round(costSaved * 100) / 100, cacheReadTok: entries.reduce((s, e) => s + e.cr, 0),
     },
+  })
+})
+
+// ---------- live board ----------
+// "What is happening right now", derived from transcripts alone. The hook receiver sharpens
+// mid-turn accuracy when installed, but this must work without it — a dashboard that only
+// lights up once hooks are configured is a dashboard most people never see working.
+const LIVE_TAIL_BYTES = 64 * 1024 // enough for the last few records of any real session
+// Reads only the end of a transcript. A session file grows without bound and the board polls
+// every couple of seconds, so parsing whole files here would make the cheapest screen the most
+// expensive one.
+function lastSignals(file, size) {
+  const out = { lastEventType: null, lastContentTypes: null, permissionMode: null, lastTurn: null, stopReason: null }
+  let fd
+  try {
+    fd = fs.openSync(file, 'r')
+    const start = Math.max(0, size - LIVE_TAIL_BYTES)
+    const buf = Buffer.alloc(Math.min(size, LIVE_TAIL_BYTES))
+    fs.readSync(fd, buf, 0, buf.length, start)
+    const lines = buf.toString('utf8').split('\n')
+    if (start > 0) lines.shift() // first line is a fragment when we did not start at byte 0
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const raw = lines[i].trim()
+      if (!raw) continue
+      let j
+      try { j = JSON.parse(raw) } catch { continue }
+      // Walking backwards, the first record of each kind wins — later records are newer.
+      out.lastEventType ??= j.type || null
+      out.permissionMode ??= j.permissionMode || null
+      out.stopReason ??= j.stopReason || null
+      if (out.lastContentTypes == null && Array.isArray(j.message?.content))
+        out.lastContentTypes = j.message.content.map(b => b?.type).filter(Boolean)
+      const u = j.message?.usage
+      if (!out.lastTurn && u && j.message?.model && j.message.model !== '<synthetic>')
+        out.lastTurn = { model: j.message.model, in: u.input_tokens || 0, cc: u.cache_creation_input_tokens || 0, cr: u.cache_read_input_tokens || 0 }
+      if (out.lastEventType && out.lastContentTypes && out.lastTurn) break
+    }
+  } catch { /* an unreadable transcript yields nulls, which deriveStatus reports as unknown */ }
+  finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} }
+  return out
+}
+
+app.get('/api/live', (req, res) => {
+  const now = Date.now()
+  const { files } = collectUsage()
+  const projNames = {}
+  try { for (const d of Object.keys(readClaudeJson().projects || {})) projNames[d.replace(/[\\/:._]/g, '-')] = path.basename(d) } catch {}
+  const sessions = files.filter(f => !f.isAgent && f.msgs > 0).map(f => {
+    let size = 0
+    try { size = fs.statSync(f.path).size } catch {}
+    const sig = lastSignals(f.path, size)
+    const label = projNames[f.proj] || f.proj.split('-').pop()
+    const session = { sessionId: path.basename(f.path, '.jsonl'), label, cwd: f.cwd, lastEventAt: f.mtime, ...sig }
+    return {
+      ...session,
+      status: deriveStatus(session, now),
+      context: liveContextPressure(session),
+      permission: permissionBadge(session),
+      msgs: f.msgs, toolCalls: f.toolCalls, cost: f.cost,
+    }
+  })
+  // Newest first, then collapse: the board answers "what is running", not "what has ever run".
+  sessions.sort((a, b) => b.lastEventAt - a.lastEventAt)
+  const collapsed = collapseIdle(sessions.map(s => ({ ...s, status: s.status.status })), now)
+  const keep = new Set(collapsed.sessions.map(s => s.sessionId))
+  res.json({
+    now,
+    sessions: sessions.filter(s => keep.has(s.sessionId)),
+    // collapseIdle hides rows on purpose; saying how many and why keeps that from reading as
+    // "these are all the sessions there are".
+    hidden: collapsed.dropped,
+    hiddenReasons: collapsed.reasons,
+    // Whether the sharper mid-turn signal is actually arriving — not whether the module is
+    // mounted. It is always mounted; what matters to a reader is whether hooks are installed
+    // and delivering, which is only true once some session has reported in.
+    hookReceiver: (() => { try { return (hooksReceiver.getLiveState?.()?.sessions?.length || 0) > 0 } catch { return false } })(),
   })
 })
 
@@ -4827,8 +4911,11 @@ app.put('/api/scheduler', (req, res) => res.json(writeSchedulerConfig(CLAUDE, re
 app.get('/api/meta', (req, res) => res.json({ home: HOME, claudeDir: CLAUDE, project: PROJECT, backups: BACKUPS }))
 
 app.use((err, req, res, next) => res.status(err.status || 500).json({ error: err.message }))
-app.listen(PORT, bindHost(), () => {
+const server = app.listen(PORT, bindHost(), () => {
   const host = bindHost()
+  // Publish where we are listening so the hook script, which runs from an arbitrary cwd, can
+  // find us without configuration.
+  try { publishInstance({ port: PORT, host }) } catch (e) { console.warn('[claude-dashboard] could not publish instance for hooks:', e.message) }
   console.log(`[claude-dashboard] API on http://localhost:${PORT}`)
   // Binding beyond loopback puts a server that reads transcripts and writes config on the
   // network. Deliberate is fine; silent is not.
@@ -4837,4 +4924,12 @@ app.listen(PORT, bindHost(), () => {
   // until it lands, so the clock should start now. Failure is fine — it retries (short backoff), it never caches null.
   engSnapshot(true).then(s => console.log(`[claude-dashboard] eng snapshot ${s?.available ? 'warm' : 'unavailable (will retry)'}`)).catch(() => {})
   startScheduler({ CLAUDE, port: PORT, runAgent, log: console.log }) // Gap B: cadence loop (opt-in, info-only)
+})
+
+// Drop our entry from the hook registry on the way out, so the hook script does not keep
+// POSTing at a port nothing is listening on.
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
+  try { unpublishInstance() } catch {}
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 500).unref()
 })
