@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawn, exec, execFile, spawnSync } from 'node:child_process'
-import YAML from 'yaml'
 import { toggleOffFile } from '../lib/customize-toggle.mjs'
 import mountEng from './eng.mjs'
 import mountTicket from './ticket.mjs'
@@ -33,7 +32,7 @@ import { deriveLessons, SIGNALS } from '../lib/lessons.mjs'
 import { deriveStatus, contextPressure as liveContextPressure, permissionBadge, collapseIdle } from '../lib/session-status.mjs'
 import mountPromptCheck from './promptcheck.mjs'
 import { loadEngConfig as loadEngCfg, toolFlagAllows } from '../lib/eng-config.mjs'
-import { WATCHED_PROJECT, PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
+import { PROJECTS_FILE, SECRETS_FILE } from '../lib/paths.mjs'
 import { capabilityVerdict, tokPerFire, sessionsSince, contextPressure, NEW_CAPABILITY_DAYS } from '../lib/harness-metrics.mjs'
 import { startScheduler, schedulerInbox, readSchedulerConfig, writeSchedulerConfig } from '../lib/scheduler.mjs'
 import { verdictFrom } from '../lib/run-verdict.mjs'
@@ -44,17 +43,17 @@ import { buildDailyCacheMap, rollingCacheEfficiency, cacheWasteCost, buildDailyU
 import { PRICE_PER_M, isPriced, entryCost, entryCacheRates, splitCacheWrite, dedupeTurns } from '../lib/pricing.mjs'
 import mountPricing from './pricing-store.mjs'
 import { foldNameLine, sessionName, nameSource } from '../lib/session-name.mjs'
+import {
+  HOME, CLAUDE, CLAUDE_JSON, PROJECT, WIN, BACKUPS, PORT,
+  safe, backup, parseFM, readClaudeJson,
+  META_FILE, readMeta, writeMeta, tokens, mangle, readJson,
+  VERSIONS_FILE, APPROVALS_FILE, AUTHOR, appendVersion, track, readVersions,
+  readApprovals, writeApprovals, propose,
+} from './dashboard-core.mjs'
 
 // ============================ TWO DATA PLANES — READ THIS BEFORE ADDING AN ENDPOINT ============================
 // =============================================================================================================
 
-const HOME = os.homedir()
-const CLAUDE = path.join(HOME, '.claude')
-const CLAUDE_JSON = path.join(HOME, '.claude.json')
-const PROJECT = WATCHED_PROJECT
-const WIN = process.platform === 'win32'
-const BACKUPS = path.join(CLAUDE, 'dashboard-backups')
-const PORT = Number(process.env.DASH_PORT) || 5178
 
 const app = express()
 app.use(...securityMiddleware())
@@ -137,30 +136,6 @@ app.use((req, res, next) => {
   res.json = body => { if (res.statusCode === 200) respCache.set(key, { at: Date.now(), body }); res.set('x-cached-at', String(Date.now())); return orig(body) }
   next()
 })
-
-// ---------- safety + backups ----------
-const ALLOWED_ROOTS = [CLAUDE, path.join(PROJECT, '.claude'), CLAUDE_JSON]
-function safe(p) {
-  const r = path.resolve(p)
-  if (!ALLOWED_ROOTS.some(root => r === root || r.startsWith(root + path.sep)))
-    throw Object.assign(new Error('path outside allowed roots: ' + r), { status: 403 })
-  return r
-}
-function backup(file) {
-  if (!fs.existsSync(file)) return null
-  fs.mkdirSync(BACKUPS, { recursive: true })
-  const ts = new Date().toISOString().replace(/[:.]/g, '-')
-  const dest = path.join(BACKUPS, `${ts}__${file.replaceAll(path.sep, '~')}`)
-  fs.cpSync(file, dest, { recursive: true })
-  return dest
-}
-function parseFM(src) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(src)
-  if (!m) return { fm: {}, body: src }
-  let fm = {}
-  try { fm = YAML.parse(m[1]) || {} } catch (e) { fm = { _parse_error: e.message } }
-  return { fm, body: src.slice(m[0].length) }
-}
 
 // ---------- skills / commands / agents ----------
 const KINDS = {
@@ -280,10 +255,6 @@ app.delete('/api/res/:kind/item', kindGuard, (req, res) => {
 })
 
 // ---------- MCP servers ----------
-function readClaudeJson() {
-  if (!fs.existsSync(CLAUDE_JSON)) return {}
-  return JSON.parse(fs.readFileSync(CLAUDE_JSON, 'utf8'))
-}
 app.get('/api/mcp', (req, res) => {
   const cj = readClaudeJson(), out = []
   for (const [name, config] of Object.entries(cj.mcpServers || {})) out.push({ name, scope: 'user', config })
@@ -577,11 +548,7 @@ app.delete('/api/artifacts', (req, res) => {
 })
 
 // ---------- overview: context cost, quality score, specificity, groups/tags ----------
-const META_FILE = path.join(CLAUDE, 'dashboard-meta.json')
-const readMeta = () => { try { return JSON.parse(fs.readFileSync(META_FILE, 'utf8')) } catch { return { tags: {} } } }
-const writeMeta = m => fs.writeFileSync(META_FILE, JSON.stringify(m, null, 2))
 mountPricing(app, { readMeta, writeMeta, onChange: () => usageCache.clear() })
-const tokens = s => Math.ceil((s || '').length / 4)
 
 function scoreItem(fm, body, kind) {
   // ponytail: static-analysis heuristic, not an LLM judge — upgrade to an eval harness if scores need to be trusted
@@ -1464,8 +1431,6 @@ app.get('/api/chat/sessions', (req, res) => {
 // ---------- agent teams (experimental) ----------
 const TEAMS = path.join(CLAUDE, 'teams')
 const TASKS = path.join(CLAUDE, 'tasks')
-const mangle = dir => dir.replace(/[\\/:._]/g, '-')
-const readJson = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }
 
 function listTeams() {
   try {
@@ -2045,21 +2010,6 @@ app.put('/api/hub/file', (req, res) => {
 })
 
 // ---------- governance: version history, approvals, audit ----------
-const VERSIONS_FILE = path.join(CLAUDE, 'dashboard-versions.jsonl')
-const APPROVALS_FILE = path.join(CLAUDE, 'dashboard-approvals.json')
-const AUTHOR = os.userInfo().username
-const appendVersion = entry => fs.appendFileSync(VERSIONS_FILE, JSON.stringify(entry) + '\n')
-function track(file, content, { scope = 'global', summary = '', author = AUTHOR, approvedBy = null } = {}) {
-  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, content)
-  const id = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-  appendVersion({ id, ts: Date.now(), author, machine: os.hostname(), scope, file, summary, approvedBy, prev, content })
-  return id
-}
-function readVersions() {
-  try { return fs.readFileSync(VERSIONS_FILE, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean) } catch { return [] }
-}
 app.get('/api/gov/versions', (req, res) => {
   const { scope, file, author, q } = req.query
   let v = readVersions()
@@ -2082,16 +2032,6 @@ app.post('/api/gov/rollback', (req, res) => {
   const id = track(v.file, target, { scope: v.scope, summary: `rollback to ${v.id}${req.body.to === 'prev' ? ' (before)' : ''}` })
   res.json({ ok: true, id })
 })
-const readApprovals = () => readJson(APPROVALS_FILE, [])
-const writeApprovals = a => fs.writeFileSync(APPROVALS_FILE, JSON.stringify(a, null, 2))
-function propose(file, content, summary) {
-  const a = readApprovals()
-  const id = 'p' + Date.now().toString(36)
-  a.push({ id, ts: Date.now(), author: AUTHOR, file, scope: 'global', summary, content, status: 'proposed' })
-  writeApprovals(a)
-  appendVersion({ id: id + '-proposed', ts: Date.now(), author: AUTHOR, machine: os.hostname(), scope: 'global', file, summary: 'PROPOSED: ' + summary, prev: null, content: null })
-  return id
-}
 app.get('/api/gov/approvals', (req, res) => res.json(readApprovals().slice(-100).reverse()))
 app.post('/api/gov/approvals/:id', (req, res) => {
   const a = readApprovals()
