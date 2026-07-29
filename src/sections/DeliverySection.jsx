@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import Hub from '../ui/Hub.jsx'
 import Skeleton from '../ui/Skeleton.jsx'
+import EngDashboard from './EngDashboard.jsx'
 import { api, toast } from '../lib/api.js'
 
-// ---------- 2: Delivery ----------
-// The Engineering Metrics dashboard that used to be the first tab here is DELETED — its per-metric panels
-// (Attention Queue, Review flow, Quality, Investment, Predictability, Epics, CI, Load, Export) and the
-// whole src/eng/ tree are gone. What remains reads the same /api/eng/snapshot directly: the idea→prod
-// funnel (11), the cohort AI ROI (8), DORA and the 1:1 prep card (15).
+// ---------- 2: Eng folds into the shell as the Delivery section ----------
+// The four-shell split WAS the defect: the only genuinely team-wide data in the repo sat behind a topbar
+// chip nobody clicked. The Engineering Metrics dashboard is now a section of this sidebar, not a portal.
+// Its own panels — Attention Queue, Review flow, Quality, Investment, Predictability, Epics, CI, Load,
+// Export — are IMPORTED wholesale. Nothing was rebuilt. Three panels the Eng shell does not carry hang
+// off the same snapshot as extra tabs here: the idea→prod funnel (11), the cohort AI ROI (8) and the
+// 1:1 prep card (15).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', PURPLE = 'var(--violet)', DIM = 'var(--text-secondary)'
@@ -24,9 +27,10 @@ const NotWired = ({ s }) => (
     <p className="small" style={{ marginTop: 0 }}>{s?.reason || s?.error || 'JIRA credentials / gh auth are not wired'} — nothing is fabricated here.</p></div>
 )
 
-export default function DeliverySection() {
+export default function DeliverySection({ onNav }) {
   return (
     <Hub items={[
+      { label: 'Engineering', el: <div style={{ margin: '-4px -30px -60px', borderRadius: 8, overflow: 'hidden' }}><EngDashboard onExit={() => onNav?.('overview')} /></div> },
       { label: 'Idea → prod funnel', el: <Funnel /> },
       { label: 'AI ROI', el: <Roi /> },
       { label: 'DORA', el: <Dora /> },
