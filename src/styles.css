@@ -668,6 +668,38 @@ table.inv tbody tr:hover { background: var(--bg-surface-hover); }
 }
 .nav-scrim { position: fixed; inset: 0; background: rgba(1, 4, 9, 0.6); z-index: 40; }
 
+/* ---------- todo dock ----------
+   The floating button sits ABOVE the toast stack's z-index (9999 is inline on the toasts, so the dock
+   deliberately stays under them — a toast must never be covered by a button) and to the LEFT of
+   nothing: bottom-right is the one corner no section uses for content. The drawer reuses .drawer so
+   it matches every other slide-over in the app; only its width differs, because a to-do list is
+   scanned, not filled in like a form. */
+.todo-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 30;
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px;
+  border-radius: 9999px; cursor: pointer;
+  background: var(--green-solid); color: #fff; border: 1px solid var(--green-solid);
+  font: 600 12px var(--head); box-shadow: var(--shadow-md);
+  transition: transform var(--dur-base) var(--ease), filter var(--dur-base) var(--ease);
+}
+.todo-fab:hover { filter: brightness(1.12); transform: translateY(-1px); background: var(--green-solid); border-color: var(--green-solid); }
+.todo-fab-icon { font-size: 14px; line-height: 1; }
+.todo-fab-label { letter-spacing: 0.01em; }
+.todo-fab-badge {
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.22); color: #fff; font: 600 10px var(--mono); font-variant-numeric: tabular-nums;
+}
+.todo-fab-badge.carry { background: var(--amber-solid); }
+.todo-drawer { width: 440px; }
+.todo-drawer .drawer-head h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 767px) {
+  /* On a phone the label is dead weight next to the count, and the button must clear the content. */
+  .todo-fab { right: 12px; bottom: 12px; height: 44px; padding: 0 12px; }
+  .todo-fab-label { display: none; }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════════════════════════
    REDUCED MOTION — everything snaps to its final state. Not negotiable.
    ══════════════════════════════════════════════════════════════════════════════════════════════════ */
