@@ -6,6 +6,7 @@ import HooksSection from './sections/HooksSection.jsx';
 import ArtifactsSection from './sections/ArtifactsSection.jsx';
 import Overview from './sections/Overview.jsx';
 import LiveSection from './sections/LiveSection.jsx';
+import EngineeringSection from './sections/EngineeringSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
 import ChatSection from './sections/ChatSection.jsx';
 import HarnessSection from './sections/HarnessSection.jsx';
@@ -251,7 +252,30 @@ const COMPANY_SECTION = {
     />
   ),
 };
-const sectionsFor = (features) => (features?.companyTools ? [...BASE_SECTIONS, COMPANY_SECTION] : BASE_SECTIONS);
+// Engineering metrics — escape rate, area hotspots, ownership concentration. Behind the
+// `Engineering` key in projects.json, mirroring Company_Tools, and off by default: every number
+// comes from the JIRA/GitHub snapshot, so without credentials it is an empty frame. Sits next to
+// Delivery because it is the same subject read a level deeper.
+const ENGINEERING_SECTION = {
+  id: 'engineering',
+  label: 'Engineering',
+  icon: '◭',
+  kicker: 'Delivery',
+  title: 'Engineering — escape rate, hotspots & ownership risk',
+  el: <EngineeringSection />,
+};
+
+const sectionsFor = (features) => {
+  const out = [...BASE_SECTIONS];
+  if (features?.engineering) {
+    // Immediately after Delivery/Ticket rather than appended, so it reads as part of the
+    // delivery story instead of a bolt-on at the bottom of the rail.
+    const at = out.findIndex(s => s.id === 'ticket');
+    out.splice(at >= 0 ? at + 1 : out.length, 0, ENGINEERING_SECTION);
+  }
+  if (features?.companyTools) out.push(COMPANY_SECTION);
+  return out;
+};
 
 // There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;
 // both are deleted, so the switcher has nothing to switch to. What remains is the harness-health strip.

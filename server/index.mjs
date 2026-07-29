@@ -117,6 +117,22 @@ function companyToolsEnabled() {
     return false
   }
 }
+// Same evaluation path as companyTools, for the same reason: a thrown error here must report
+// rather than resolve to a confident `false` with the config plainly set.
+function engineeringEnabled() {
+  const readLocal = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return {} } }
+  try {
+    const cfg = loadEngCfg(PROJECTS_FILE)
+    const email = process.env.JIRA_EMAIL || readLocal(SECRETS_FILE).jiraEmail || null
+    return toolFlagAllows(cfg.engineering, email)
+  } catch (e) {
+    console.error('[claude-dashboard] could not evaluate Engineering flag — leaving it OFF:', e.message)
+    return false
+  }
+}
+const ENGINEERING = engineeringEnabled()
+if (ENGINEERING) console.log('[claude-dashboard] Engineering metrics enabled (projects.json -> Engineering)')
+
 const COMPANY_TOOLS = companyToolsEnabled()
 if (COMPANY_TOOLS) {
   mountConstitution(app)   // /api/constitution/* — .wakeel/constitution knowledge base
@@ -126,7 +142,7 @@ if (COMPANY_TOOLS) {
   console.log('[claude-dashboard] Company tools enabled (projects.json -> Company_Tools)')
 }
 // Feature flags the client needs before it can decide which nav entries exist.
-app.get('/api/features', (req, res) => res.json({ companyTools: COMPANY_TOOLS }))
+app.get('/api/features', (req, res) => res.json({ companyTools: COMPANY_TOOLS, engineering: ENGINEERING }))
 
 mountPromptCheck(app) // /api/promptcheck — cached `claude -p` rating of how the user prompts (claude|cursor)
 // (from main: mountMindwalk / mountGame are not mounted — Labs and the gamification layer are deleted;
