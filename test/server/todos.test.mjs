@@ -1,10 +1,3 @@
-// test/server/todos.test.mjs — the /api/todos routes, against a real store in a temp HOME.
-//
-// mountTodos touches exactly two things outside itself: the injected transcript readers and one JSON
-// file under ~/.claude. Both are substitutable, so these run the ACTUAL handlers — no express, no
-// network, no ~/.claude of whoever is running the suite. HOME is redirected before the module is
-// imported because the store path is resolved at module load, which is also the property that keeps
-// a stray import from writing into a developer's real todo list.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -21,8 +14,6 @@ const STORE = path.join(TMP, '.claude', 'dashboard-todos.json')
 const DAY = '2025-07-28'
 const REPO = path.join(TMP, 'repo')
 
-// One session in `REPO`, three edits on the 28th (two to the same file), one on the 27th, and one
-// tool error on a file the agent did edit. This is the shape scanTranscripts/failStats actually return.
 const scanTranscripts = () => ({
   sessions: [{ sessionId: 's1', cwd: REPO }],
   edits: [
@@ -35,8 +26,6 @@ const scanTranscripts = () => ({
 })
 const failStats = () => [{ sessionId: 's1', errs: [{ t: dayStart(DAY) + 3_700_000, file: path.join(REPO, 'src/ui/Drawer.jsx'), tool: 'Edit', text: 'string not found' }] }]
 
-// A router stub with the four verbs mountTodos uses, plus a caller that runs a handler and returns
-// {status, body} — the same contract express gives the handler.
 function harness() {
   const routes = new Map()
   const app = {}
@@ -55,10 +44,6 @@ function harness() {
 fs.mkdirSync(REPO, { recursive: true })
 const call = harness()
 
-// Wipe the store, then pin roll-over OFF. Every test below that works on a FIXED past date needs
-// that: with roll-over on — the shipped default, asserted in its own test — reading any day moves
-// unfinished 2025 fixtures onto the real today, which is correct behaviour and would make those
-// assertions depend on the date the suite happens to run. The roll-over tests turn it back on.
 const reset = () => {
   try { fs.rmSync(STORE) } catch {}
   call('put', '/api/todos/settings', { body: { rollover: false } })
@@ -193,7 +178,6 @@ test('import files the suggested paths as drafts with their evidence, and never 
   assert.equal(again.body.added.length, 0)
   assert.equal(again.body.skipped[0].why, 'already on this day')
 
-  // and the suggestion panel now says so rather than offering the same file again
   const s = call('get', '/api/todos/suggest', { query: { date: DAY } }).body
   assert.equal(s.dirs[0].files[0].hasTodo, true)
 })
@@ -241,9 +225,6 @@ test('a corrupt store degrades to an empty day instead of throwing', () => {
 
 process.on('exit', () => { try { fs.rmSync(TMP, { recursive: true, force: true }) } catch {} })
 
-// ── roll-over ────────────────────────────────────────────────────────────────────────────────────
-// These use REAL today, because that is what the route rolls onto — the trigger is the calendar
-// advancing, not a parameter, and a test that could pass a fake today would not exercise the guard.
 
 const TODAY = dayKey()
 const YESTERDAY = shiftDay(TODAY, -1)
@@ -261,7 +242,6 @@ test('reading any day rolls unfinished past work onto today, once', () => {
   assert.equal(today.todos[0].carriedDays, 1)
   assert.equal(today.rolledOverToday, true)
 
-  // the finished one stays on the day it was finished, and a second read moves nothing further
   const yday = call('get', '/api/todos', { query: { date: YESTERDAY } }).body
   assert.deepEqual(yday.todos.map(t => t.title), ['finished yesterday'])
   const again = call('get', '/api/todos', { query: { date: TODAY } }).body
@@ -279,7 +259,7 @@ test('roll-over can be switched off, and then nothing moves on its own', () => {
 })
 
 test('roll now moves overdue work on demand and reports what it moved', () => {
-  reset()   // roll-over off: "roll now" must work on demand even when the automatic pass is disabled
+  reset()
   call('post', '/api/todos', { body: { title: 'a', date: YESTERDAY } })
   call('post', '/api/todos', { body: { title: 'b', date: YESTERDAY } })
   const r = call('post', '/api/todos/rollover', { body: { date: TODAY } })
@@ -288,7 +268,6 @@ test('roll now moves overdue work on demand and reports what it moved', () => {
   assert.equal(call('post', '/api/todos/rollover', { body: { date: TODAY } }).body.moved.length, 0)
 })
 
-// ── timing ───────────────────────────────────────────────────────────────────────────────────────
 
 test('every row carries its time-in-column with it', () => {
   reset()
@@ -299,13 +278,10 @@ test('every row carries its time-in-column with it', () => {
   assert.equal(row.timing.current.status, 'code-review')
   assert.equal(row.timing.current.open, true)
   assert.equal(row.timing.leadMs, null, 'lead time only exists once it is finished')
-  // A stage moved through in under a millisecond accrues nothing and is NOT drawn — a 0ms bar in the
-  // card's split would be a stage the work never really sat in.
   assert.ok(row.timing.ordered.every(s => s.ms > 0))
   assert.ok(row.timing.total >= 0)
 })
 
-// ── JIRA ─────────────────────────────────────────────────────────────────────────────────────────
 
 test('a JIRA key is normalized, stored and echoed back', () => {
   reset()
@@ -340,7 +316,6 @@ test('a link can be cleared', () => {
   assert.equal(cleared.body.jira, null)
 })
 
-// ── insights ─────────────────────────────────────────────────────────────────────────────────────
 
 test('insights answers for a day, a week and a month', () => {
   reset()

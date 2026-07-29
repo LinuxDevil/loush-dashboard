@@ -36,8 +36,6 @@ test('ranking orders by usage and reports each value as a share of the whole', (
 })
 
 test('equivalent colour notations are summed before ranking, not counted apart', () => {
-  // The point of the histogram: #fff used 5 times and rgb(255,255,255) used 5 times is one
-  // token used 10 times, not two tokens used 5 times each.
   const out = rankColors({ '#fff': 5, 'rgb(255, 255, 255)': 5, 'rgb(0, 0, 0)': 2 })
   assert.equal(out[0].value, '#ffffff')
   assert.equal(out[0].count, 10)
@@ -49,8 +47,6 @@ test('zero spacing is excluded and the scale comes back in ascending order', () 
 })
 
 test('theme comes from the body background, not an element headcount', () => {
-  // Caught on a real capture: a white page with a blue header and three blue buttons had blue
-  // as its most-counted background, and the page was reported dark. The body is the signal.
   const counts = { 'rgb(47, 111, 235)': 4, 'rgb(255, 255, 255)': 4, 'rgb(26, 26, 26)': 1 }
   const t = detectTheme(counts, 'rgb(255, 255, 255)')
   assert.equal(t.theme, 'light')
@@ -91,8 +87,6 @@ test('summarize survives an empty capture without throwing', () => {
 })
 
 test('loopback and private addresses are refused by default', () => {
-  // "Capture this URL" is otherwise a request-forgery primitive aimed at whatever else is
-  // listening on this machine — the dashboard itself included.
   for (const bad of ['http://localhost:5178/api/usage', 'http://127.0.0.1/', 'http://[::1]/', 'http://192.168.1.1/', 'http://10.0.0.5/', 'http://169.254.169.254/']) {
     assert.throws(() => assertCapturableUrl(bad, { allowLocal: false }), /loopback|private/, `should refuse ${bad}`)
   }
@@ -100,7 +94,6 @@ test('loopback and private addresses are refused by default', () => {
 
 test('the local-capture opt-in is required to reach a dev server, and only lifts the host rule', () => {
   assert.equal(assertCapturableUrl('http://localhost:3000/', { allowLocal: true }), 'http://localhost:3000/')
-  // Opting in to local capture must not also open up non-http schemes.
   assert.throws(() => assertCapturableUrl('file:///etc/passwd', { allowLocal: true }), /http/)
 })
 

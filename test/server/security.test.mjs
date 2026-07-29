@@ -6,8 +6,6 @@ import {
   DEFAULT_BIND_HOST, HOST_DENIED, ORIGIN_DENIED, TOKEN_DENIED,
 } from '../../server/security.mjs'
 
-// Middleware is exercised directly with stubs — no ports are bound, so the suite stays fast and
-// cannot collide with a dashboard already running on the developer's machine.
 const mkReq = (headers = {}, over = {}) => ({
   method: 'GET',
   headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])),
@@ -26,7 +24,6 @@ const mkRes = () => {
   return res
 }
 
-// Runs a middleware and reports whether it called next() or answered the request itself.
 const run = (mw, req) => {
   const res = mkRes()
   let nexted = false
@@ -35,7 +32,6 @@ const run = (mw, req) => {
 }
 
 // ---------------------------------------------------------------------------------------------
-// parseHost / isLoopbackHost
 
 test('parseHost splits names, ports and IPv6 literals', () => {
   assert.deepEqual(parseHost('localhost'), { host: 'localhost', port: '' })
@@ -58,7 +54,6 @@ test('the whole 127.0.0.0/8 block counts as loopback, other addresses do not', (
 })
 
 // ---------------------------------------------------------------------------------------------
-// hostHeaderGuard
 
 test('loopback hosts pass the Host guard, on any port', () => {
   const mw = hostHeaderGuard({ env: {} })
@@ -70,8 +65,6 @@ test('loopback hosts pass the Host guard, on any port', () => {
 })
 
 test('a rebinding Host is rejected with 403 and an explanation', () => {
-  // The attack this exists for: evil.example resolves to 127.0.0.1, so the packet arrives on
-  // loopback, but the Host header still says evil.example and that is what gives it away.
   const { nexted, res } = run(hostHeaderGuard({ env: {} }), mkReq({ host: 'evil.example:5178' }))
   assert.equal(nexted, false, 'a disallowed host must never reach the route')
   assert.equal(res.statusCode, 403)
@@ -120,7 +113,6 @@ test('hostHeaderGuard exposes .permits for callers with no (req,res,next) — e.
 })
 
 // ---------------------------------------------------------------------------------------------
-// loopbackCorsGuard
 
 test('loopback origins are permitted and echoed back with credentials', () => {
   const { nexted, res } = run(loopbackCorsGuard({ env: {} }), mkReq({ origin: 'http://localhost:5173' }))
@@ -167,7 +159,6 @@ test('the CORS guard defaults to guarding', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// tokenGate
 
 test('with no token configured the gate passes everything through — optional by design', () => {
   const mw = tokenGate({ env: {} })
@@ -208,8 +199,6 @@ test('the token gate reads DASH_TOKEN from the environment', () => {
 })
 
 test('safeEqual compares in constant time and survives mismatched lengths', () => {
-  // crypto.timingSafeEqual throws on unequal buffer lengths; hashing first is what stops that,
-  // without leaking the token length through an early return.
   assert.equal(safeEqual('abc', 'abc'), true)
   assert.equal(safeEqual('abc', 'abcdefghijklmnop'), false)
   assert.equal(safeEqual('abcdefghijklmnop', 'abc'), false)
@@ -235,7 +224,6 @@ test('presentedToken prefers the dedicated header and tolerates junk Authorizati
 })
 
 // ---------------------------------------------------------------------------------------------
-// bindHost
 
 test('bindHost defaults to loopback and is overridable by DASH_BIND_HOST', () => {
   assert.equal(DEFAULT_BIND_HOST, '127.0.0.1')
@@ -255,20 +243,17 @@ test('isExposedBind flags binds that reach beyond this machine', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// composition
 
 test('securityMiddleware returns the three guards in order, each usable on its own', () => {
   const stack = securityMiddleware({ env: {}, token: { token: 'tok' } })
   assert.equal(stack.length, 3)
 
-  // A rebinding request dies at the first guard and never reaches the token check.
   const res1 = mkRes()
   let reached = 0
   stack[0](mkReq({ host: 'evil.example' }), res1, () => { reached++ })
   assert.equal(reached, 0)
   assert.equal(res1.statusCode, 403)
 
-  // A good local request with the right token traverses all three.
   const req = mkReq({ host: 'localhost:5178', origin: 'http://localhost:5178', 'x-dashboard-token': 'tok' })
   let passed = 0
   for (const mw of stack) mw(req, mkRes(), () => { passed++ })

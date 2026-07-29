@@ -1,8 +1,3 @@
-// Tests for server-setup.mjs pure logic — validation, secret merging, and the .gitignore check.
-//
-// The secret-merge rules matter more than they look: get them wrong and editing the email field
-// silently wipes the stored API token, because the form has no token to resubmit — it was never
-// given one, by design.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -86,7 +81,6 @@ test('validateSpTable requires ascending points and positive days', () => {
 // ---------------------------------------------------------------- mergeSecrets
 
 test('mergeSecrets LEAVES a stored value when the field is absent', () => {
-  // The UI never receives the token, so it cannot resubmit it. An email-only edit must not wipe it.
   const out = mergeSecrets({ jiraEmail: 'a@b.com', jiraToken: 'tok' }, { jiraEmail: 'c@d.com' })
   assert.equal(out.jiraToken, 'tok', 'editing the email must not destroy the token')
   assert.equal(out.jiraEmail, 'c@d.com')

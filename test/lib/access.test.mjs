@@ -12,7 +12,6 @@ test('modes round-trip through parse and format', () => {
 })
 
 test('a malformed mode is refused rather than coerced', () => {
-  // Reading "rwz" as read-write would grant access the user never wrote down.
   for (const bad of ['rwz', 'rw', 'rwxx', 'xwr', '', null, 'RWX']) assert.equal(parseMode(bad), null, `${bad} should not parse`)
   assert.equal(isValidMode('r--'), true)
 })
@@ -26,8 +25,6 @@ test('an unconfigured cell denies — access is granted, never assumed', () => {
 })
 
 test('nothing is inherited between cells', () => {
-  // The property that makes the grid readable: a cell means only itself. Access to one project
-  // implies nothing about a sibling, a parent path, or another profile.
   const s = store({ alice: { '/repos/a': 'rwx' } })
   assert.equal(checkAccess(s, { profile: 'alice', project: '/repos/a/sub', need: 'r' }).granted, false)
   assert.equal(checkAccess(s, { profile: 'alice', project: '/repos', need: 'r' }).granted, false)
@@ -47,7 +44,6 @@ test('each bit gates its own action', () => {
 })
 
 test('while not enforcing, a denied action is allowed but still reported as denied', () => {
-  // This is what makes the matrix safe to fill in on a live install.
   const s = store({ alice: { '/a': '---' } }, false)
   const d = checkAccess(s, { profile: 'alice', project: '/a', need: 'w' })
   assert.equal(d.allowed, true)

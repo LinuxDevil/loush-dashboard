@@ -15,10 +15,7 @@ import {
 } from '../../lib/worktree.mjs'
 
 // ------------------------------------------------------------------------------------------
-// Fixture: verbatim `git worktree list --porcelain` output from git 2.43.0, captured from a
-// scratch repo built with `git init`, `git worktree add -b feature/x`, `git worktree add
 // --detach`, `git worktree lock --reason testing`, and then deleting the detached directory to
-// make it prunable. Not invented — the exact bytes git printed, with the paths kept as-is.
 // ------------------------------------------------------------------------------------------
 const REAL_PORCELAIN = `worktree /tmp/wt-thUVGv/main
 HEAD cba4d719f9560267c8506f901a280943678b8bdb
@@ -40,8 +37,6 @@ locked testing
 
 `
 
-// Real output from `git worktree list --porcelain` inside a `git init --bare` repository.
-// A bare entry has NO HEAD line at all.
 const REAL_BARE_PORCELAIN = `worktree /tmp/wt-thUVGv/barerepo.git
 bare
 
@@ -52,7 +47,6 @@ const gitAvailable = (() => {
 })()
 
 // ------------------------------------------------------------------------------------------
-// parseWorktreeList
 // ------------------------------------------------------------------------------------------
 
 test('real porcelain output yields one entry per worktree in git order', () => {
@@ -68,9 +62,6 @@ test('real porcelain output yields one entry per worktree in git order', () => {
 })
 
 test('a branch is reported as the full ref and as a short name that keeps its slashes', () => {
-  // The regression this guards: stripping to the last path segment turns `refs/heads/feature/x`
-  // into `x`, so every `feature/…` and `release/…` branch collapses onto a wrong short name and
-  // two different worktrees look like the same branch in the UI.
   const [, , featx] = parseWorktreeList(REAL_PORCELAIN)
   assert.equal(featx.branch, 'refs/heads/feature/x')
   assert.equal(featx.branchName, 'feature/x')
@@ -84,8 +75,6 @@ test('a detached worktree is flagged detached with no branch rather than a blank
 })
 
 test('prunable carries its reason instead of being a bare boolean', () => {
-  // The regression this guards: reporting "prunable: true" with no reason gives a user no way
-  // to tell a deleted checkout from an administratively marked one, and prune is destructive.
   const detached = parseWorktreeList(REAL_PORCELAIN)[1]
   assert.equal(detached.prunable, true)
   assert.equal(detached.prunableReason, 'gitdir file points to non-existent location')
@@ -99,9 +88,6 @@ test('a locked worktree keeps its lock reason', () => {
 })
 
 test('locking with no reason still reads as locked', () => {
-  // Real output of `git worktree lock <path>` with no --reason: a bare `locked` line. Keying
-  // lock state off the presence of a reason string reports these worktrees as unlocked, and a
-  // caller then offers a remove action git will refuse.
   const wts = parseWorktreeList('worktree /r/a\nHEAD abc\nbranch refs/heads/b\nlocked\n\n')
   assert.equal(wts[0].locked, true)
   assert.equal(wts[0].lockReason, null)
@@ -116,17 +102,12 @@ test('a bare repository entry parses despite having no HEAD line', () => {
 })
 
 test('CRLF porcelain from git-for-windows parses identically to LF', () => {
-  // The regression this guards: an unstripped \r rides along on every value, so paths end in
-  // "\r" and never prefix-match a session cwd — attribution silently returns null for all
-  // Windows users.
   const lf = parseWorktreeList(REAL_PORCELAIN)
   const crlf = parseWorktreeList(REAL_PORCELAIN.replace(/\n/g, '\r\n'))
   assert.deepEqual(crlf, lf)
 })
 
 test('malformed porcelain returns what parsed instead of throwing', () => {
-  // Never throw on input we did not produce: a truncated pipe or a future git format must not
-  // take down the request that was merely trying to label a run.
   for (const bad of [null, undefined, 42, {}, '', '\n\n\n', 'garbage', 'branch refs/heads/x\n']) {
     assert.deepEqual(parseWorktreeList(bad), [], `input ${JSON.stringify(bad)}`)
   }
@@ -141,8 +122,6 @@ test('a worktree line with no path is dropped rather than surfacing as a worktre
 })
 
 test('unrecognised attribute lines are preserved, not silently dropped', () => {
-  // Forward compatibility: a future git attribute we do not understand must stay visible so a
-  // reader can see the record was not fully interpreted.
   const wts = parseWorktreeList('worktree /r/a\nHEAD abc\nsomethingnew value here\n\n')
   assert.deepEqual(wts[0].unparsed, ['somethingnew value here'])
   assert.deepEqual(parseWorktreeList(REAL_PORCELAIN)[0].unparsed, [], 'known output leaves nothing unparsed')
@@ -155,19 +134,15 @@ test('a final record with no trailing blank line is still emitted', () => {
 })
 
 // ------------------------------------------------------------------------------------------
-// parseGitFile / detectWorktree
 // ------------------------------------------------------------------------------------------
 
 test('a linked worktree .git file resolves to its gitdir', () => {
-  // Verbatim content of the .git FILE git wrote for the linked worktree in the scratch repo.
   const { gitDir, relative } = parseGitFile('gitdir: /tmp/wt-thUVGv/main/.git/worktrees/feat-x\n')
   assert.equal(gitDir, '/tmp/wt-thUVGv/main/.git/worktrees/feat-x')
   assert.equal(relative, false)
 })
 
 test('a relative gitdir resolves against the directory holding the .git file', () => {
-  // `git worktree add --relative-paths` (git 2.48+) writes a relative gitdir. Handing that
-  // string on unresolved makes mainRepo depend on the process cwd.
   const { gitDir, relative } = parseGitFile('gitdir: ../main/.git/worktrees/feat-x\n', '/tmp/wt/feat-x')
   assert.equal(gitDir, path.resolve('/tmp/wt/main/.git/worktrees/feat-x'))
   assert.equal(relative, true)
@@ -193,9 +168,6 @@ test('an ordinary checkout is reported as not-a-worktree, which is an answer and
 })
 
 test('a submodule is not mistaken for a worktree', () => {
-  // The regression this guards: a submodule's .git is also a FILE with a gitdir: line, pointing
-  // at <super>/.git/modules/<name>. Keying only on "the .git is a file" attributes every
-  // submodule session to a worktree that does not exist.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-sub-'))
   try {
     fs.writeFileSync(path.join(dir, '.git'), 'gitdir: /super/.git/modules/vendor/thing\n')
@@ -218,14 +190,10 @@ test('an unreadable .git file is unknown, never a confident "not a worktree"', (
 
 test('a directory with no repo anywhere above it reports not-a-repo', () => {
   const d = detectWorktree(os.tmpdir(), { maxAscend: 2 })
-  // os.tmpdir() is not inside a repo on any sane machine; either it climbs out (not-a-repo)
-  // or it exhausts the bound (ascend-limit) — both are honest, neither is "not a worktree".
   assert.ok(['not-a-repo', 'ascend-limit'].includes(d.code), `got ${d.code}`)
 })
 
 test('exhausting the parent-directory ascent bound is reported, not swallowed', () => {
-  // No silent caps: a caller that hits the limit must be able to tell it apart from a real
-  // "there is no repo here", because the fix (raise the bound) is completely different.
   const deep = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-deep-'))
   try {
     const leaf = path.join(deep, 'a', 'b', 'c')
@@ -247,12 +215,9 @@ test('a bad argument is unknown with a reason rather than a thrown TypeError', (
 })
 
 // ------------------------------------------------------------------------------------------
-// listWorktrees — failure modes. These are the point of the module.
 // ------------------------------------------------------------------------------------------
 
 test('a missing git binary yields unknown with a git-missing reason, NOT an empty list', () => {
-  // THE regression this whole module exists for. Returning [] here renders as "this repo has
-  // no worktrees" — a confident, wrong, unfalsifiable claim produced by not looking at all.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-nogit-'))
   try {
     const r = listWorktrees(dir, { gitBin: path.join(dir, 'definitely-not-git') })
@@ -275,8 +240,6 @@ test('a directory that is not a repo is unknown/not-a-repo, distinguishable from
 })
 
 test('a missing directory is dir-missing, not git-missing', () => {
-  // Both surface as ENOENT out of spawnSync — cwd-not-found and binary-not-found are the same
-  // errno. Conflating them sends a user to install git when their project folder was renamed.
   const r = listWorktrees(path.join(os.tmpdir(), 'wt-does-not-exist-' + Date.now()))
   assert.equal(r.status, 'unknown')
   assert.equal(r.code, 'dir-missing')
@@ -314,15 +277,11 @@ test('every failure mode carries a distinguishable code', () => {
       assert.ok(r.reason && r.reason.length > 0, `${code} must explain itself`)
       seen.add(code)
     }
-    // 8 distinct failure situations collapse to 6 codes: two spellings of "we were denied" and
-    // two of "git never finished" are genuinely the same answer to a caller.
     assert.equal(seen.size, 6, 'the codes are distinguishable from one another')
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 })
 
 test('git exiting 0 with no worktrees is treated as broken, not as "zero worktrees"', () => {
-  // Every real repository has at least its main worktree. An empty ok-result here would be
-  // indistinguishable from the failure the whole module is built to avoid.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-empty-'))
   try {
     const r = listWorktrees(dir, { spawn: () => ({ status: 0, stdout: '\n\n' }) })
@@ -332,8 +291,6 @@ test('git exiting 0 with no worktrees is treated as broken, not as "zero worktre
 })
 
 test('git is invoked with an argv array and an explicit cwd, never through a shell', () => {
-  // A repo path containing `; rm -rf ~` must be an argument, not a command. Asserting the call
-  // shape is the only way to keep a future edit from reaching for a template string.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-argv-'))
   try {
     let call = null
@@ -348,7 +305,6 @@ test('git is invoked with an argv array and an explicit cwd, never through a she
 })
 
 // ------------------------------------------------------------------------------------------
-// End-to-end against a real git repo with a real worktree.
 // ------------------------------------------------------------------------------------------
 
 test('a real repo with a real linked worktree lists and detects end to end', { skip: !gitAvailable && 'git not available' }, () => {
@@ -375,25 +331,21 @@ test('a real repo with a real linked worktree lists and detects end to end', { s
     const feat = r.worktrees.find(w => w.branchName === 'feature/x')
     assert.ok(feat, 'the linked worktree is listed with its branch')
 
-    // The .git of a linked worktree really is a file, and detectWorktree resolves back to main.
     assert.equal(fs.lstatSync(path.join(root, 'feat-x', '.git')).isFile(), true)
     const d = detectWorktree(path.join(root, 'feat-x'))
     assert.equal(d.isWorktree, true)
     assert.equal(d.name, 'feat-x')
     assert.equal(fs.realpathSync(d.mainRepo), fs.realpathSync(main))
 
-    // And a nested subdirectory of a worktree is still inside that worktree.
     const nested = path.join(root, 'feat-x', 'src', 'deep')
     fs.mkdirSync(nested, { recursive: true })
     assert.equal(detectWorktree(nested).name, 'feat-x')
 
-    // Attribution closes the loop: a session cwd deep inside the worktree names it.
     assert.equal(attributeSession(nested, r.worktrees).path, feat.path)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
 })
 
 // ------------------------------------------------------------------------------------------
-// attributeSession
 // ------------------------------------------------------------------------------------------
 
 const WTS = parseWorktreeList(REAL_PORCELAIN)
@@ -409,9 +361,6 @@ test('a cwd exactly equal to a worktree root matches it', () => {
 })
 
 test('the longest matching path prefix wins for nested worktrees', () => {
-  // The regression this guards: nested worktrees are legal, and a plain startsWith scan returns
-  // whichever matched first — usually the main checkout — so every run in a nested worktree got
-  // labelled with the main branch.
   const nested = parseWorktreeList(
     'worktree /repo\nHEAD a\nbranch refs/heads/main\n\n' +
     'worktree /repo/wt/feat\nHEAD b\nbranch refs/heads/feat\n\n')
@@ -420,8 +369,6 @@ test('the longest matching path prefix wins for nested worktrees', () => {
 })
 
 test('a sibling directory sharing a name prefix is not attributed to the worktree', () => {
-  // The regression this guards: `/repo/app-v2`.startsWith(`/repo/app`) is true, so without a
-  // separator boundary every neighbouring directory inherits the wrong branch.
   const wts = parseWorktreeList('worktree /repo/app\nHEAD a\nbranch refs/heads/app\n\n')
   assert.equal(attributeSession('/repo/app-v2/src', wts), null)
   assert.equal(attributeSession('/repo/application', wts), null)
@@ -435,8 +382,6 @@ test('a trailing slash on either side does not defeat the match', () => {
 })
 
 test('an unmatched cwd returns null rather than the closest worktree', () => {
-  // Never a best guess: putting a branch name next to a run that never touched it is worse
-  // than a blank, because a blank is legible as "we do not know".
   assert.equal(attributeSession('/somewhere/else', WTS), null)
   assert.equal(attributeSession('/tmp/wt-thUVG', WTS), null, 'a partial path component is not a match')
   assert.equal(attributeSession('/tmp', WTS), null, 'a PARENT of the worktrees is not inside one')
@@ -454,7 +399,6 @@ test('a listWorktrees result can be passed straight through', () => {
   try {
     const r = listWorktrees(dir, { spawn: () => ({ status: 0, stdout: REAL_PORCELAIN }) })
     assert.equal(attributeSession('/tmp/wt-thUVGv/feat-x/lib', r).branchName, 'feature/x')
-    // …and an unknown result attributes nothing, because it carries no worktrees at all.
     const bad = listWorktrees(dir, { spawn: () => ({ status: 128, stderr: 'fatal: not a git repository' }) })
     assert.equal(attributeSession('/tmp/wt-thUVGv/feat-x/lib', bad), null)
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
@@ -471,13 +415,10 @@ test('a prunable worktree still attributes — the run really did happen there',
 })
 
 test('windows paths match across separator and case differences', () => {
-  // The regression this guards: transcripts record `C:\Users\me\repo` while git porcelain prints
-  // `C:/Users/me/repo`, so an exact string compare attributes nothing at all on Windows.
   const wts = parseWorktreeList('worktree C:/Users/Me/repo/wt\nHEAD a\nbranch refs/heads/x\n\n')
   const ci = { caseInsensitive: true }
   assert.ok(attributeSession('C:\\Users\\Me\\repo\\wt\\src', wts, ci))
   assert.ok(attributeSession('c:\\users\\me\\REPO\\wt', wts, ci))
-  // Case folding is opt-in off POSIX: there, two paths differing in case are two directories.
   assert.equal(attributeSession('c:/users/me/repo/wt', wts, { caseInsensitive: false }), null)
 })
 

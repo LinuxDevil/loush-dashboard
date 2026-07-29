@@ -1,4 +1,3 @@
-// test/lib/todos.test.mjs — the TODO model. Everything here is pure: no fs, no express, no React.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -21,11 +20,10 @@ test('stepStatus clamps at both ends rather than wrapping', () => {
   assert.equal(stepStatus('draft', +1), 'in-progress')
   assert.equal(stepStatus('live', +1), 'live')
   assert.equal(stepStatus('live', -1), 'ready-for-release')
-  assert.equal(statusIndex('nope'), 0) // unknown ids never produce a negative index
+  assert.equal(statusIndex('nope'), 0)
 })
 
 test('day keys are LOCAL, not UTC', () => {
-  // 2025-07-28 00:30 local. toISOString() would file this under the 27th in any positive offset.
   const d = new Date(2025, 6, 28, 0, 30)
   assert.equal(dayKey(d), '2025-07-28')
   assert.equal(dottedDay('2025-07-28'), '28.7.2025')
@@ -37,7 +35,7 @@ test('day arithmetic crosses months and DST without drifting', () => {
   assert.equal(shiftDay('2025-07-28', 1), '2025-07-29')
   assert.equal(shiftDay('2025-08-01', -1), '2025-07-31')
   assert.equal(shiftDay('2025-03-01', -1), '2025-02-28')
-  assert.equal(shiftDay('2024-03-01', -1), '2024-02-29') // leap year
+  assert.equal(shiftDay('2024-03-01', -1), '2024-02-29')
   assert.equal(isDayKey('2025-7-28'), false)
   assert.equal(isDayKey('yesterday'), false)
 })
@@ -63,7 +61,7 @@ test('normalizeTodo defaults an unknown stage to draft instead of throwing the r
   const t = normalizeTodo({ title: '  ship the drawer  ', status: 'nonsense', date: 'whenever' }, 1_000)
   assert.equal(t.title, 'ship the drawer')
   assert.equal(t.status, 'draft')
-  assert.equal(isDayKey(t.date), true) // fell back to the day of `now`
+  assert.equal(isDayKey(t.date), true)
   assert.equal(t.done, false)
   assert.deepEqual(t.history, [{ at: 1_000, from: null, to: 'draft', note: 'created' }])
 })
@@ -139,7 +137,7 @@ test('partitionByDate carries unfinished past work forward and never hides it', 
   const mk = (d, done, status = 'draft') => ({ ...normalizeTodo({ title: d + status, date: d, status }), done })
   const todos = [
     mk('2025-07-28', false), mk('2025-07-28', true),
-    mk('2025-07-27', false), mk('2025-07-26', true), // the finished one does NOT carry
+    mk('2025-07-27', false), mk('2025-07-26', true),
     mk('2025-07-29', false),
   ]
   const { onDate, carry, later } = partitionByDate(todos, '2025-07-28')
@@ -186,8 +184,8 @@ test('suggestFromActivity scopes to the day, to the repo, and joins failures', (
     { t: on, file: root + '/src/ui/Drawer.jsx', add: 10, del: 2, sessionId: 's1' },
     { t: on + 60, file: root + '/src/ui/Drawer.jsx', add: 4, del: 0, sessionId: 's2' },
     { t: on, file: root + '/server/index.mjs', add: 1, del: 1, sessionId: 's1' },
-    { t: before, file: root + '/src/ui/old.jsx', add: 9, del: 9, sessionId: 's0' }, // wrong day
-    { t: on, file: '/elsewhere/other.js', add: 5, del: 5, sessionId: 's3' },        // wrong repo
+    { t: before, file: root + '/src/ui/old.jsx', add: 9, del: 9, sessionId: 's0' },
+    { t: on, file: '/elsewhere/other.js', add: 5, del: 5, sessionId: 's3' },
   ]
   const errors = [
     { t: on, file: root + '/src/ui/Drawer.jsx', tool: 'Edit', text: 'string not found' },
@@ -215,7 +213,6 @@ test('suggestFromActivity is empty, not wrong, without a root or a valid day', (
   assert.deepEqual(suggestFromActivity({ edits: [], root: '/a', date: 'nope' }), { dirs: [], files: 0, edits: 0 })
 })
 
-// ── roll-over ────────────────────────────────────────────────────────────────────────────────────
 
 test('rollForward moves unfinished past work onto today and leaves finished work where it was', () => {
   const mk = (date, done) => ({ ...normalizeTodo({ title: date + (done ? ' done' : ' open'), date }, 1), done })
@@ -259,7 +256,6 @@ test('a roll-over is not a stage change', () => {
   assert.equal(stageIntervals(t, 3).length, 1, 'the timeline is not split by a date change')
 })
 
-// ── time in each column ──────────────────────────────────────────────────────────────────────────
 
 const H = 3_600_000
 
@@ -279,7 +275,7 @@ test('the clock stops when a todo is ticked', () => {
   t = applyPatch(t, { status: 'in-progress' }, 1 * H)
   t = applyPatch(t, { done: true }, 3 * H)
   const a = timeInStages(t, 3 * H)
-  const b = timeInStages(t, 1000 * H) // a month later, same numbers
+  const b = timeInStages(t, 1000 * H)
   assert.deepEqual(a.byStatus, b.byStatus)
   assert.equal(b.byStatus['in-progress'], 2 * H)
   assert.equal(b.leadMs, 3 * H)
@@ -321,10 +317,9 @@ test('humanMs is compact and never fabricates a number for null', () => {
   assert.equal(humanMs(48 * H), '2d')
 })
 
-// ── insights ─────────────────────────────────────────────────────────────────────────────────────
 
 test('periodRange builds an ISO week (Monday-start), a calendar month and a single day', () => {
-  const w = periodRange('week', '2025-07-31') // a Thursday
+  const w = periodRange('week', '2025-07-31')
   assert.equal(w.from, '2025-07-28')
   assert.equal(w.to, '2025-08-04')
   assert.equal(w.days, 7)
@@ -364,7 +359,7 @@ test('completion rate is null, not 0%, when nothing was created', () => {
 
 test('insights per-stage time is clipped to the window and carries n', () => {
   const day = '2025-07-28', t0 = dayStart(day)
-  let a = normalizeTodo({ title: 'a', date: day }, t0 - 48 * H) // created two days earlier
+  let a = normalizeTodo({ title: 'a', date: day }, t0 - 48 * H)
   a = applyPatch(a, { status: 'code-review' }, t0 + 2 * H)
   const i = insights([a], { period: 'day', date: day, now: t0 + 6 * H })
   const draft = i.stages.find(s => s.status === 'draft')
@@ -390,13 +385,10 @@ test('insights reports roll-over pressure and the oldest carried work', () => {
   let t = normalizeTodo({ title: 'stuck in review', date: '2025-07-25', status: 'code-review' }, dayStart('2025-07-25'))
   ;({ todos: [t] } = rollForward([t], '2025-07-26', dayStart('2025-07-26')))
   ;({ todos: [t] } = rollForward([t], '2025-07-28', t0))
-  // The week of the 28th is Mon 28 → Sun 3, so only the SECOND roll-over falls inside it. That is the
-  // point of the counter: "how much work was pushed forward during this window", not "ever".
   const week = insights([t], { period: 'week', date: day, now: t0 + H })
   assert.equal(week.counts.rollovers, 1)
   const month = insights([t], { period: 'month', date: day, now: t0 + H })
   assert.equal(month.counts.rollovers, 2, 'July contains both moves')
-  // Aging is the todo's whole life, not the window's slice — it is the age of the thing itself.
   assert.equal(week.aging[0].title, 'stuck in review')
   assert.equal(week.aging[0].rollovers, 2)
   assert.equal(week.aging[0].days, 3)
@@ -430,7 +422,6 @@ test('a jira link can be set and cleared through applyPatch', () => {
 
 test('aging counts work pulled forward BY HAND, not only automatic roll-overs', () => {
   const day = '2025-07-28', t0 = dayStart(day)
-  // filed for the 25th, dragged onto the 28th with the manual "pull" action — rollovers stays 0
   const pulled = applyPatch(normalizeTodo({ title: 'quietly re-dated', date: '2025-07-25' }, dayStart('2025-07-25')), { date: day }, t0)
   assert.equal(pulled.rollovers, 0)
   const i = insights([pulled], { period: 'week', date: day, now: t0 + H })

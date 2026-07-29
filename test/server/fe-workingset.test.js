@@ -1,8 +1,3 @@
-// Tests for server-fe.mjs pure logic.
-//
-// The existing suite is 181 green tests that assert privacy shapes and never once assert that a
-// computed number equals an expected number. These do the opposite: every case here pins arithmetic
-// or a null-vs-zero decision, because those are the two things the audits found broken everywhere else.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -150,8 +145,6 @@ test('siblingsFor detects colocated and __tests__/__stories__ conventions', () =
 // ---------------------------------------------------------------- coverageOf
 
 test('coverageOf trusts a test that IMPORTS the file even when the names share no stem', () => {
-  // The exact case that made the sibling-only check wrong: test/fe-workingset.test.js covers
-  // server-fe.mjs and shares no stem with it.
   const cov = coverageOf('server-fe.mjs', ['server.mjs', 'test/fe-workingset.test.js'], new Set(['server-fe.mjs']))
   assert.equal(cov.hasTest, true)
   assert.deepEqual(cov.testedBy, ['test/fe-workingset.test.js'])
@@ -186,11 +179,6 @@ test('reworkScore returns NULL below the minimum session count — one session i
 })
 
 test('reworkScore arithmetic is exactly the documented weighted sum', () => {
-  // 3 sessions, 2 days, 1 failure, 7 edits
-  //   revisitSessions 2 * 3 = 6
-  //   revisitDays     1 * 2 = 2
-  //   failures        1 * 2 = 2
-  //   extraEdits (7-3)=4 * 1 = 4
   const r = reworkScore({ sessionCount: 3, days: 2, edits: 7, failures: 1 })
   assert.deepEqual(r.parts, { revisitSessions: 2, revisitDays: 1, failures: 1, extraEdits: 4 })
   assert.equal(r.score, 14)
@@ -288,8 +276,6 @@ test('isOrphanCandidate excludes entry points, routes, configs, tests and storie
   assert.equal(isOrphanCandidate('app/dashboard/page.tsx', 0), false, 'framework route')
   assert.equal(isOrphanCandidate('pages/about.jsx', 0), false, 'pages route')
   assert.equal(isOrphanCandidate('vite.config.ts', 0), false, 'config')
-  // Regression: an .mjs/.cjs entry point was reported as dead code because the extension class in
-  // ENTRY_RE only covered .js/.jsx/.ts/.tsx. Caught by running the thing against its own repo.
   assert.equal(isOrphanCandidate('server.mjs', 0), false, 'node entry point')
   assert.equal(isOrphanCandidate('index.cjs', 0), false, 'commonjs entry point')
   assert.equal(isOrphanCandidate('src/Button.test.tsx', 0), false, 'tests import, they are not imported')

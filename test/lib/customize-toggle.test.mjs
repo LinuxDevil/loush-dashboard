@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { toggleOffFile } from '../../lib/customize-toggle.mjs'
 
-// in-memory fs: a Set of existing paths + a renameSync that mutates it
 const mkIo = (...paths) => {
   const set = new Set(paths)
   return {
@@ -22,14 +21,14 @@ test('disable renames live → .off; enable renames back (reversible round-trip)
 })
 
 test('idempotent: toggling to the state it is already in is a noop, never an error', () => {
-  const io = mkIo(F) // already enabled
+  const io = mkIo(F)
   const r = toggleOffFile(F, true, io)
   assert.equal(r.noop, true)
-  assert.ok(io.set.has(F)) // untouched
+  assert.ok(io.set.has(F))
 })
 
 test('refuses to clobber: both live and .off present → 409, no rename', () => {
   const io = mkIo(F, F + '.off')
   assert.throws(() => toggleOffFile(F, false, io), e => e.status === 409)
-  assert.ok(io.set.has(F) && io.set.has(F + '.off')) // nothing moved
+  assert.ok(io.set.has(F) && io.set.has(F + '.off'))
 })

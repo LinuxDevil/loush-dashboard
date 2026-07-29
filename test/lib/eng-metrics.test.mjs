@@ -1,5 +1,3 @@
-// Tests for eng-metrics.mjs. Each block pins the exact failure an audit found — the wrong version
-// looked reasonable in every case, which is why none of them were caught by reading the code.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -15,13 +13,10 @@ test('estAccuracy is 100% only for a perfect estimate', () => {
 })
 
 test('estAccuracy is MONOTONE — the old version scored 10x-early as worse than 2x-late', () => {
-  // est = 5 days. Old formula: actual 0.1 -> 51%, actual 10 -> 50%. It rated finishing 50x faster
-  // than estimated as barely better than taking twice as long.
   const early = estAccuracy(5, 0.1)
   const late = estAccuracy(5, 10)
   assert.ok(early < late, `being 50x off must score worse than being 2x off (early=${early}, late=${late})`)
 
-  // accuracy must fall monotonically as the estimate gets worse in either direction
   const overshoot = [5, 6, 8, 12, 20].map(a => estAccuracy(5, a))
   for (let i = 1; i < overshoot.length; i++) assert.ok(overshoot[i] < overshoot[i - 1], 'monotone as actual grows')
   const undershoot = [5, 4, 3, 2, 1].map(a => estAccuracy(5, a))
@@ -29,8 +24,6 @@ test('estAccuracy is MONOTONE — the old version scored 10x-early as worse than
 })
 
 test('estAccuracy is SYMMETRIC, so inflating an estimate no longer games the OKR', () => {
-  // The metric feeds an OKR target of >=85%. Under the old asymmetric formula the reliable way to
-  // hit it was to pad estimates: overshoot was punished gently, undershoot hard.
   assert.equal(estAccuracy(5, 10), estAccuracy(10, 5), 'off by 2x scores the same in both directions')
   assert.equal(estAccuracy(2, 8), estAccuracy(8, 2))
 })
@@ -49,8 +42,8 @@ const april = Date.parse('2026-04-10T00:00:00Z')
 test('an escaped bug counts against the month its PARENT shipped, not the month it was filed', () => {
   const r = escapeRateSeries({
     now: NOW,
-    shipped: [{ liveAt: march }, { liveAt: march }],           // 2 shipped in March
-    bugs: [{ escaped: true, created: april, parentLiveAt: march }], // filed in April, but about March's release
+    shipped: [{ liveAt: march }, { liveAt: march }],
+    bugs: [{ escaped: true, created: april, parentLiveAt: march }],
   })
   const m = r.series.find(x => x.month === '2026-03')
   assert.equal(m.shipped, 2)
@@ -60,7 +53,6 @@ test('an escaped bug counts against the month its PARENT shipped, not the month 
 })
 
 test('the >100% case is gone: old bugs against old releases no longer land in a slow month', () => {
-  // The scenario the audit named: ship 2 things this month, have 4 old bugs surface.
   const jan = Date.parse('2026-01-10T00:00:00Z')
   const r = escapeRateSeries({
     now: NOW,
@@ -116,8 +108,6 @@ test('escapeRateSeries flags a low-n month rather than presenting it as a rate t
 // ---------------------------------------------------------------- busFactor
 
 test('busFactor is NULL below the minimum ticket count — one ticket is not a bus factor', () => {
-  // The audit's case: an area with a single ticket has exactly one contributor, so the old
-  // `rows.length === 1` test flagged it and would send a manager to "spread knowledge" about it.
   const r = busFactor({ total: 1, rows: [{ name: 'A', share: 100 }] })
   assert.equal(r.busFactor, null)
   assert.equal(r.reason, 'insufficient-data')

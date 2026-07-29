@@ -6,10 +6,6 @@ import { LABELLED_PROMPTS, TIER_RANK_ORDER } from '../fixtures/complexity-labell
 const rank = t => TIER_RANK_ORDER.indexOf(t)
 
 test('every labelled prompt lands in its labelled tier', () => {
-  // The regression this guards is the whole point of the file. Before calibration the
-  // boundaries were inherited from a score scale ten times wider than the one real prompts
-  // produce, so `standard` absorbed 74% of turns and `reasoning` was unreachable. Any change to
-  // a dimension weight reshapes the score distribution and will surface here first.
   const misses = []
   for (const [want, text] of LABELLED_PROMPTS) {
     const got = scoreTurn(text).tier
@@ -19,9 +15,6 @@ test('every labelled prompt lands in its labelled tier', () => {
 })
 
 test('the labelled tiers occupy separated score bands', () => {
-  // Stronger than per-prompt correctness: it asserts the tiers are actually distinguishable
-  // rather than that the boundaries happen to thread between overlapping clouds. If bands ever
-  // overlap, no choice of boundary can classify correctly and the fix is a scoring change.
   const bands = {}
   for (const [want, text] of LABELLED_PROMPTS) {
     const s = scoreTurn(text).rawScore
@@ -36,8 +29,6 @@ test('the labelled tiers occupy separated score bands', () => {
 })
 
 test('each boundary sits inside the gap it divides, not flush against a band', () => {
-  // A boundary tight against an observed band classifies that band correctly by luck. Keeping
-  // it inside the gap means a prompt must move meaningfully before it changes tier.
   const bands = {}
   for (const [want, text] of LABELLED_PROMPTS) {
     const s = scoreTurn(text).rawScore
@@ -52,8 +43,6 @@ test('each boundary sits inside the gap it divides, not flush against a band', (
 })
 
 test('an unambiguous turn is confident and a borderline one is not', () => {
-  // Confidence was meaningless before recalibration — its midpoint was wider than any band, so
-  // everything reported ~0.33. It has to actually discriminate to be worth showing.
   const clear = scoreTurn('ok')
   assert.ok(clear.confidence > 0.9, `a bare acknowledgment should be unambiguous, got ${clear.confidence}`)
   const borderline = scoreTurn('run the tests')

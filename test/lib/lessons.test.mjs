@@ -11,7 +11,6 @@ import {
   deriveLessons,
 } from '../../lib/lessons.mjs'
 
-// ── fixture helpers: the real transcript shapes verified in this repo ────────
 let clock = 0
 const at = () => new Date(Date.UTC(2026, 6, 29, 8, 0, clock++)).toISOString()
 
@@ -52,7 +51,6 @@ const validLesson = (over = {}) => ({
   ...over,
 })
 
-// ── schema / validation ─────────────────────────────────────────────────────
 
 test('a complete lesson validates and normalizes its evidence references', () => {
   const v = validateLesson(validLesson())
@@ -63,9 +61,6 @@ test('a complete lesson validates and normalizes its evidence references', () =>
 })
 
 test('a lesson with no evidence is rejected', () => {
-  // The regression this guards: the whole value of this feature is that a lesson is grounded in
-  // records the user can go and read. An evidence-free lesson is a hallucinated instruction that
-  // the ledger's formatting makes look authoritative.
   for (const bad of [undefined, null, [], 'u1']) {
     const v = validateLesson(validLesson({ evidence: bad }))
     assert.equal(v.ok, false, `evidence ${JSON.stringify(bad)} must not validate`)
@@ -74,8 +69,6 @@ test('a lesson with no evidence is rejected', () => {
 })
 
 test('an evidence reference that names no record is rejected', () => {
-  // A note with no uuid and no timestamp cannot be checked against the transcript, so it is
-  // commentary, not evidence.
   const v = validateLesson(validLesson({ evidence: [{ note: 'it felt wrong' }] }))
   assert.equal(v.ok, false)
   assert.equal(normalizeEvidence({ note: 'x' }).ok, false)
@@ -83,8 +76,6 @@ test('an evidence reference that names no record is rejected', () => {
 })
 
 test('an invalid lesson yields normalized: null so it cannot be written by accident', () => {
-  // The regression this guards: returning a best-effort object made `if (v.normalized) write(...)`
-  // append invalid rows to the ledger, which is exactly the corruption this module exists to stop.
   const v = validateLesson(validLesson({ mistake: '   ' }))
   assert.equal(v.ok, false)
   assert.equal(v.normalized, null)
@@ -99,8 +90,6 @@ test('validateLesson never throws on hostile input', () => {
 })
 
 test('a missing task normalizes to "unknown" rather than failing or being invented', () => {
-  // House rule: unknown is a value. `task` is frequently unobservable, and guessing it would put
-  // fabricated context on a record whose point is that it is factual.
   const v = validateLesson(validLesson({ task: undefined }))
   assert.equal(v.ok, true)
   assert.equal(v.normalized.task, 'unknown')
@@ -126,7 +115,6 @@ test('confidence outside [0,1] is an error rather than being clamped silently', 
   assert.equal(validateLesson(validLesson({})).normalized.confidence, null)
 })
 
-// ── JSONL ───────────────────────────────────────────────────────────────────
 
 test('a lesson round-trips through serialize and parse', () => {
   const line = serializeLesson(validLesson({ confidence: 0.75, signal: 'retry_after_failure' }))
@@ -141,15 +129,11 @@ test('a lesson round-trips through serialize and parse', () => {
 })
 
 test('serializeLesson refuses an invalid lesson instead of writing a broken line', () => {
-  // The regression this guards: serializing best-effort put rows into the ledger that could never
-  // be read back, so the file grew while the readable history shrank.
   assert.equal(serializeLesson(validLesson({ evidence: [] })), null)
   assert.equal(serializeLesson(null), null)
 })
 
 test('a malformed JSONL line is reported with its line number, never dropped', () => {
-  // The regression this guards: a parser that `continue`s past a bad line makes a lessons file
-  // that quietly loses entries — worse than no lessons file, because the user trusts it.
   const text = [serializeLesson(validLesson()), '{not json', serializeLesson(validLesson({ task: 'second' }))].join('\n')
   const out = parseLessonsJsonl(text)
   assert.equal(out.lessons.length, 2)
@@ -160,8 +144,6 @@ test('a malformed JSONL line is reported with its line number, never dropped', (
 })
 
 test('a line that is valid JSON but an invalid lesson is reported, not accepted', () => {
-  // A row missing `evidence` parses fine as JSON. Accepting it would smuggle an ungrounded lesson
-  // into the ledger through the file rather than through derivation.
   const out = parseLessonsJsonl(JSON.stringify({ ...validLesson(), evidence: [] }))
   assert.equal(out.lessons.length, 0)
   assert.equal(out.malformed.length, 1)
@@ -184,7 +166,6 @@ test('parseLessonsJsonl never throws on non-string input', () => {
   assert.match(out.malformed[0].reason, /not a string/)
 })
 
-// ── derivation: the grounding guarantees ────────────────────────────────────
 
 test('an empty or non-array transcript proposes nothing and still reports its limits', () => {
   for (const input of [[], null, undefined, 'records', 42]) {
@@ -195,8 +176,6 @@ test('an empty or non-array transcript proposes nothing and still reports its li
 })
 
 test('every derived lesson carries evidence and is status proposed', () => {
-  // The regression this guards: an emitted lesson with an empty evidence array reads as a vetted
-  // rule while being unfalsifiable — the single failure mode this feature must not have.
   const records = [
     humanTurn('h1', 'add the lessons module'),
     assistantCall('a1', 't1', 'Read', { file_path: '/home/user/loush-dashboard/lib/lesson.mjs' }),
@@ -215,8 +194,6 @@ test('every derived lesson carries evidence and is status proposed', () => {
 })
 
 test('records with no uuid and no timestamp produce no lesson at all', () => {
-  // Grounding is checked at emit time, not just at construction: a candidate whose records cannot
-  // be located in the transcript is unverifiable, so it is dropped and counted.
   const bare = (id, name, input) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
   const bareResult = (id, text) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: true }] } })
   const records = [
@@ -231,8 +208,6 @@ test('records with no uuid and no timestamp produce no lesson at all', () => {
 })
 
 test('a user declining a tool call never becomes a lesson', () => {
-  // The regression this guards: a decline arrives as is_error:true, so a naive failure detector
-  // "learns" from the permission gate and proposes rules for routing around the human.
   const records = [
     humanTurn('h1', 'update the config'),
     assistantCall('a1', 't1', 'Edit', { file_path: '/home/user/loush-dashboard/lib/paths.mjs' }),
@@ -248,7 +223,6 @@ test('a user declining a tool call never becomes a lesson', () => {
   assert.equal(out.stats.failures, 0)
 })
 
-// ── derivation: the four signals ────────────────────────────────────────────
 
 test('a failed call retried with changed input proposes a retry lesson citing all three records', () => {
   const records = [
@@ -267,8 +241,6 @@ test('a failed call retried with changed input proposes a retry lesson citing al
 })
 
 test('a failure retried identically is not treated as a fix', () => {
-  // The regression this guards: an unchanged rerun that happens to succeed (flaky command) is not
-  // a lesson — there is no changed approach to record as the fix.
   const records = [
     assistantCall('a1', 't1', 'Bash', { command: 'npm test' }),
     toolResult('r1', 't1', 'Exit code 1', true),
@@ -280,8 +252,6 @@ test('a failure retried identically is not treated as a fix', () => {
 })
 
 test('a later unrelated call to the same tool is not read as the fix', () => {
-  // The regression this guards: matching on tool name alone made any subsequent Bash call look
-  // like the remedy, producing confident nonsense pairings.
   const records = [
     assistantCall('a1', 't1', 'Bash', { command: 'python3 scripts/parse.py --strict' }),
     toolResult('r1', 't1', 'Exit code 1\nTraceback (most recent call last):', true),
@@ -307,8 +277,6 @@ test('five edits to one file propose a thrash lesson citing every edit', () => {
 })
 
 test('four edits to one file stay below the threshold', () => {
-  // The regression this guards: iterative editing is normal work. A ledger that flags four edits
-  // flags every session, and a ledger that flags everything gets ignored entirely.
   const records = []
   for (let i = 0; i < 4; i++) {
     records.push(assistantCall(`a${i}`, `t${i}`, 'Edit', { file_path: '/home/user/loush-dashboard/lib/agent.mjs', old_string: `x${i}`, new_string: `y${i}` }))
@@ -333,8 +301,6 @@ test('a user reversing the previous instruction proposes a correction lesson', (
 })
 
 test('a weak correction cue scores below the default floor and stays hidden', () => {
-  // The regression this guards: "actually" and a leading "no" appear constantly in ordinary
-  // conversation. Emitting a rule for each one buries the corrections that mattered.
   const records = [
     humanTurn('h1', 'run the tests'),
     assistantCall('a1', 't1', 'Bash', { command: 'node --test' }),
@@ -348,7 +314,6 @@ test('a weak correction cue scores below the default floor and stays hidden', ()
 })
 
 test('an opening message is never treated as a correction', () => {
-  // There is nothing before the first turn to reverse, so "no" there is just a word.
   const records = [humanTurn('h1', 'no rush on this, but revert that old branch when you can')]
   assert.deepEqual(deriveLessons(records).lessons, [])
 })
@@ -384,8 +349,6 @@ test('two consecutive failures stay below the run threshold', () => {
 })
 
 test('a decline in the middle of failures breaks the run rather than extending it', () => {
-  // The regression this guards: counting a decline as a link in the chain turned two failures plus
-  // a human "no" into a three-failure "wrong approach" lesson about the human's decision.
   const records = [
     assistantCall('a1', 't1', 'Bash', { command: 'rm -rf dist' }),
     toolResult('r1', 't1', 'Exit code 1', true),
@@ -400,11 +363,8 @@ test('a decline in the middle of failures breaks the run rather than extending i
   assert.equal(out.stats.declines, 1)
 })
 
-// ── derivation: bookkeeping and house rules ─────────────────────────────────
 
 test('a tool call with no recorded result counts as neither success nor failure', () => {
-  // Unknown is a value: an interrupted session leaves calls without verdicts, and inventing a
-  // failure for them would manufacture lessons out of a truncated file.
   const records = [
     assistantCall('a1', 't1', 'Bash', { command: 'npm test' }),
     assistantCall('a2', 't2', 'Bash', { command: 'npm run lint' }),
@@ -417,8 +377,6 @@ test('a tool call with no recorded result counts as neither success nor failure'
 })
 
 test('the proposal cap is reported alongside how many it dropped', () => {
-  // House rule: no silent caps. A user reading five lessons must be able to tell whether that was
-  // all of them.
   const records = []
   for (let f = 0; f < 4; f++) {
     for (let i = 0; i < 5; i++) {
@@ -476,8 +434,6 @@ test('proposals come back ordered by confidence, strongest first', () => {
 })
 
 test('every derived proposal survives its own validator and serializes', () => {
-  // The regression this guards: derivation once emitted lessons the ledger could not store, so
-  // proposals were shown in the UI and then vanished on write.
   const records = [
     humanTurn('h1', 'get the suite green'),
     assistantCall('a1', 't1', 'Bash', { command: 'node --test test/lib/pricing.js' }),
@@ -497,8 +453,6 @@ test('every derived proposal survives its own validator and serializes', () => {
 })
 
 test('the signal catalogue documents a threshold and a justification for each signal', () => {
-  // The catalogue is what a UI renders as "why did this appear?"; an undocumented signal is an
-  // unexplainable proposal.
   const ids = SIGNALS.map(s => s.id)
   assert.deepEqual(ids, ['retry_after_failure', 'edit_thrash', 'user_correction', 'failure_run'])
   for (const s of SIGNALS) {

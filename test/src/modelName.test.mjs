@@ -3,8 +3,6 @@ import assert from 'node:assert/strict'
 import { modelName } from '../../src/lib/modelName.js'
 
 test('the six models this machine actually runs all format correctly', () => {
-  // Volume-ordered, from an exhaustive scan of ~/.claude/projects. If the formatter is wrong for
-  // any of these it is wrong on a real screen today, not hypothetically.
   assert.equal(modelName('claude-opus-4-8'), 'Claude Opus 4.8')
   assert.equal(modelName('claude-sonnet-5'), 'Claude Sonnet 5')
   assert.equal(modelName('claude-opus-5'), 'Claude Opus 5')
@@ -36,7 +34,6 @@ test('provider prefixes are stripped', () => {
 })
 
 test('the older name order still reads correctly', () => {
-  // Version before tier, rather than after. The same single pass has to handle both.
   assert.equal(modelName('claude-3-5-sonnet-20241022'), 'Claude 3.5 Sonnet')
   assert.equal(modelName('claude-3-haiku-20240307'), 'Claude 3 Haiku')
 })
@@ -47,17 +44,12 @@ test('other families get the same treatment', () => {
 })
 
 test('an unrecognised id is returned untouched, never guessed at or blanked', () => {
-  // The invariant that matters most: "we do not know what this is" must render as the id itself,
-  // so a reader can still match it against their config. Never an empty string, never a family
-  // we inferred.
   assert.equal(modelName('llama3-local'), 'llama3-local')
   assert.equal(modelName('my-finetune-v2'), 'my-finetune-v2')
   assert.equal(modelName('<synthetic>'), '<synthetic>')
 })
 
 test('a bare tier word is left alone', () => {
-  // The task board and harness config accept short names like these. They are not full ids and
-  // must not be dressed up as though they were.
   for (const s of ['opus', 'sonnet', 'haiku']) assert.equal(modelName(s), s)
 })
 
@@ -73,8 +65,6 @@ test('non-string and empty input passes straight through', () => {
 })
 
 test('formatting is idempotent for ids it does not recognise', () => {
-  // Guards against a second pass over an already-formatted label mangling it — a real risk once
-  // several screens route through this.
   assert.equal(modelName(modelName('llama3-local')), 'llama3-local')
   assert.equal(modelName('Claude Opus 4.8'), 'Claude Opus 4.8')
 })

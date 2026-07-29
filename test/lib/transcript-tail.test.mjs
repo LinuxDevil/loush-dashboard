@@ -5,14 +5,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createTailer, DEFAULT_MAX_CACHED_FILES } from '../../lib/transcript-tail.mjs'
 
-// Real files, real appends. The bugs this module exists to fix only appear against a file that is
-// genuinely growing on disk between reads, so nothing here is mocked.
 const scratch = async () => mkdtemp(path.join(tmpdir(), 'transcript-tail-'))
 const jsonl = (...objs) => objs.map(o => JSON.stringify(o)).join('\n') + '\n'
 
 test('first sight of a file starts at EOF instead of replaying its history', async t => {
-  // The 046 rule: attaching to a session already running in another terminal must not re-emit
-  // every turn it has produced so far.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -61,9 +57,6 @@ test('repeated tails of an unchanged file return nothing and read no bytes', asy
 })
 
 test('a read ending mid-line carries the fragment forward instead of dropping it', async t => {
-  // The regression this guards: the upstream tailer split on '\n' and discarded the trailing
-  // element, so any record that happened to be half-written at read time vanished permanently —
-  // the reader never went back for it, because the offset had already moved past those bytes.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -86,7 +79,6 @@ test('a read ending mid-line carries the fragment forward instead of dropping it
 })
 
 test('a line split one byte at a time survives reassembly', async t => {
-  // Worst-case interleaving of appends and reads: every single tail() lands mid-line.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -106,8 +98,6 @@ test('a line split one byte at a time survives reassembly', async t => {
 })
 
 test('a multi-byte character split across two reads is not corrupted', async t => {
-  // A UTF-8 sequence straddling an append boundary decodes to U+FFFD if each chunk is stringified
-  // independently. Transcripts are full of non-ASCII, so this shows up as mangled content.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -124,7 +114,6 @@ test('a multi-byte character split across two reads is not corrupted', async t =
   const finalRead = await tailer.read(file)
   assert.equal(finalRead.records[0].t, 'héllo — ok')
 
-  // And through the tail path itself, in one more split pass.
   const t2 = createTailer()
   await t2.tail(file)
   await appendFile(file, Buffer.from('{"t":"ü"}', 'utf8').subarray(0, 8))
@@ -136,8 +125,6 @@ test('a multi-byte character split across two reads is not corrupted', async t =
 })
 
 test('a file truncated below the last offset resets and says so', async t => {
-  // The regression this guards: after a rotation the old offset points into the middle of new
-  // content, so continuing from it emits a spliced half-line as if it were a record.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -173,8 +160,6 @@ test('a stale partial fragment is discarded on truncation rather than glued to n
 })
 
 test('a same-length rewrite is flagged rather than reported as no change', async t => {
-  // Unknown is a value: we cannot distinguish an in-place rewrite from a bare touch, so we say
-  // "suspected" instead of guessing (re-emitting would duplicate, silence would hide a rewrite).
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -184,7 +169,7 @@ test('a same-length rewrite is flagged rather than reported as no change', async
   await tailer.tail(file, { fromStart: true })
 
   const before = await stat(file)
-  await writeFile(file, jsonl({ n: 2 })) // identical length, different content
+  await writeFile(file, jsonl({ n: 2 }))
   const bumped = new Date(before.mtimeMs + 5000)
   await utimes(file, bumped, bumped)
 
@@ -194,8 +179,6 @@ test('a same-length rewrite is flagged rather than reported as no change', async
 })
 
 test('the parse cache is keyed on mtime as well as size', async t => {
-  // The regression this guards: keying on size alone served the pre-rewrite records forever for
-  // any edit that happened to preserve the file length.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -210,7 +193,7 @@ test('the parse cache is keyed on mtime as well as size', async t => {
   assert.equal(b.cached, true, 'an unchanged file is not re-parsed')
 
   const before = await stat(file)
-  await writeFile(file, jsonl({ n: 2 })) // same byte length
+  await writeFile(file, jsonl({ n: 2 }))
   const bumped = new Date(before.mtimeMs + 5000)
   await utimes(file, bumped, bumped)
 
@@ -221,8 +204,6 @@ test('the parse cache is keyed on mtime as well as size', async t => {
 })
 
 test('one malformed line does not cost the rest of the file', async t => {
-  // Half-written trailing records are normal in a live transcript; a whole-file JSON.parse or a
-  // try/catch around the loop would throw away thousands of good records over one of them.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -251,8 +232,6 @@ test('tail returns raw lines so a malformed record cannot break the batch', asyn
 })
 
 test('an unreadable file surfaces the error and never looks like "no new data"', async t => {
-  // House rule: a permission or missing-file failure must not be indistinguishable from an idle
-  // file. `lines` is null so a caller iterating it fails loudly instead of seeing zero records.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const tailer = createTailer()
@@ -280,8 +259,6 @@ test('an unreadable file surfaces the error and never looks like "no new data"',
 })
 
 test('a read larger than the per-call cap reports how much it left behind', async t => {
-  // No silent caps: a capped result is explicitly incomplete, with the byte count still pending,
-  // so a caller can loop instead of treating a partial batch as the whole append.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -321,15 +298,13 @@ test('the LRU evicts the least recently tailed file and counts it', async t => {
   const tailer = createTailer({ maxCachedFiles: 2 })
   await tailer.tail(files[0])
   await tailer.tail(files[1])
-  await tailer.tail(files[0]) // touch: files[1] is now the oldest
+  await tailer.tail(files[0])
   await tailer.tail(files[2])
 
   const s = tailer.stats()
   assert.equal(s.files, 2)
   assert.equal(s.evictions, 1)
 
-  // A file whose state was evicted re-enters as a first sight, and says the offset loss was an
-  // eviction rather than a genuinely new file — those are very different for a caller.
   const back = await tailer.tail(files[1])
   assert.equal(back.firstSight, true)
   assert.equal(back.firstSightReason, 'evicted')
@@ -356,8 +331,6 @@ test('forget and clear drop per-file state, and stats reports the bounds in forc
 })
 
 test('carried fragments are visible in stats so a stuck writer is diagnosable', async t => {
-  // A partial line held forever means a producer wrote a record and died mid-line; the byte count
-  // is exposed rather than hidden inside the tailer.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -397,9 +370,6 @@ test('blank lines between records are not emitted as records', async t => {
 })
 
 test('an append landing between the stat and the read is left for the next call', async t => {
-  // The regression this guards: upstream stat'd the path, then opened and read to EOF, so bytes
-  // appended in between were read but not accounted for in the offset — and delivered twice on
-  // the following call. The explicit `end` makes offset == the exact byte we stopped at.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')
@@ -408,7 +378,6 @@ test('an append landing between the stat and the read is left for the next call'
   await tailer.tail(file)
 
   await appendFile(file, jsonl({ n: 1 }))
-  // Racing writer: fires while tail() is in flight.
   const racing = appendFile(file, jsonl({ n: 2 }))
   const r = await tailer.tail(file)
   await racing
@@ -422,9 +391,6 @@ test('an append landing between the stat and the read is left for the next call'
 })
 
 // ---------------------------------------------------------------------------------------------
-// The malformed-line cap. A malformed entry holds the FULL TEXT of the bad line, so a wholly
-// corrupt file — a truncated sync, a binary blob with a .jsonl name — otherwise costs memory
-// proportional to the garbage while telling a reader nothing the first few lines don't.
 // ---------------------------------------------------------------------------------------------
 
 test('malformed lines are capped, and the number dropped is reported', async t => {
@@ -439,7 +405,6 @@ test('malformed lines are capped, and the number dropped is reported', async t =
   assert.equal(r.malformed.length, 10, 'the cap holds')
   assert.equal(r.malformedDropped, 40, 'and says exactly how many it left out')
   assert.equal(r.maxMalformedPerFile, 10, 'the bound travels with the result, not just the docs')
-  // No silent caps: 10 shown must never be mistakable for "there were only 10".
   assert.equal(r.malformed.length + r.malformedDropped, 50)
 })
 
@@ -452,15 +417,10 @@ test('the cap keeps the most recent bad lines and each keeps its real file index
   const tailer = createTailer({ maxMalformedPerFile: 3 })
   const r = await tailer.read(file)
   assert.deepEqual(r.malformed.map(m => m.line), ['bad 17', 'bad 18', 'bad 19'])
-  // `index` is the line's position in the file, not its position in the surviving array, so a
-  // reader can still locate the gap even after 17 entries were dropped.
   assert.deepEqual(r.malformed.map(m => m.index), [17, 18, 19])
 })
 
 test('good records are never dropped, however much garbage surrounds them', async t => {
-  // The load-bearing assertion in this file. `records` feeds the usage walker, which sums every
-  // record to produce the cost of a session — capping it to bound memory would silently
-  // understate money on screen. Only `malformed` is ever capped.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 'mixed.jsonl')
@@ -477,7 +437,6 @@ test('good records are never dropped, however much garbage surrounds them', asyn
 })
 
 test('a clean file reports zero dropped rather than omitting the field', async t => {
-  // "0 dropped" and "we did not check" must be distinguishable at the call site.
   const dir = await scratch()
   t.after(() => rm(dir, { recursive: true, force: true }))
   const file = path.join(dir, 's.jsonl')

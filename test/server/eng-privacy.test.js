@@ -2,11 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { triage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats } from '../../server/eng.mjs'
 
-// ─── The two-plane rule, as a test ──────────────────────────────────────────────
-// server-eng.mjs is PLANE A: work artifacts (JIRA, GitHub, CI, bugs). It may carry per-person
-// OPERATIONAL facts (who owns a stuck ticket, whose review a PR waits on). It may NEVER carry a
-// per-person token count, cost, session time or active-hours field — that is PLANE B, self-only.
-// This test fails if any /api/eng/* payload shape ever grows one.
 const BANNED = /(^|[._-])(tokens?|cost|costs|usd|cents|spend|spending|price|pricing|session|sessions|sessionid|sessionms|duration_?ms|activehours|afterhours|hoursactive|keystrokes?|transcripts?|cacheread|inputtokens|outputtokens)([._-]|$)/i
 
 function walk(node, path, hits) {
@@ -75,7 +70,6 @@ test('no /api/eng/* payload shape carries a per-person token, cost or session-ti
 test('the sustainable-pace payload is team-aggregate: min-N=5 suppression happens in the endpoint', () => {
   const load = loadStats(PRS, ISSUES, MEMBERS)
   assert.equal(load.minN, 5)
-  // 2 distinct PR authors is below the floor — every cell must be null, not a small-sample number
   for (const w of load.weeks) {
     assert.ok(w.contributors < 5)
     assert.equal(w.suppressed, true)
@@ -83,7 +77,6 @@ test('the sustainable-pace payload is team-aggregate: min-N=5 suppression happen
     assert.equal(w.weekendPct, null)
     assert.equal(w.prs, null)
   }
-  // headcount below the floor suppresses WIP too, and there is no per-person row to drill into
   assert.equal(load.wipPerEngineer, null)
   assert.equal(JSON.stringify(load).includes(ALI.name), false, 'no person appears anywhere in the load payload')
 })
@@ -96,10 +89,8 @@ test('triage emits typed, actionable records — operational facts only, no scor
   assert.equal(over.overBudgetBy, 2.5)
   assert.equal(over.owner.name, 'Ali')
   assert.match(over.deepLink, /browse\/TEST-1/)
-  // PR open >2 working days with zero reviewEvents
   const stale = t.find(r => r.kind === 'pr-no-review')
   assert.ok(stale && stale.deepLink.includes('/pull/1'))
-  // no record carries an evaluative score
   for (const r of t) { assert.equal(r.score, undefined); assert.equal(r.rank, undefined) }
 })
 
@@ -116,15 +107,15 @@ test('review flow is keyed on reviewer and reports concentration, not a slowest-
   assert.ok(ammar.oldestWaitDays > 0)
   const ali = rf.reviewers.find(r => r.login === 'ali')
   assert.equal(ali.given90, 1)
-  assert.ok(rf.concentration.top1Share === 100) // 1 of 1 reviews in 90d
+  assert.ok(rf.concentration.top1Share === 100)
   assert.equal(rf.unanswered.length, 1)
 })
 
 test('escape rate splits bugs filed after their parent went live from what QA caught in flight', () => {
   const q = quality(ISSUES, PRS)
-  assert.equal(q.totals.escaped, 1) // TEST-3 was created after TEST-2 hit Live
+  assert.equal(q.totals.escaped, 1)
   assert.equal(q.totals.qaCaught, 0)
-  assert.ok(q.hotspots.some(h => h.area === 'src/search')) // bug → parent → prNums → files → top-2 segments
+  assert.ok(q.hotspots.some(h => h.area === 'src/search'))
 })
 
 test('investment mix buckets delivered points and activeDays, with a rework overlay', () => {

