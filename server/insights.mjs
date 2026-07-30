@@ -14,6 +14,7 @@ import { searchTranscripts, detectAbnormalEnd, compactionEvents } from '../lib/s
 import { cacheHitRate, costByProjectBranch, subagentUsage, anonymiseUsage } from '../lib/usage-report.mjs'
 import { toCsv } from '../lib/csv.mjs'
 import path from 'node:path'
+import { rollupSubagents, modelDelegationSavings, activeSubagents } from '../lib/subagent-rollup.mjs'
 
 let collectUsage, parsedRecords, transcriptsSince
 
@@ -136,6 +137,29 @@ app.get('/api/sessions/health', async (req, res) => {
       // No compaction exists on this machine, so those field names are inferred from documented
       // shapes rather than observed. Said out loud so a zero is not read as "never compacted".
       compactionFieldsVerified: false,
+    })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Per-subagent cost roll-up, and what a cheaper model would have cost on the same tokens.
+//
+// The savings figure is arithmetic on tokens another model produced, so it travels with
+// `modelled: true` and the assumption spelled out. It is the number most likely to be quoted as
+// if somebody had measured it.
+app.get('/api/usage/subagents', (req, res) => {
+  try {
+    const { entries } = collectUsage()
+    const roll = rollupSubagents(entries)
+    const candidate = typeof req.query.repriceAs === 'string' && req.query.repriceAs ? req.query.repriceAs : null
+    res.json({
+      ...roll,
+      live: activeSubagents(entries, { windowMs: Number(req.query.windowMs) || 120_000 }),
+      savings: candidate ? modelDelegationSavings(entries, candidate) : null,
+      // Zero subagents and "this install does not record subagent attribution" look identical in
+      // a count, and they are not the same thing.
+      attribution: roll.totals.agents === 0
+        ? 'no turn in the scanned transcripts carries a subagent link (sourceToolUseID / agentId), so either no subagent ran or this CLI version does not record the link — the count cannot tell you which'
+        : null,
     })
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })

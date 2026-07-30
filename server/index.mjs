@@ -272,8 +272,8 @@ function collectUsage() {
     const st = fs.statSync(f)
     const proj = path.relative(base, f).split(path.sep)[0]
     let rec = usageCache.get(f)
-    if (!rec || rec.v !== 5 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
-      rec = { v: 5, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {}, name: null, nameSource: null }
+    if (!rec || rec.v !== 6 || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+      rec = { v: 6, mtime: st.mtimeMs, size: st.size, entries: [], lines: [], tools: {}, out: 0, msgs: 0, toolCalls: 0, in: 0, cc: 0, cr: 0, cost: 0, first: 0, last: 0, cwd: '', branches: {}, name: null, nameSource: null }
       try {
         const nameAcc = {}
         const records = []
@@ -289,7 +289,12 @@ function collectUsage() {
                 for (const c of j.message.content) if (c.type === 'tool_use') { tc++; tools[c.name] = (tools[c.name] || 0) + 1 }
               const t = Date.parse(j.timestamp)
               const { cc5, cc1h } = splitCacheWrite(u.cache_creation_input_tokens, u.cache_creation?.ephemeral_5m_input_tokens, u.cache_creation?.ephemeral_1h_input_tokens)
-              const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cc5, cc1h, cr: u.cache_read_input_tokens || 0, tc }
+              // Subagent attribution. `sourceToolUseID` is the tool_use that spawned the
+              // sidechain; a record can be a sidechain and still carry no parent link, in which
+              // case `agent` stays null and the turn rolls up to the main thread — which is where
+              // it genuinely belongs as far as anything here can tell.
+              const agent = j.sourceToolUseID ?? j.sourceToolUseId ?? j.agentId ?? null
+              const e = { t, model, proj, in: u.input_tokens || 0, out: u.output_tokens || 0, cc: u.cache_creation_input_tokens || 0, cc5, cc1h, cr: u.cache_read_input_tokens || 0, tc, agent, sidechain: j.isSidechain === true }
               records.push({ id: j.message?.id, e, tools, cwd: j.cwd || '', br: j.gitBranch || '' })
             } catch {}
           } else if (line.includes('"structuredPatch"')) {
