@@ -60,6 +60,7 @@ import mountDrift, { designDrift, reviewData } from './drift.mjs'
 import mountAgentTeams from './agent-teams.mjs'
 import mountInventory, { KINDS, OFF, SETTINGS_FILES, itemFile, itemRoot, listItemNames, scopeDir } from './inventory.mjs'
 import { git as gitSafe } from '../lib/git-safe.mjs'
+import mountWave3 from './wave3.mjs'
 import {
   HOME, CLAUDE, CLAUDE_JSON, PROJECT, WIN, BACKUPS, PORT,
   safe, backup, parseFM, readClaudeJson,
@@ -1958,6 +1959,7 @@ app.post('/api/ci/rerun', (req, res) => {
 })
 
 mountDrift(app, { projectDirs: (...a) => projectDirs(...a), scanTranscripts: (...a) => scanTranscripts(...a) })
+mountWave3(app, { collectUsage: (...a) => collectUsage(...a), projectDirs: (...a) => projectDirs(...a), capabilityLedger: (...a) => capabilityLedger(...a) })
 
 // ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
 mountBoard(app)
