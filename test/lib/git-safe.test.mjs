@@ -223,3 +223,17 @@ test('no configured expectation is a refusal, not a pass', () => {
     assert.match(r.detail, /never stated/)
   } finally { drop(d) }
 })
+
+test('a missing directory is refused, never silently run in the current one', () => {
+  // `String(null)` is `''`, and `git -C ''` runs wherever the process happens to be. A caller
+  // passing a null path would have operated on the dashboard's own repo and been told ok:true.
+  // Found via git-watch: watchRepo(null) reported a healthy watch on the wrong repository.
+  for (const bad of [null, undefined, '', '   ', 42, {}]) {
+    const r = git(bad, ['status', '--porcelain'])
+    assert.equal(r.ok, false, JSON.stringify(bad))
+    assert.equal(r.error, 'no-directory')
+    assert.match(r.reason, /Refusing rather than defaulting/)
+    assert.equal(r.command, null, 'nothing may be executed')
+  }
+  assert.equal(gitOut(null, ['rev-parse', 'HEAD']), null)
+})
