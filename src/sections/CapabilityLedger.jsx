@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
-import { usePager } from '../ui/Pager.jsx'
+import { usePager, useTable } from '../ui/Pager.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 5: capability ROI ledger — fires × always-on cost ----------
@@ -46,7 +46,7 @@ export default function CapabilityLedger() {
       return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y)))
     })
   }, [d, verdicts, q, sort])
-  const pg = usePager(rows, 20)
+  const pg = useTable(rows, 20)
 
   if (!d) return <Skeleton tiles={3} rows={10} />
   const h = d.headline
@@ -232,7 +232,7 @@ export function Inventory() {
       return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y)))
     })
   }, [items, q, kind, sort])
-  const pg = usePager(filtered, 20)
+  const pg = useTable(filtered, 20)
   const editTags = it => {
     const t = prompt(`Tags for ${it.name} (comma-separated):`, it.tags.join(', '))
     if (t === null) return
