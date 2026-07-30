@@ -44,7 +44,7 @@ import { PRICE_PER_M, isPriced, entryCost, entryCacheRates, splitCacheWrite, ded
 import mountPricing from './pricing-store.mjs'
 import { foldNameLine, sessionName, nameSource } from '../lib/session-name.mjs'
 import mountChatAnalytics from './chat-analytics.mjs'
-import mountHarness, { HARNESS_DEFAULTS } from './harness.mjs'
+import mountHarness, { HARNESS_DEFAULTS, settingsFileFor, deepMerge, getPath, harnessResolve } from './harness.mjs'
 import mountHarnessHub from './harness-hub.mjs'
 import mountDiagnostics, { DEFAULT_EVALS, EVALS_FILE, errSig, evalRuns, failStats, median } from './diagnostics.mjs'
 import mountSessionForensics from './session-forensics.mjs'

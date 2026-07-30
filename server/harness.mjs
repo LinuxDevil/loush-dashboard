@@ -271,4 +271,4 @@ app.post('/api/harness/verify', (req, res) => {
 })
 }
 
-export { HARNESS_DEFAULTS }
+export { HARNESS_DEFAULTS, settingsFileFor, deepMerge, getPath, harnessResolve }
