@@ -53,6 +53,7 @@ import mountBugTriage from './bug-triage.mjs'
 import mountPromptLibrary from './prompt-library.mjs'
 import mountInsights from './insights.mjs'
 import { sseReplay } from '../lib/chat-protocol.mjs'
+import { planUpload, MAX_UPLOAD_BYTES } from '../lib/upload-guard.mjs'
 import mountLoushRuns, { projectDirs, scanRuns } from './loush-runs.mjs'
 import mountBoard, { boardRuns, projCfg, readBoard, tkt, writeBoard } from './board.mjs'
 import mountDrift, { designDrift, reviewData } from './drift.mjs'
@@ -766,14 +767,20 @@ app.get('/api/chat/complete', (req, res) => {
   scanSkills(path.join(CLAUDE, 'skills'), 'user'); scanSkills(path.join(cwd, '.claude', 'skills'), 'project')
   res.json(out.filter(c => c.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 25))
 })
-app.post('/api/chat/upload', express.raw({ type: '*/*', limit: '300mb' }), (req, res) => {
-  const name = path.basename(String(req.query.name || 'file')).replace(/[^\w.-]/g, '_')
-  if (!req.body?.length) return res.status(400).json({ error: 'empty upload' })
+// The raw limit is the per-file cap, so an oversize body is refused at the parser rather than
+// buffered in full and rejected afterwards. planUpload enforces the same number again for the
+// case where the body arrives by another route, plus the directory quota this had none of.
+app.post('/api/chat/upload', express.raw({ type: '*/*', limit: MAX_UPLOAD_BYTES }), (req, res) => {
   const dir = path.join(CLAUDE, 'chat-uploads')
   fs.mkdirSync(dir, { recursive: true })
-  const p = path.join(dir, Date.now().toString(36) + '-' + name)
-  fs.writeFileSync(p, req.body)
-  res.json({ path: p })
+  const plan = planUpload(dir, String(req.query.name || 'file'), req.body?.length || 0)
+  if (!plan.ok) return res.status(plan.reason === 'empty-upload' || plan.reason === 'unusable-name' ? 400 : 413).json(plan)
+  // Oldest-first eviction to make room. Reported back so a user whose earlier attachment stopped
+  // resolving can see it was reclaimed rather than lost.
+  const reclaimed = []
+  for (const f of plan.evict) { try { fs.unlinkSync(f.path); reclaimed.push(f.name) } catch {} }
+  fs.writeFileSync(plan.path, req.body)
+  res.json({ path: plan.path, name: plan.name, bytes: req.body.length, reclaimed })
 })
 app.delete('/api/chat/:id', (req, res) => {
   const chat = chats.get(req.params.id)

@@ -206,8 +206,17 @@ function InputBar({ cwd, ended, onSend, initial }) {
         try {
           const r = await fetch('/api/chat/upload?name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f })
           const j = await r.json()
-          if (!r.ok) throw new Error(j.error)
-          setAtts(a => [...a, { kind: 'file', name: f.name, path: j.path }])
+          // The server refuses with a machine reason and the bound it applied. Saying which limit
+          // was hit is the difference between "try a smaller file" and "the upload is broken".
+          if (!r.ok) throw new Error(
+            j.reason === 'file-too-large' ? `too large — ${(j.size / 1048576).toFixed(1)}MB, limit is ${Math.round(j.limit / 1048576)}MB`
+            : j.reason === 'exceeds-quota' ? `no room — the upload folder is capped at ${Math.round(j.limit / 1048576)}MB and this file cannot fit`
+            : j.reason === 'unusable-name' ? 'that filename has no usable characters'
+            : j.reason || j.error || `HTTP ${r.status}`)
+          // Eviction is reported rather than silent: an older attachment's `@path` in a prior
+          // message may no longer resolve, and that is worth knowing.
+          if (j.reclaimed?.length) console.warn(`upload quota: reclaimed ${j.reclaimed.length} older upload(s)`, j.reclaimed)
+          setAtts(a => [...a, { kind: 'file', name: f.name, path: j.path, bytes: j.bytes, reclaimed: j.reclaimed }])
         } catch (e) { alert('upload failed: ' + e.message) }
       }
     }
