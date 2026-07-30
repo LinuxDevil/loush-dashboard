@@ -11,6 +11,7 @@ import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
 import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile, workspaceId } from '../lib/paths.mjs'
+import { parseTasks, validateTasks } from '../lib/decomposition.mjs'
 
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
 const DASH_PORT = Number(process.env.DASH_PORT) || 5178
@@ -270,7 +271,9 @@ function inFlight() {
  */
 const writesRepo = run => run.kind === 'design'
 
-const META_KIND = { ac: 'acceptance criteria', tests: 'test cases' }
+const META_KIND = { ac: 'acceptance criteria', tests: 'test cases', decompose: 'a task decomposition', streams: 'a parallel work-stream analysis' }
+// kind -> prompt file. Adding a kind is adding a row here plus the prompt.
+const GEN_KINDS = { ac: 'ac.md', tests: 'tests.md', decompose: 'decompose.md', streams: 'streams.md' }
 
 function emit(run, ev) {
   run.events.push(ev)
@@ -455,7 +458,7 @@ export default function mountTicket(app) {
   app.post('/api/ticket/:key/generate', async (req, res) => {
     const r = resolve(req, res); if (!r) return
     const kind = req.body?.kind
-    if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
+    if (!GEN_KINDS[kind]) return res.status(400).json({ error: `kind must be one of ${Object.keys(GEN_KINDS).join('|')}` })
     const repo = repoFor(r.ws)
     if (!repo.dir) return res.status(400).json({ error: repo.reason })
 
@@ -480,7 +483,7 @@ export default function mountTicket(app) {
     try { d = s.ticket || await ticketDetail(r.cfg, r.key) }
     catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
 
-    const preamble = promptFile(kind === 'ac' ? 'ac.md' : 'tests.md')
+    const preamble = promptFile(GEN_KINDS[kind])
     if (!preamble) return res.status(500).json({ error: `the ${kind} prompt could not be read — refusing to run a degraded generation` })
 
     const store = readTicketArtifacts()
@@ -512,6 +515,22 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       if (out.error) { run.error = out.error; return res.status(502).json({ error: out.error }) }
       const md = (out.result || '').trim()
       if (!md) return res.status(502).json({ error: 'the model returned nothing' })
+      // A decomposition is checked against the real checkout before it is stored. The failures
+      // that matter here — a dependency on a task that is not in the list, a cycle, two
+      // unordered tasks writing the same file — are all invisible to someone reading the
+      // document, so the findings are attached to the artifact rather than left to be noticed.
+      let validation = null
+      if (kind === 'decompose') {
+        let listed = null, truncated = false
+        try { const l = repoFileList(repo.dir); listed = l.files; truncated = l.truncated } catch { listed = null }
+        validation = validateTasks(parseTasks(md), listed)
+        if (truncated) {
+          validation.problems.unshift({
+            severity: 'warn', kind: 'checkout-truncated',
+            detail: `the file walk stopped at ${WALK_CAP} paths, so a "matches nothing in the checkout" finding below may be the cap rather than a bad path`,
+          })
+        }
+      }
       const next = readTicketArtifacts()
       next[r.key] = {
         ...(next[r.key] || {}),
@@ -519,6 +538,7 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
           md, at: new Date().toISOString(), model: req.body?.model || 'claude',
           reqHash: reqHash(d), prContextLoaded: d.prContext?.loaded ?? false, edited: false,
           groundedIn: repo.repo, cost: out.cost ?? null, turns: out.turns ?? null,
+          validation,
         },
       }
       writeTicketArtifacts(next)
@@ -903,6 +923,29 @@ say so. You are proposing; the user decides what to apply.`
 
 // ---------------------------------------------------------------------------------------------
 const WALK_CAP = 5000
+// Just the paths. indexRepo() also reads every file's contents to build the import graph, which
+// is a lot of work when all that is wanted is "does this path exist". `truncated` travels with the
+// result: against a truncated list, "matches nothing in the checkout" could be the cap talking
+// rather than a bad path, and the caller has to be able to say so.
+function repoFileList(root) {
+  const files = []
+  let truncated = false
+  const walk = dir => {
+    if (files.length >= WALK_CAP) { truncated = true; return }
+    let ents = []
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of ents) {
+      if (files.length >= WALK_CAP) { truncated = true; return }
+      if (e.name.startsWith('.') || IGNORE_DIRS.has(e.name)) continue
+      const abs = path.join(dir, e.name)
+      if (e.isDirectory()) walk(abs)
+      else files.push(path.relative(root, abs).split(path.sep).join('/'))
+    }
+  }
+  walk(root)
+  return { files, truncated }
+}
+
 function indexRepo(root) {
   const files = []
   let truncated = false
