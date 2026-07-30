@@ -235,14 +235,21 @@ export default function mountWave3(app, deps = {}) {
   // ---- 098: reveal a folder in the OS file manager ----
   // The highest-risk route here: it takes a client path and executes a program. The allowlist is
   // the configured project roots, checked on the resolved path, inside open-folder itself.
-  app.post('/api/open-folder', (req, res) => {
+  // openFolder is ASYNC. Without the await, `r` was a Promise: `r.ok` read undefined, so every
+  // call — including legitimate ones — answered 403 with a body of `{}`, because res.json() of a
+  // pending Promise serialises to an empty object. A security control that refuses everything
+  // looks like it is working, which is why this survived: the refusals were "correct" by accident
+  // and the allow case was never distinguishable from them.
+  app.post('/api/open-folder', async (req, res) => {
     try {
-      const r = openFolder(String(req.body?.path ?? ''), { roots: rootList() })
+      const r = await openFolder(String(req.body?.path ?? ''), { roots: rootList() })
       res.status(r.ok ? 200 : 403).json(r)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
   app.post('/api/open-folder/resolve', (req, res) => {
-    try { res.json(resolveOpenTarget(String(req.body?.path ?? ''), { roots: rootList() })) }
+    // resolveOpenTarget takes roots POSITIONALLY; passing `{roots}` made it refuse everything with
+    // "roots-must-be-array" — a refusal reason that describes the caller's bug, not the user's path.
+    try { res.json(resolveOpenTarget(String(req.body?.path ?? ''), rootList())) }
     catch (e) { res.status(500).json({ error: e.message }) }
   })
 
