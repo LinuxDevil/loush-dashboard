@@ -52,6 +52,7 @@ import mountNativeHooks from './native-hooks.mjs'
 import mountBugTriage from './bug-triage.mjs'
 import mountPromptLibrary from './prompt-library.mjs'
 import mountInsights from './insights.mjs'
+import { sseReplay } from '../lib/chat-protocol.mjs'
 import mountLoushRuns, { projectDirs, scanRuns } from './loush-runs.mjs'
 import mountBoard, { boardRuns, projCfg, readBoard, tkt, writeBoard } from './board.mjs'
 import mountDrift, { designDrift, reviewData } from './drift.mjs'
@@ -594,6 +595,11 @@ dependencies is an array of step_ids that must finish first. Use null/[] where a
 // tell that it is not seeing the whole run.
 const CHAT_EVENT_CAP = 2000
 function chatBroadcast(chat, ev) {
+  // Every frame carries a monotonic seq so a reconnecting client can ask for exactly what it
+  // missed instead of being re-sent the whole run. Stamped on the retained copy, so replay and
+  // live stream agree on numbering.
+  chat.seq = (chat.seq || 0) + 1
+  ev = { ...ev, seq: chat.seq }
   chat.events.push(ev)
   if (chat.events.length > CHAT_EVENT_CAP) {
     chat.dropped = (chat.dropped || 0) + (chat.events.length - CHAT_EVENT_CAP)
@@ -697,7 +703,12 @@ app.get('/api/chat/:id/events', (req, res) => {
   if (!chat) return res.status(404).json({ error: 'no such chat' })
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
   res.write(': connected\n\n')
-  for (const ev of chat.events) res.write(`data: ${JSON.stringify(ev)}\n\n`)
+  // ?fromSeq=N replays only what the client missed. Without it the whole retained log is sent,
+  // which is what a first connection wants. The gap frame, when present, goes first so a client
+  // learns its history is incomplete before it starts applying the surviving tail.
+  const { gap, frames } = sseReplay(chat, req.query.fromSeq)
+  if (gap) res.write(`data: ${JSON.stringify(gap)}\n\n`)
+  for (const ev of frames) res.write(`data: ${JSON.stringify(ev)}\n\n`)
   chat.listeners.add(res)
   req.on('close', () => chat.listeners.delete(res))
 })

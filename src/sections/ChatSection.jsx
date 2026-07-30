@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import Markdown from '../ui/Markdown.jsx'
+import { extractTokenBudget, renderToolCall } from '../../lib/chat-render.mjs'
 import { marked } from 'marked'
 import { api, fmtDate } from '../lib/api.js'
 import { extractPlan, blocksToPlan, diagnoseSession } from '../lib/plan.js'
@@ -81,14 +82,52 @@ export function Block({ b }) {
       </details>
     )
   }
-  if (b.kind === 'tool')
+  if (b.kind === 'tool') {
+    // The shared summariser knows each tool's arguments — "Read src/App.jsx" instead of the
+    // first key that happens to be present. It is also where the rule lives that tool input
+    // VALUES are never echoed, since a Bash command can carry a token.
+    const r = renderToolCall({ message: { content: [{ type: 'tool_use', name: b.name, input: b.input }] } })
+    const headline = r?.summary && r.kind !== 'unknown'
+      ? r.summary
+      : short(b.input?.command || b.input?.file_path || b.input?.pattern || b.input?.prompt || b.input, 120)
     return (
-      <div className="chat-line tool" title={JSON.stringify(b.input, null, 2)}>
-        ▸ <b>{b.name}</b> <span className="dim">{short(b.input?.command || b.input?.file_path || b.input?.pattern || b.input?.prompt || b.input, 120)}</span>
+      <div className={'chat-line tool' + (b.isError ? ' err' : '')} title={r?.title || b.name}>
+        ▸ <b>{b.name}</b> <span className="dim">{short(headline, 160)}</span>
         {b.result != null && <div className="chat-tool-result">{b.result}</div>}
       </div>
     )
+  }
   return null
+}
+
+/**
+ * Live context occupancy for the running turn.
+ *
+ * Renders "— of ?" rather than a bar when the model's window is unknown: the token count is a
+ * real measurement, but without a denominator a percentage would be invented. An over-100 reading
+ * is shown as-is, because it means our window figure for that model is wrong.
+ */
+export function ContextPill({ events }) {
+  let budget = null
+  for (let i = events.length - 1; i >= 0; i--) {
+    const b = extractTokenBudget(events[i])
+    if (b.used != null) { budget = b; break }
+  }
+  if (!budget) return null
+  const k = n => (n >= 1000 ? (n / 1000).toFixed(n >= 10_000 ? 0 : 1) + 'k' : String(n))
+  if (!budget.known)
+    return (
+      <span className="pill dim" title={`context window for "${budget.model || 'this model'}" is not known to this dashboard (${budget.reason}) — the token count is real, the percentage would not be`}>
+        ctx {k(budget.used)} / ?
+      </span>
+    )
+  const pct = budget.percent
+  const tone = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : ''
+  return (
+    <span className={'pill ' + tone} title={`${budget.used.toLocaleString()} of ${budget.window.toLocaleString()} tokens on the last turn · ${budget.model}${budget.over ? ' · over the window we have recorded for this model' : ''}`}>
+      ctx {k(budget.used)} / {k(budget.window)} · {pct.toFixed(pct < 10 ? 1 : 0)}%{budget.over ? ' ⚠' : ''}
+    </span>
+  )
 }
 
 function capture(text) {
@@ -245,7 +284,9 @@ export default function ChatSection() {
   const [view, setView] = useState('chat')
   const [ctxData, setCtxData] = useState(null)
   const [ctxHover, setCtxHover] = useState(null)
+  const [gap, setGap] = useState(null)
   const esRef = useRef(null)
+  const reconnectRef = useRef(null)
   const endRef = useRef(null)
 
   const loadPins = () => api.get('/api/pins').then(setPins).catch(() => {})
@@ -263,19 +304,49 @@ export default function ChatSection() {
   useEffect(() => { if (cwd) api.get('/api/chat/sessions?cwd=' + encodeURIComponent(cwd)).then(setSessions) }, [cwd])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events])
 
-  const attach = (id, chatCwd) => {
-    esRef.current?.close()
-    if (chatCwd) setCwd(chatCwd)
-    setEvents([]); setChatId(id); setView('chat'); setCtxData(null)
-    const es = new EventSource(`/api/chat/${id}/events`)
+  // The highest seq this client has actually applied. On a reconnect it is handed back as
+  // ?fromSeq so the server sends only what was missed — EventSource's own reconnect re-requests
+  // the same URL, which replays the entire retained log every time the network blips.
+  const seqRef = useRef(0)
+  const openStream = (id, fromSeq) => {
+    const url = `/api/chat/${id}/events` + (fromSeq > 0 ? `?fromSeq=${fromSeq}` : '')
+    const es = new EventSource(url)
     es.onmessage = m => {
-      const ev = JSON.parse(m.data)
+      let ev
+      try { ev = JSON.parse(m.data) } catch { return }
+      if (ev.type === 'replay_gap') {
+        // The server cannot serve the gap. Say so in the transcript rather than letting a
+        // silently truncated history read as the whole run.
+        setGap({ earliestSeq: ev.earliestSeq, from: ev.requestedFrom, dropped: ev.dropped })
+        seqRef.current = Math.max(seqRef.current, (ev.earliestSeq || 1) - 1)
+        return
+      }
+      // Native EventSource reconnects can re-deliver frames we already have; seq makes that
+      // detectable instead of duplicating the transcript.
+      if (ev.seq != null && ev.seq <= seqRef.current) return
+      if (ev.seq != null) seqRef.current = ev.seq
       setEvents(prev => [...prev, ev])
       if (ev.type === 'result' || ev.type === 'closed') setBusy(false)
     }
-    esRef.current = es
+    es.onerror = () => {
+      // Take over the retry so the reopened stream carries fromSeq. Left to EventSource, the
+      // reconnect would replay from the beginning.
+      if (es.readyState !== EventSource.CLOSED) return
+      es.close()
+      if (esRef.current !== es) return
+      reconnectRef.current = setTimeout(() => { esRef.current = openStream(id, seqRef.current) }, 1000)
+    }
+    return es
   }
-  useEffect(() => () => esRef.current?.close(), [])
+  const attach = (id, chatCwd) => {
+    esRef.current?.close()
+    clearTimeout(reconnectRef.current)
+    if (chatCwd) setCwd(chatCwd)
+    seqRef.current = 0
+    setEvents([]); setChatId(id); setView('chat'); setCtxData(null); setGap(null)
+    esRef.current = openStream(id, 0)
+  }
+  useEffect(() => () => { esRef.current?.close(); clearTimeout(reconnectRef.current) }, [])
 
   const start = async resume => {
     const { id } = await api.post('/api/chat', { cwd, resume, model: model || undefined })
@@ -300,7 +371,8 @@ export default function ChatSection() {
   }
   const detach = () => {
     esRef.current?.close()
-    setChatId(null); setEvents([]); setBusy(false)
+    clearTimeout(reconnectRef.current)
+    setChatId(null); setEvents([]); setBusy(false); setGap(null)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
   const stop = async () => {
@@ -387,6 +459,7 @@ export default function ChatSection() {
           <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
           {liveModel && <span className="dim" style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
+          <ContextPill events={events} />
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
           <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? 'var(--accent)' : undefined }} disabled={!plan}
@@ -418,6 +491,12 @@ export default function ChatSection() {
         : view === 'activity'
         ? <div className="chat-log"><ActivityTimeline blocks={blocks} /></div>
         : <div className="chat-log">
+        {gap && (
+          <div className="chat-line err" title={`this client last saw seq ${gap.from}; the server's retained log now starts at seq ${gap.earliestSeq}`}>
+            ⚠ reconnected past the retained history — {gap.earliestSeq - gap.from - 1} event(s) between seq {gap.from + 1} and {gap.earliestSeq - 1} are gone
+            {gap.dropped ? ` (${gap.dropped} dropped on this run in total)` : ''}. What follows is not the whole session.
+          </div>
+        )}
         {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
           ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
           : <Block key={i} b={b} />)}
