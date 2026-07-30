@@ -215,7 +215,6 @@ app.post('/api/design/manifest', (req, res) => {
 
 app.get('/api/reviews', (req, res) => res.json(reviewData(req.query.project)))
 
-// ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
 }
 
 export { designDrift, reviewData }

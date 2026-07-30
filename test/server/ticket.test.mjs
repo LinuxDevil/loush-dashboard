@@ -75,10 +75,10 @@ test('a regeneration over an existing graph writes `pending`, never `graph` dire
 
 test('the board handoff carries a two-way link, not a one-way paste', () => {
   const ticket = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  const index = fs.readFileSync(path.join(ROOT, 'server/index.mjs'), 'utf8')
+  const board = fs.readFileSync(path.join(ROOT, 'server/board.mjs'), 'utf8')
   assert.ok(/jiraKey: r\.key/.test(ticket), 'the handoff sends jiraKey')
   assert.ok(/designDoc: s\.doc\?\.rel/.test(ticket), 'the handoff sends the design doc path')
-  assert.ok(/jiraKey: typeof jiraKey === 'string'/.test(index), 'the board persists jiraKey')
+  assert.ok(/jiraKey: typeof jiraKey === 'string'/.test(board), 'the board persists jiraKey')
   assert.ok(/board: \{ id: t\.id/.test(ticket), 'our state records the board ticket id')
 })
 
