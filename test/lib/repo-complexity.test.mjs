@@ -352,3 +352,27 @@ describe('invocations that do fire are counted, and mismatches surfaced', () => 
     assert.equal(auditOverEngineering(null).reason, 'observation-window-unknown')
   })
 })
+
+test('a nested checkout is excluded from the walk and named in the evidence', () => {
+  // Regression: the walk descended into .claude/worktrees, where eight agent worktrees held
+  // copies of this same repo. Breadth read 1557 instead of 306 — and the score became a function
+  // of whether someone had a worktree checked out, which is the opposite of deterministic.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nested-'))
+  try {
+    fs.writeFileSync(path.join(root, 'a.mjs'), 'export const a = 1\n')
+    const inner = path.join(root, 'vendored')
+    fs.mkdirSync(inner)
+    // A worktree's .git is a FILE holding a gitdir pointer, not a directory — both must count.
+    fs.writeFileSync(path.join(inner, '.git'), 'gitdir: /elsewhere\n')
+    for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(inner, `f${i}.mjs`), 'export default 1\n')
+
+    const ev = gatherRepoEvidence(root)
+    assert.equal(ev.sourceFiles, 1, 'only this repo’s own file counts')
+    assert.deepEqual(ev.nestedCheckoutsSkipped, ['vendored'], 'and the exclusion is reported, not silent')
+
+    const asSubmodule = path.join(root, 'submodule')
+    fs.mkdirSync(path.join(asSubmodule, '.git'), { recursive: true })
+    fs.writeFileSync(path.join(asSubmodule, 'x.mjs'), 'export default 1\n')
+    assert.equal(gatherRepoEvidence(root).sourceFiles, 1, 'a .git DIRECTORY is a nested repo too')
+  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
