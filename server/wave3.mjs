@@ -143,8 +143,35 @@ export default function mountWave3(app, deps = {}) {
   })
 
   // ---- 120: config lint ----
+  // lintAll({}) lints NOTHING and returns ok:true with zero diagnostics — which reads as "your
+  // config is clean" when in fact nothing was examined. The route has to name real targets, and
+  // the response carries which ones were actually reachable so an empty result stays honest.
+  const lintTargets = () => {
+    const projects = rootList()
+    return {
+      claudeMd: [path.join(CLAUDE, 'CLAUDE.md'), ...projects.map(d => path.join(d, 'CLAUDE.md'))],
+      projectDirs: projects,
+      skillsDirs: [path.join(CLAUDE, 'skills'), ...projects.map(d => path.join(d, '.claude', 'skills'))],
+      settings: [path.join(CLAUDE, 'settings.json'), path.join(CLAUDE, 'settings.local.json'),
+        ...projects.map(d => path.join(d, '.claude', 'settings.json')),
+        ...projects.map(d => path.join(d, '.claude', 'settings.local.json'))],
+      mcp: [path.join(CLAUDE, '.mcp.json'), ...projects.map(d => path.join(d, '.mcp.json'))],
+    }
+  }
   app.get('/api/config/lint', (req, res) => {
-    try { res.json(lintAll()) } catch (e) { res.status(500).json({ error: e.message }) }
+    try {
+      const targets = lintTargets()
+      const r = lintAll(targets)
+      const requested = Object.values(targets).flat().length
+      res.json({
+        ...r, targets,
+        // Zero diagnostics over zero files is not a clean bill of health.
+        vacuous: (r.coverage?.targetsParsed ?? 0) === 0,
+        note: (r.coverage?.targetsParsed ?? 0) === 0
+          ? `none of the ${requested} candidate config files could be read, so nothing was linted — this is "not checked", not "clean"`
+          : null,
+      })
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
   // Fixes are PROPOSED, never applied here — a linter that edits config on a GET is a linter that
   // silently rewrote something a human never reviewed.
@@ -156,24 +183,36 @@ export default function mountWave3(app, deps = {}) {
   // ---- 052: work log as a second files-changed signal ----
   app.post('/api/work-log/parse', (req, res) => {
     try {
-      const parsed = parseWorkLog(String(req.body?.md ?? ''))
+      // crossCheckWorkLog takes the RAW markdown and parses it itself — handing it the already-
+      // parsed object made it try to parse an object and fail with "source is object, not a
+      // string", so the cross-check (the entire point of 052) never ran for any caller.
+      const md = String(req.body?.md ?? '')
       const observed = Array.isArray(req.body?.observedFiles) ? req.body.observedFiles : null
-      res.json(observed ? crossCheckWorkLog(parsed, observed) : parsed)
+      const r = observed ? crossCheckWorkLog(md, observed) : parseWorkLog(md)
+      res.status(r.ok ? 200 : 422).json(r)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   // ---- 112: hook bundles ----
   app.get('/api/hooks/bundles', (req, res) => res.json(listBundles()))
   app.get('/api/hooks/bundles/:id', (req, res) => {
+    // getBundle ALWAYS returns an object — `{ok:false, reason, allowed}` for an unknown id — so
+    // `!b` was never true and the 404 branch was dead. An unknown bundle answered 200, which any
+    // client treats as "found", and the ok:false only shows up if something reads the body.
     const b = getBundle(req.params.id)
-    if (!b) return res.status(404).json({ error: `no bundle "${req.params.id}"`, available: listBundles().map(x => x.id) })
+    if (!b.ok) return res.status(404).json(b)
     res.json(b)
   })
   // Plan only. Installing writes to a settings file, which belongs on the audited config path —
   // wiring that is a separate change, and shipping an unaudited write here would bypass it.
   app.post('/api/hooks/bundles/:id/plan', (req, res) => {
-    try { res.json(planInstall(req.params.id, req.body?.settings ?? {})) }
-    catch (e) { res.status(400).json({ error: e.message }) }
+    // planInstall(settings, bundleId) — the arguments were passed in the opposite order, so every
+    // call was rejected with "bundle id must be a string, received object" and no bundle could
+    // ever be planned.
+    try {
+      const r = planInstall(req.body?.settings ?? {}, req.params.id)
+      res.status(r.ok ? 200 : 400).json(r)
+    } catch (e) { res.status(400).json({ error: e.message }) }
   })
 
   // ---- 113: agent routing policy ----
