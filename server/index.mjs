@@ -263,6 +263,8 @@ app.put('/api/tags', (req, res) => {
 
 // ---------- usage: parsed from session transcripts (per-file mtime cache) ----------
 const usageCache = new Map()
+const FILES_PER_SESSION_CAP = 500
+
 function collectUsage() {
   const base = path.join(CLAUDE, 'projects')
   const files = []
@@ -1124,7 +1126,13 @@ function scanTranscripts() {
           }
         }
       } catch {}
-      rec.files = [...touched].slice(0, 500)
+      // The cap was silent, so every downstream consumer reported a truthful-looking subset of
+      // the files a session touched. The count is kept alongside so "5 files" and "500 of 1200"
+      // are distinguishable.
+      const allTouched = [...touched]
+      rec.files = allTouched.slice(0, FILES_PER_SESSION_CAP)
+      rec.fileCount = allTouched.length
+      rec.filesCapped = allTouched.length > FILES_PER_SESSION_CAP ? { cap: FILES_PER_SESSION_CAP, total: allTouched.length, hidden: allTouched.length - FILES_PER_SESSION_CAP } : null
       scanCache.set(f, rec)
     }
     for (const p of rec.prompts) all.prompts.push({ ...p, proj, sessionId })

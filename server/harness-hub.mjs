@@ -116,7 +116,15 @@ function hubResolve(project) {
     ...mcps.map(m => ({ name: m.name, kind: 'mcp', tokens: m.estTokens, mode: 'always', scope: m.scope, est: true })),
     ...references.slice(0, 10).map(r => ({ name: r.url.replace(/^https?:\/\//, '').slice(0, 40), kind: 'reference', tokens: 0, mode: 'on-demand', scope: 'project' })),
   ]
-  const alwaysOn = contributors.filter(c => c.mode === 'always').reduce((s, c) => s + c.tokens, 0) + skills.reduce((s, x) => s + x.descTokens, 0)
+  const alwaysContribs = contributors.filter(c => c.mode === 'always')
+  const alwaysOn = alwaysContribs.reduce((s, c) => s + c.tokens, 0) + skills.reduce((s, x) => s + x.descTokens, 0)
+  // This total mixes real measurements (rule files and skill descriptions, counted from disk)
+  // with estimates (the system-prompt constant and a per-MCP figure). It then drives an
+  // error-severity "exceeds the cap" finding, so a breach caused entirely by the estimated part
+  // would read as a measured fact about the user's own configuration. The split is published so
+  // the finding below can say which it is.
+  const alwaysOnEstimated = alwaysContribs.filter(c => c.est).reduce((s, c) => s + c.tokens, 0)
+  const alwaysOnMeasured = alwaysOn - alwaysOnEstimated
   // ---- memory / scratchpad ----
   const memory = []
   const memDir = path.join(CLAUDE, 'projects', mangle(project), 'memory')
@@ -168,7 +176,15 @@ function hubResolve(project) {
   const mergedRules = rules.map(r => r.src).join('\n')
   if (/\b(test|lint|typecheck)\b/i.test(mergedRules) && triggers.filter(t => t.kind === 'hook').length === 0 && !H.verification.some(g => g.kind === 'gate'))
     F('warning', 'rules mention test/lint/typecheck but no hook or verification gate enforces them', { type: 'rule', name: 'rules stack' })
-  if (alwaysOn > softCap) F('error', `always-loaded context (${Math.round(alwaysOn / 100) / 10}k) exceeds the ${Math.round(softCap / 1000)}k soft cap`, { type: 'budget', name: 'context budget' })
+  if (alwaysOn > softCap) {
+    // If the measured part alone is under the cap, the breach depends on figures nobody measured.
+    // Saying so is the difference between "trim your rules" and "trim your rules, maybe".
+    const measuredAlone = alwaysOnMeasured <= softCap
+    F(measuredAlone ? 'warn' : 'error',
+      `always-loaded context (${Math.round(alwaysOn / 100) / 10}k) exceeds the ${Math.round(softCap / 1000)}k soft cap`
+      + (alwaysOnEstimated ? ` — ${Math.round(alwaysOnEstimated / 100) / 10}k of that is estimated (system prompt + MCP), not measured${measuredAlone ? ', and the measured part alone is under the cap' : ''}` : ''),
+      { type: 'budget', name: 'context budget' })
+  }
   for (const a of adrs) if (a.status === 'superseded') F('info', `ADR "${a.id}" is superseded — check nothing still cites it`, { type: 'adr', name: a.id, path: a.path })
   for (const b of promptBlocks) if (b.relation === 'overrides') F('info', `project section "${b.heading}" overrides the global section of the same name`, { type: 'rule', name: b.source, path: b.path })
   for (const c of H.valid.conflicts) F('error', c, { type: 'config', name: 'settings.json' })
@@ -186,7 +202,7 @@ function hubResolve(project) {
   sessions.sort((a, b) => b.mtime - a.mtime)
   return {
     project, harness: { overridden: H.overridden, health: H.health, valid: H.valid, context: H.resolved.context },
-    budget: { contributors, alwaysOn, softCap, onInvoke: skills.reduce((s, x) => s + x.fullTokens, 0) },
+    budget: { contributors, alwaysOn, alwaysOnMeasured, alwaysOnEstimated, softCap, onInvoke: skills.reduce((s, x) => s + x.fullTokens, 0) },
     promptBlocks, graph: { nodes, edges },
     inventory: {
       skills: skills.map(({ body, ...s }) => s), agents: agents.map(({ body, ...a }) => a),

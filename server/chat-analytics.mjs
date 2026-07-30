@@ -195,7 +195,11 @@ app.get('/api/search', (req, res) => {
       hits.push({
         kind, proj: r.proj, sessionId: r.sessionId, t: r.t, snippet: snip(hay, idx),
         cwd: s?.cwd || null, branch: s?.branch || null,
+        // Five files per hit is a display bound, not a measurement. Reported so a search result
+        // showing 5 files is not read as a session that touched 5 files.
         files: (s?.files || []).filter(p => !file || p.toLowerCase().includes(file)).slice(0, 5),
+        filesShown: Math.min(5, (s?.files || []).filter(p => !file || p.toLowerCase().includes(file)).length),
+        filesMatched: (s?.files || []).filter(p => !file || p.toLowerCase().includes(file)).length,
         resume: s?.cwd ? `cd ${s.cwd} && claude --resume ${r.sessionId}` : `claude --resume ${r.sessionId}`,
         ...extra(r),
       })

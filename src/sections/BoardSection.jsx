@@ -14,8 +14,21 @@ const lbl = s => s.replace(/-/g, ' ')
 
 function useProjects() {
   const [scopes, setScopes] = useState([])
-  useEffect(() => { api.get('/api/harness').then(d => setScopes(d.scopes.filter(s => s.id !== 'global'))).catch(() => {}) }, [])
-  return scopes
+  // `.catch(() => {})` around a `.then()` that also does the filtering meant a shape change in
+  // /api/harness — or any throw inside the filter — rendered "no projects" forever, with the
+  // error surfaced nowhere. An empty board that is actually a broken fetch is indistinguishable
+  // from an empty board, so the failure is now carried out to the caller.
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    api.get('/api/harness')
+      .then(d => {
+        if (!d || !Array.isArray(d.scopes)) throw new Error('/api/harness did not return a scopes array')
+        setScopes(d.scopes.filter(s => s.id !== 'global'))
+        setError(null)
+      })
+      .catch(e => { setError(e.message || String(e)); setScopes([]) })
+  }, [])
+  return Object.assign(scopes, { error })
 }
 const H2 = ({ children }) => <div style={{ font: `600 12px ${HEAD}`, marginBottom: 6 }}>{children}</div>
 const Meta = ({ children, color = 'var(--text-tertiary)' }) => <span style={{ font: `400 11px ${MONO}`, color }}>{children}</span>
@@ -394,7 +407,11 @@ export default function BoardSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <select value={project} onChange={e => setProject(e.target.value)}>{!projects.length && <option value="">no projects</option>}{projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
+        <select value={project} onChange={e => setProject(e.target.value)} title={projects.error || undefined}>
+          {!projects.length && <option value="">{projects.error ? 'could not load projects' : 'no projects'}</option>}
+          {projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        {projects.error && <Meta color="var(--red)">projects could not be loaded — {projects.error}</Meta>}
         {['board', 'analytics', 'setup'].map(x => <button key={x} className={tab === x ? 'primary' : ''} onClick={() => setTab(x)}>{x}</button>)}
         {tab === 'board' && board && (
           <label style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', display: 'flex', gap: 5, alignItems: 'center', marginLeft: 'auto' }}>

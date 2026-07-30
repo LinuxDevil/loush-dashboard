@@ -31,7 +31,17 @@ const tkt = (board, id) => board.tickets.find(t => t.id === id)
 
 const stamp = (t, to, note) => { (t.history ||= []).push({ at: Date.now(), from: t.stage, to, note: note || '' }); t.stage = to; if (to === 'released') { loushRunEmit(t.project, t.id, 'run.completed', { status: 'completed' }); loushRunState(t.project, t.id, 'released', 'passed') } }
 
-const blockT = (t, by, category, reason, needed) => { t.blocked = { at: Date.now(), by, category, reason: String(reason).slice(0, 1500), needed: needed || '' }; (t.history ||= []).push({ at: Date.now(), from: t.stage, to: 'blocked:' + category, note: String(reason).slice(0, 200) }) }
+// The block reason is what a human reads to decide what to do. Truncating it silently at 1500
+// chars can cut off the part that says WHY — so the truncation is recorded on the block itself.
+const REASON_CAP = 1500
+const blockT = (t, by, category, reason, needed) => {
+  const full = String(reason)
+  t.blocked = {
+    at: Date.now(), by, category, reason: full.slice(0, REASON_CAP), needed: needed || '',
+    ...(full.length > REASON_CAP ? { reasonTruncated: { cap: REASON_CAP, originalLength: full.length } } : {}),
+  }
+  ;(t.history ||= []).push({ at: Date.now(), from: t.stage, to: 'blocked:' + category, note: full.slice(0, 200) })
+}
 
 const pct = (arr, p) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))] }
 
@@ -203,7 +213,7 @@ app.post('/api/board/tickets', (req, res) => {
   const pipe = board.pipelines.find(p => p.id === cfg.pipeline) || board.pipelines[0]
   const t = {
     id: 'tk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-    project, title: title.trim(), desc: String(desc || '').slice(0, 20000), type: type || 'feature',
+    project, title: title.trim(), desc: String(desc || '').slice(0, DESC_CAP), type: type || 'feature',
     parent: parent || null, deps: deps || [], team: team || null, model: model || null,
     jiraKey: typeof jiraKey === 'string' && jiraKey ? jiraKey.toUpperCase() : null,
     designDoc: typeof designDoc === 'string' && designDoc ? designDoc : null,
@@ -212,19 +222,69 @@ app.post('/api/board/tickets', (req, res) => {
     history: [{ at: Date.now(), from: null, to: 'backlog', note: 'created' }], createdAt: Date.now(), releasedAt: null,
   }
   board.tickets.push(t); writeBoard(board)
-  res.json(t)
+  // The 20k description cap was applied silently; a truncated description that reads as the whole
+  // thing is how a requirement goes missing.
+  const descCapped = String(desc || '').length > DESC_CAP
+  res.json({ ...t, ...(descCapped ? { capped: [{ field: 'desc', cap: DESC_CAP, originalLength: String(desc).length }] } : {}) })
 })
+
+// Seven fields used to be copied straight off req.body with no type check, and ANY string was
+// accepted as `stage`. BoardSection renders a stage outside the pipeline as an "extra" column, so
+// a typo silently created a new column holding one ticket — the ticket looked filed and was
+// invisible in the flow everyone else watches.
+const FIELD_TYPES = {
+  title: v => (typeof v === 'string' && v.trim() ? { ok: true, value: v.trim().slice(0, 500), capped: v.trim().length > 500 } : { ok: false, why: 'must be a non-empty string' }),
+  desc: v => (typeof v === 'string' ? { ok: true, value: v.slice(0, 20000), capped: v.length > 20000 } : { ok: false, why: 'must be a string' }),
+  team: v => (v === null || typeof v === 'string' ? { ok: true, value: v } : { ok: false, why: 'must be a string or null' }),
+  model: v => (v === null || typeof v === 'string' ? { ok: true, value: v } : { ok: false, why: 'must be a string or null' }),
+  type: v => (typeof v === 'string' && v ? { ok: true, value: v } : { ok: false, why: 'must be a non-empty string' }),
+  deps: v => (Array.isArray(v) && v.every(x => typeof x === 'string') ? { ok: true, value: v } : { ok: false, why: 'must be an array of ticket ids' }),
+  qa: v => (v === null || typeof v === 'object' ? { ok: true, value: v } : { ok: false, why: 'must be an object or null' }),
+}
+
+const DESC_CAP = 20000
 
 app.patch('/api/board/tickets/:id', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
   if (!t) return res.status(404).json({ error: 'no such ticket' })
-  for (const k of ['title', 'desc', 'team', 'model', 'deps', 'qa', 'type']) if (req.body[k] !== undefined) t[k] = req.body[k]
+
+  // Compare-and-set. The board polls every 5s and background agents write to it, so two edits
+  // landing in the same window silently discarded one of them. `expectedVersion` is optional so
+  // existing callers keep working, but when supplied a stale write is refused with both versions
+  // named rather than applied over someone else's edit.
+  const version = Number(t.version) || 0
+  if (req.body.expectedVersion !== undefined && Number(req.body.expectedVersion) !== version) {
+    return res.status(409).json({
+      error: 'this ticket changed since you loaded it', expectedVersion: Number(req.body.expectedVersion), actualVersion: version,
+      detail: 'reload the ticket and reapply your edit — writing now would discard the other change',
+    })
+  }
+
+  const rejected = [], capped = []
+  for (const [k, check] of Object.entries(FIELD_TYPES)) {
+    if (req.body[k] === undefined) continue
+    const r = check(req.body[k])
+    if (!r.ok) { rejected.push({ field: k, why: r.why, got: typeof req.body[k] }); continue }
+    if (r.capped) capped.push({ field: k, cap: k === 'desc' ? 20000 : 500 })
+    t[k] = r.value
+  }
+  if (rejected.length) return res.status(400).json({ error: 'some fields were not accepted', rejected })
+
   if (req.body.stage && req.body.stage !== t.stage) {
+    const allowed = Array.isArray(t.stages) ? t.stages.map(x => (typeof x === 'string' ? x : x?.id)).filter(Boolean) : []
+    // 'released' is a terminal stage the pipeline may not list explicitly but the code below acts on.
+    if (allowed.length && !allowed.includes(req.body.stage) && req.body.stage !== 'released') {
+      return res.status(400).json({ error: `"${req.body.stage}" is not a stage in this ticket's pipeline`, allowed, detail: 'an unrecognised stage would render as its own column holding this one ticket' })
+    }
     stamp(t, req.body.stage, 'manual move')
     if (req.body.stage === 'released') { t.releasedAt = Date.now(); stopPreview(t) }
   }
   if (req.body.blocked === null && t.blocked) { t.blocked = null; (t.history ||= []).push({ at: Date.now(), from: 'blocked', to: t.stage, note: 'manually unblocked' }) }
-  writeBoard(board); res.json(t)
+  t.version = version + 1
+  writeBoard(board)
+  // Caps are reported rather than applied silently: a description that came back shorter than it
+  // went in should say so, not look like the client's own text.
+  res.json({ ...t, ...(capped.length ? { capped } : {}) })
 })
 
 app.delete('/api/board/tickets/:id', (req, res) => {

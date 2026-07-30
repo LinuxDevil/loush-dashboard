@@ -303,10 +303,21 @@ app.post('/api/mcp/:name/test', async (req, res) => res.json(await mcpTest(req.b
 
 // ---------- hooks + settings ----------
 
+// One trailing comma in any settings file used to throw here and 500 the whole Hooks panel —
+// every scope, not just the broken one. A malformed file is a thing to REPORT, not a reason to
+// hide the other scopes: `settings: null` with no reason is indistinguishable from "no file", so
+// the two are kept apart.
+function readSettingsFile(file) {
+  if (!fs.existsSync(file)) return { path: file, settings: null, exists: false, error: null }
+  let text
+  try { text = fs.readFileSync(file, 'utf8') }
+  catch (e) { return { path: file, settings: null, exists: true, error: `unreadable: ${e.message}` } }
+  try { return { path: file, settings: JSON.parse(text), exists: true, error: null } }
+  catch (e) { return { path: file, settings: null, exists: true, error: `not valid JSON: ${e.message}` } }
+}
 app.get('/api/hooks', (req, res) => {
   const out = {}
-  for (const [scope, file] of Object.entries(SETTINGS_FILES))
-    out[scope] = fs.existsSync(file) ? { path: file, settings: JSON.parse(fs.readFileSync(file, 'utf8')) } : { path: file, settings: null }
+  for (const [scope, file] of Object.entries(SETTINGS_FILES)) out[scope] = readSettingsFile(file)
   res.json(out)
 })
 
@@ -314,7 +325,10 @@ app.put('/api/hooks', (req, res) => {
   const { scope, hooks } = req.body
   const file = SETTINGS_FILES[scope]
   if (!file) return res.status(400).json({ error: 'bad scope' })
-  const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
+  // Writing on top of a file we could not parse would silently discard everything already in it.
+  const cur = readSettingsFile(file)
+  if (cur.error) return res.status(409).json({ error: `refusing to write: ${file} is ${cur.error}`, detail: 'fix the file by hand first — overwriting it would discard whatever else it contains' })
+  const settings = cur.settings ?? {}
   const bak = backup(file)
   if (hooks === null) delete settings.hooks
   else settings.hooks = hooks
@@ -358,7 +372,7 @@ app.post('/api/customize/toggle', (req, res) => {
       if (enable) { const c = cj._disabledMcpServers[name]; if (c) { cj.mcpServers = cj.mcpServers || {}; cj.mcpServers[name] = c; delete cj._disabledMcpServers[name] } }
       else { const c = (cj.mcpServers || {})[name]; if (c) { cj._disabledMcpServers[name] = c; delete cj.mcpServers[name] } }
       fs.writeFileSync(CLAUDE_JSON, JSON.stringify(cj, null, 2))
-      return res.json({ ok: true, enabled: enable, backup: bak })
+      return res.json({ ok: true, enabled: enable, backup: bak, ...(duplicate ? { note: 'this hook was already present in the destination list; the stale copy was removed rather than a second one added' } : {}) })
     }
     if (kind === 'plugins') {
       const settings = JSON.parse(fs.readFileSync(SETTINGS_FILES.user, 'utf8'))
@@ -374,10 +388,19 @@ app.post('/api/customize/toggle', (req, res) => {
       settings.hooks = settings.hooks || {}; settings._disabledHooks = settings._disabledHooks || {}
       const src = enable ? settings._disabledHooks : settings.hooks
       const dst = enable ? settings.hooks : settings._disabledHooks
-      let moved = null
+      let moved = null, duplicate = false
       for (const [event, entries] of Object.entries(src)) {
         const idx = (entries || []).findIndex(e => hookKey(event, e) === ref)
-        if (idx >= 0) { moved = entries.splice(idx, 1)[0]; if (!entries.length) delete src[event]; (dst[event] = dst[event] || []).push(moved); break }
+        if (idx < 0) continue
+        moved = entries.splice(idx, 1)[0]
+        if (!entries.length) delete src[event]
+        dst[event] = dst[event] || []
+        // Without this check the same hook could exist in BOTH lists: enabling a hook whose key
+        // was already in `hooks` appended a second copy, so it then fired twice and one copy
+        // could never be disabled again (the toggle finds only the first).
+        if (!dst[event].some(e => hookKey(event, e) === ref)) dst[event].push(moved)
+        else duplicate = true
+        break
       }
       if (!moved) return res.json({ ok: true, noop: true, enabled: enable })
       const bak = backup(SETTINGS_FILES.user)

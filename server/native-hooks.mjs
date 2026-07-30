@@ -35,17 +35,38 @@ export default function mountNativeHooks(app, deps) {
 
 app.post('/api/hooks/test', (req, res) => {
   const { matcher, tool } = req.body
-  let fires, note = ''
+  let fires, note = '', invalidMatcher = false
   if (!matcher) { fires = true; note = 'empty matcher matches every tool' }
-  else try { fires = new RegExp(`^(${matcher})$`).test(tool || '') } catch (e) { fires = matcher === tool; note = 'invalid regex — fell back to exact match' }
-  res.json({ fires, note })
+  else try { fires = new RegExp(`^(${matcher})$`).test(tool || '') } catch (e) {
+    // An invalid matcher degrades to an exact string comparison, which almost never matches — so
+    // the hook looks installed and silently does nothing. The note is the only thing that says
+    // otherwise, and it must carry the parse error, not just the fact of a fallback.
+    fires = matcher === tool
+    note = `invalid regex (${e.message}) — fell back to an exact string match, so this hook will only ever fire on a tool named exactly "${matcher}"`
+    invalidMatcher = true
+  }
+  res.json({ fires, note, invalidMatcher })
 })
+
+// Claude Code runs a hook command through the platform shell. Mirroring that here is what makes
+// a dry run mean anything — running it through a different interpreter would test something the
+// harness will never do.
+function shellFor() {
+  if (process.platform === 'win32') return { cmd: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c'] }
+  return { cmd: process.env.SHELL && process.env.SHELL.includes('sh') ? process.env.SHELL : '/bin/sh', args: ['-c'] }
+}
 
 app.post('/api/hooks/dryrun', (req, res) => {
   const { command, event = 'PreToolUse', toolName = 'Bash', toolInput = {} } = req.body
   if (!command) return res.status(400).json({ error: 'command required' })
   const payload = JSON.stringify({ hook_event_name: event, tool_name: toolName, tool_input: toolInput, cwd: HOME, session_id: 'dryrun' })
-  const child = spawn('sh', ['-c', command], { cwd: HOME, env: process.env, shell: false })
+  // `sh` does not exist on Windows, so this did not fail loudly — it failed to SPAWN, and the
+  // dry run reported "spawn error" for every hook regardless of whether the hook was correct.
+  // The user cannot tell a broken hook from an unsupported platform. Use the platform's own
+  // shell, and if there isn't one, say so instead of reporting the hook as faulty.
+  const sh = shellFor()
+  if (!sh) return res.json({ exit: null, decision: 'cannot run here', stderr: `no shell available on ${process.platform} — this is a limitation of the dry run, not a fault in the hook`, platform: process.platform })
+  const child = spawn(sh.cmd, [...sh.args, command], { cwd: HOME, env: process.env, shell: false })
   let out = '', err = ''
   const t0 = Date.now()
   const timer = setTimeout(() => { try { child.kill() } catch {}; res.json({ exit: null, decision: 'timeout (10s)', stdout: out.slice(0, 800), stderr: err.slice(0, 800) }) }, 10_000)

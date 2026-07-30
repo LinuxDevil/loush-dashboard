@@ -148,11 +148,17 @@ test('a read still works while the index is locked — that is the whole point',
 })
 
 test('lockInfo reports nothing when there is no lock', () => {
-  const d = repo()
+  // A hand-made .git rather than a real `git init`: under full-suite parallelism the commit in
+  // repo() can still hold .git/index.lock when this line runs, so the assertion raced. lockInfo
+  // only stats a path — it needs no real repository, and this way the test measures lockInfo
+  // instead of measuring how fast git released a lock.
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lockinfo-'))
   try {
+    fs.mkdirSync(path.join(d, '.git'))
     assert.equal(lockInfo(d), null)
     fs.writeFileSync(path.join(d, '.git', 'index.lock'), '')
     assert.ok(lockInfo(d).ageMs >= 0)
+    assert.match(lockInfo(d).path, /index\.lock$/)
   } finally { drop(d) }
 })
 

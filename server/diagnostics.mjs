@@ -18,7 +18,7 @@ function failStats() {
       rec = {
         v: 3, mtime: st.mtimeMs, size: st.size, proj: path.relative(base, f).split(path.sep)[0],
         sessionId: path.basename(f, '.jsonl'), file: f,
-        toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, retries: 0, last: 0,
+        toolErrs: {}, toolUses: {}, byHour: {}, turns: 0, compactions: 0, compactBoundaries: 0, compactSummaries: 0, retries: 0, last: 0,
         errs: [], bytes: {}, sizes: {}, big: [],
       }
       const idName = {}
@@ -28,12 +28,22 @@ function failStats() {
         for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
           if (!line) continue
           const isErr = line.includes('"is_error":true')
-          if (!isErr && !line.includes('"tool_use"') && !line.includes('tool_result') && !line.includes('isCompactSummary') && !line.includes('"type":"summary"')) continue
+          if (!isErr && !line.includes('"tool_use"') && !line.includes('tool_result') && !line.includes('isCompactSummary') && !line.includes('compact_boundary')) continue
           try {
             const j = JSON.parse(line)
             const t = Date.parse(j.timestamp) || 0
             rec.last = Math.max(rec.last, t)
-            if (j.isCompactSummary || j.type === 'summary') { rec.compactions++; continue }
+            // ONE compaction emits TWO records: a `subtype:"compact_boundary"` marker and a
+            // separate message carrying `isCompactSummary`. Counting either-or double-counts —
+            // measured here, 2 records for 1 real compaction. The boundary is the canonical
+            // event, so it is counted and the summary is only a fallback for older transcripts
+            // that predate the boundary marker (resolved per file, below).
+            //
+            // The previous condition (`isCompactSummary || type === 'summary'`) had the same
+            // double-count plus a second error: `type:"summary"` is a session-TITLE record, not a
+            // compaction at all.
+            if (j.subtype === 'compact_boundary') { rec.compactBoundaries++; continue }
+            if (j.isCompactSummary) { rec.compactSummaries++; continue }
             if (j.type === 'assistant' && Array.isArray(j.message?.content)) {
               rec.turns++
               let first = true
@@ -68,6 +78,10 @@ function failStats() {
         }
       } catch {}
       rec.big.sort((a, b) => b.chars - a.chars); rec.big.length = Math.min(rec.big.length, 20)
+      // Resolved per file: prefer the boundary marker, and fall back to the summary only when a
+      // transcript has no boundaries at all (an older format). Summing both would report two
+      // compactions for one.
+      rec.compactions = rec.compactBoundaries || rec.compactSummaries
       failCache.set(f, rec)
     }
     out.push(rec)
@@ -111,9 +125,24 @@ app.get('/api/gov/failures', (req, res) => {
     compactions += r.compactions; retries += r.retries
     if (r.turns > 0) turnsDist.push(r.turns)
   }
-  const tools = Object.keys(toolUses).map(name => ({ name, uses: toolUses[name], errors: toolErrs[name] || 0, rate: toolUses[name] ? (toolErrs[name] || 0) / toolUses[name] : 0 }))
-    .filter(t => t.uses >= 3).sort((a, b) => b.errors - a.errors).slice(0, 12)
-  res.json({ tools, byHour, compactions, retries, turnsDist, sessions: recs.length })
+  const MIN_USES = 3, TOP_N = 12
+  const allTools = Object.keys(toolUses).map(name => ({ name, uses: toolUses[name], errors: toolErrs[name] || 0, rate: toolUses[name] ? (toolErrs[name] || 0) / toolUses[name] : 0 }))
+  const eligible = allTools.filter(t => t.uses >= MIN_USES).sort((a, b) => b.errors - a.errors)
+  const tools = eligible.slice(0, TOP_N)
+  // Both bounds used to be invisible. A tool list showing 12 rows reads as "these are the tools",
+  // and a low-n tool dropped for being noisy reads as a tool with no errors.
+  res.json({
+    tools, byHour, compactions, retries, turnsDist, sessions: recs.length,
+    bounds: {
+      minUses: MIN_USES, topN: TOP_N,
+      toolsTotal: allTools.length,
+      belowMinUses: allTools.length - eligible.length,
+      hiddenByTopN: Math.max(0, eligible.length - tools.length),
+      note: allTools.length > tools.length
+        ? `showing ${tools.length} of ${allTools.length} tools — ${allTools.length - eligible.length} had fewer than ${MIN_USES} uses (too few to rate) and ${Math.max(0, eligible.length - tools.length)} more were cut by the top-${TOP_N} limit`
+        : null,
+    },
+  })
 })
 
 // ---------- trace viewer ----------
@@ -140,7 +169,7 @@ app.get('/api/gov/trace', (req, res) => {
           if (c.type === 'text' && c.text.trim()) steps.push({ kind: 'reason', ts, tokens: outTok, text: c.text.slice(0, 300) })
           else if (c.type === 'tool_use') steps.push({ kind: 'act', ts, tokens: outTok, name: c.name, text: JSON.stringify(c.input).slice(0, 200) })
         }
-      } else if (j.isCompactSummary || j.type === 'summary') steps.push({ kind: 'checkpoint', ts, text: 'context compacted' })
+      } else if (j.isCompactSummary || j.subtype === 'compact_boundary') steps.push({ kind: 'checkpoint', ts, text: 'context compacted' })
     } catch {}
   }
   for (let i = 0; i < steps.length; i++) steps[i].latency = steps[i + 1]?.ts && steps[i].ts ? steps[i + 1].ts - steps[i].ts : null

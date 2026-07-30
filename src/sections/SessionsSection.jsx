@@ -168,7 +168,16 @@ export default function SessionsSection() {
   const rows = useMemo(() => {
     if (!d) return []
     const get = COLS.find(c => c[0] === sort.col)?.[2] || (r => r[sort.col])
-    return [...d.sessions].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
+    // Unmeasured values sort to the end in BOTH directions rather than being treated as 0.
+    // `x - y` with a null yields NaN, and a NaN comparator leaves the array in an arbitrary order
+    // that looks sorted — so the rows a reader trusts most would be the ones placed at random.
+    return [...d.sessions].sort((a, b) => {
+      const x = get(a), y = get(b)
+      if (x == null && y == null) return 0
+      if (x == null) return 1
+      if (y == null) return -1
+      return sort.dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)))
+    })
   }, [d, sort])
 
   const resumeHere = r => {
@@ -265,11 +274,21 @@ export default function SessionsSection() {
                   <td className="mono" style={{ color: r.branch ? 'var(--violet)' : DIM }}>{r.branch || '—'}</td>
                   <td className="num" style={{ color: r.cost > 20 ? GOLD : 'var(--text-primary)' }}>${r.cost.toFixed(2)}</td>
                   <td className="num">{fmtTok(r.out)}</td>
-                  <td className="num" title="share of input tokens served from the prompt cache">{Math.round(r.cacheReadPct * 100)}%</td>
+                  {/* null means the session had no cached tokens at all, so there is no ratio.
+                      `Math.round(null * 100)` is 0, which would claim the cache was offered and
+                      missed — a different and worse-looking fact than "not applicable". */}
+                  <td className="num" title={r.cacheReadPct == null ? 'this session had no cache-eligible input, so there is no ratio to report' : 'share of input tokens served from the prompt cache'}
+                    style={r.cacheReadPct == null ? { color: DIM } : undefined}>
+                    {r.cacheReadPct == null ? '—' : Math.round(r.cacheReadPct * 100) + '%'}
+                  </td>
                   <td className="num">{fmtDur(r.durationMs)}</td>
                   <td className="num">{r.toolCalls}</td>
-                  <td className="num" style={{ color: r.compactions ? GOLD : DIM }}>{r.compactions || '—'}</td>
-                  <td className="num" style={{ color: r.errors ? RED : DIM }}>{r.errors || '—'}</td>
+                  {/* Three states, not two: a measured 0, a real count, and "forensics never ran
+                      for this session" — which used to render as 0 and read as a clean session. */}
+                  <td className="num" title={r.compactions == null ? 'not measured — no forensics record for this session' : undefined}
+                    style={{ color: r.compactions ? GOLD : DIM }}>{r.compactions == null ? '?' : r.compactions || '—'}</td>
+                  <td className="num" title={r.errors == null ? 'not measured — no forensics record for this session' : undefined}
+                    style={{ color: r.errors ? RED : DIM }}>{r.errors == null ? '?' : r.errors || '—'}</td>
                   <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{ago(r.last)} ago</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="mini" style={{ marginTop: 0 }} title="resume this session inside the dashboard" onClick={e => { e.stopPropagation(); resumeHere(r) }}>r · resume</button>

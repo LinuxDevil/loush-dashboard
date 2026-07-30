@@ -121,11 +121,16 @@ app.get('/api/sessions', (req, res) => {
       name: f.name || null, nameSource: f.nameSource || null,
       cost: +f.cost.toFixed(4), out: f.out, in: f.in, cacheRead: f.cr,
       subagentCost: +(f.subagentCost || 0).toFixed(4),
-      cacheReadPct: cacheIn ? +(f.cr / cacheIn).toFixed(3) : 0,
+      // null, not 0. A session with no cached tokens at all has no cache-read ratio — 0% claims
+      // the cache was offered and missed, which is a different (and worse-looking) fact.
+      cacheReadPct: cacheIn ? +(f.cr / cacheIn).toFixed(3) : null,
       first: f.first, last: f.last, durationMs: Math.max(0, f.last - f.first),
       msgs: f.msgs, toolCalls: f.toolCalls,
-      compactions: fr?.compactions || 0,
-      errors: fr ? Object.values(fr.toolErrs).reduce((a, b) => a + b, 0) : 0,
+      // `fr` is the forensics record; when it is absent nothing was measured, and "0 errors" is a
+      // clean bill of health this endpoint has no basis to issue. Absence is reported as absence.
+      compactions: fr ? fr.compactions : null,
+      errors: fr ? Object.values(fr.toolErrs).reduce((a, b) => a + b, 0) : null,
+      forensicsAvailable: !!fr,
       branch: Object.keys(f.branches).filter(Boolean)[0] || null,
       transcript: f.path,
       resume: cwd ? `cd ${cwd} && claude --resume ${id}` : `claude --resume ${id}`,
