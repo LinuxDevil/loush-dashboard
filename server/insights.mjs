@@ -8,6 +8,8 @@ import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { classifyError } from '../lib/error-taxonomy.mjs'
 import fs from 'node:fs'
 import { groupEvents } from '../lib/event-grouping.mjs'
+import { contextByTool, contextDiff, BYTES_PER_TOKEN, BYTES_PER_TOKEN_RANGE, TOKEN_ESTIMATE_NOTE, CONTEXT_DIFF_VISIBILITY_NOTE } from '../lib/context-analysis.mjs'
+import { scanSkillContent, checkReferencedPaths } from '../lib/governance-guards.mjs'
 import { searchTranscripts, detectAbnormalEnd, compactionEvents } from '../lib/session-search.mjs'
 import { cacheHitRate, costByProjectBranch, subagentUsage, anonymiseUsage } from '../lib/usage-report.mjs'
 import { toCsv } from '../lib/csv.mjs'
@@ -164,6 +166,88 @@ app.get('/api/usage/report', (req, res) => {
       return res.send(body)
     }
     res.json({ cache: cacheHitRate(entries), byProjectBranch: byBranch, subagents: subagentUsage(entries, files) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Where the context window actually went, per tool, for one session. Token figures are an
+// estimate from byte counts — there is no tokenizer in-process — so the range travels with them.
+app.get('/api/context/breakdown', async (req, res) => {
+  try {
+    const id = String(req.query.session || '')
+    if (!id || !/^[\w.-]+$/.test(id)) return res.status(400).json({ error: 'session id required' })
+    const { files } = collectUsage()
+    const hit = files.find(f => path.basename(f.path, '.jsonl') === id)
+    if (!hit) return res.status(404).json({ error: 'no such session: ' + id })
+    const { records } = await parsedRecords(hit.path)
+    const byTool = contextByTool(records)
+    const diff = req.query.diff === '1' ? contextDiff(records) : null
+    res.json({
+      session: id, byTool, diff,
+      estimation: { bytesPerToken: BYTES_PER_TOKEN, range: BYTES_PER_TOKEN_RANGE, note: TOKEN_ESTIMATE_NOTE },
+      // System prompt and tool schemas are re-sent every turn and appear in no transcript, so a
+      // large share of growth is genuinely unattributable. Saying so beats implying we saw it all.
+      visibility: CONTEXT_DIFF_VISIBILITY_NOTE,
+    })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Scans installed skills for instructions that would exfiltrate, bypass governance, or grant
+// themselves tools. Local authorship is deliberately NOT a trust exemption.
+app.get('/api/security/skill-audit', (req, res) => {
+  try {
+    const roots = [path.join(process.env.HOME || '', '.claude', 'skills'), path.join(PROJECT, '.claude', 'skills')]
+    const out = []
+    let scanned = 0
+    const walk = d => {
+      let entries
+      try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        const p2 = path.join(d, e.name)
+        if (e.isDirectory()) { walk(p2); continue }
+        if (!e.name.endsWith('.md')) continue
+        scanned++
+        let text
+        try { text = fs.readFileSync(p2, 'utf8') } catch { continue }
+        const findings = scanSkillContent(text, {})
+        if (findings.length) out.push({ file: p2, findings })
+      }
+    }
+    for (const r of roots) walk(r)
+    res.json({
+      roots, scanned, flagged: out.length, results: out,
+      // Every rule errs toward a miss rather than a false accusation, so a clean result means
+      // "nothing matched these rules", not "this skill is safe".
+      note: 'Rules are deliberately narrow; a clean scan means nothing matched, not that a skill is safe.',
+    })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Every path any config references, checked against the filesystem. A hook that points at a
+// deleted script fails silently at runtime; this is what makes that visible.
+app.get('/api/gov/references', (req, res) => {
+  try {
+    const CLAUDE_DIR = path.join(process.env.HOME || '', '.claude')
+    const entries = []
+    const addSettings = (file, scope) => {
+      let j
+      try { j = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return }
+      for (const [event, groups] of Object.entries(j.hooks || {}))
+        for (const g of (Array.isArray(groups) ? groups : []))
+          for (const h of (g.hooks || []))
+            if (h.command) entries.push({ source: `${scope} settings.json (${event})`, kind: 'hook', path: String(h.command).split(/\s+/)[0].replace(/^["']|["']$/g, '') })
+    }
+    addSettings(path.join(CLAUDE_DIR, 'settings.json'), 'user')
+    addSettings(path.join(PROJECT, '.claude', 'settings.json'), 'project')
+    try {
+      const cj = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, '.claude.json'), 'utf8'))
+      for (const [name, cfg] of Object.entries(cj.mcpServers || {}))
+        if (cfg?.command) entries.push({ source: `.claude.json mcpServers.${name}`, kind: 'mcp', path: cfg.command })
+    } catch {}
+    // A bare binary name resolves via PATH, so only absolute/relative paths are checkable —
+    // reporting `node` as missing would be noise, not a finding.
+    const checkable = entries.filter(e => e.path.includes('/') || e.path.includes('\\'))
+    const result = checkReferencedPaths(checkable, p2 => { try { return fs.existsSync(p2.startsWith('~') ? p2.replace('~', process.env.HOME || '') : p2) } catch { return false } })
+    res.json({ ...result, skippedPathless: entries.length - checkable.length })
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
 

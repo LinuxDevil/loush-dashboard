@@ -11,11 +11,12 @@ export default function GovernanceSection() {
   const [tab, setTab] = useState('Versions')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Freeze audit', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Freeze audit', 'Integrity', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
       {tab === 'Versions' && <Versions />}
       {tab === 'Approvals' && <Approvals />}
       {tab === 'Access' && <Access />}
       {tab === 'Freeze audit' && <FreezeAudit />}
+      {tab === 'Integrity' && <Integrity />}
       {tab === 'Audit log' && <Audit />}
       {tab === 'Drift' && <Drift />}
       {tab === 'Batch ops' && <BatchOps />}
@@ -344,6 +345,75 @@ function FreezeAudit() {
           )
         })}
         {rows.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--green)' }}>nothing needs attention</div>}
+      </div>
+    </div>
+  )
+}
+
+// Two checks that both answer "is this config actually doing what it says".
+//
+// References: a hook whose script was deleted, or an MCP server pointing at a missing binary,
+// fails silently at runtime — Claude Code does not announce it. This makes it visible.
+// Skill audit: instruction text that would exfiltrate, bypass logging, or grant itself tools.
+function Integrity() {
+  const [refs, setRefs] = useState(null)
+  const [skills, setSkills] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api.get('/api/gov/references').then(setRefs).catch(e => setErr(e.message))
+    api.get('/api/security/skill-audit').then(setSkills).catch(e => setErr(e.message))
+  }, [])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 6 }}>Referenced paths</div>
+        {!refs && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>checking…</div>}
+        {refs && (
+          <>
+            <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+              {refs.checked} reference{refs.checked === 1 ? '' : 's'} checked
+              {refs.skippedPathless > 0 && ` · ${refs.skippedPathless} resolved via PATH, not checkable`}
+              {/* A predicate that could not run reports unknown, never dangling — an EACCES must
+                  not become an accusation that working config is broken. */}
+              {(refs.unknown || []).length > 0 && ` · ${refs.unknown.length} could not be checked`}
+            </div>
+            {(refs.dangling || []).length === 0
+              ? <div style={{ font: `400 11px ${MONO}`, color: refs.checked ? 'var(--green)' : 'var(--text-tertiary)' }}>
+                  {refs.checked ? 'every referenced path exists' : 'nothing references a checkable path yet'}
+                </div>
+              : (refs.dangling || []).map((x, i) => (
+                  <div key={i} style={{ font: `400 11px ${MONO}`, color: 'var(--red)', padding: '2px 0' }}>
+                    {x.source} → <b>{x.path}</b> is missing
+                  </div>
+                ))}
+          </>
+        )}
+      </div>
+
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 6 }}>Skill content audit</div>
+        {!skills && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>scanning…</div>}
+        {skills && (
+          <>
+            <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+              {skills.scanned} file{skills.scanned === 1 ? '' : 's'} scanned · {skills.flagged} flagged
+            </div>
+            {(skills.results || []).map((r, i) => (
+              <div key={i} style={{ marginBottom: 8 }}>
+                <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{r.file}</div>
+                {r.findings.map((f, j) => (
+                  <div key={j} style={{ font: `400 11px ${MONO}`, color: f.severity === 'critical' ? 'var(--red)' : 'var(--amber, #d79921)', paddingLeft: 12 }}>
+                    [{f.severity}] {f.message}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {/* Rules err toward a miss rather than a false accusation, so a clean scan is not a
+                clean bill of health and should not be read as one. */}
+            <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 6 }}>{skills.note}</div>
+          </>
+        )}
       </div>
     </div>
   )

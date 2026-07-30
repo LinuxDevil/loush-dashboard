@@ -534,3 +534,26 @@ test('scoring never throws and never returns a score outside 0-100', () => {
   assert.equal(overweight.score, 0)
   assert.equal(overweight.violations.reduce((s, v) => s + v.points, 0), 100)
 })
+
+test('an absolute reference keeps its leading slash when checked', () => {
+  // The regression: checkReferencedPaths reused the git changed-file normaliser, which strips
+  // the leading slash to make paths repo-relative. Applied to a real filesystem path that turns
+  // /usr/bin/node into usr/bin/node, so the existence check fails and EVERY absolute reference
+  // reports as dangling — the checker inverts and accuses working config of being broken.
+  const seen = []
+  const r = checkReferencedPaths(
+    [{ source: 'settings.json', kind: 'hook', path: '/usr/bin/node' }],
+    p => { seen.push(p); return p === '/usr/bin/node' },
+  )
+  assert.deepEqual(seen, ['/usr/bin/node'], 'the predicate must receive the path as written')
+  assert.deepEqual(r.dangling, [], 'a path that exists must not be reported missing')
+  assert.equal(r.intact, true)
+})
+
+test('a tilde path is passed through rather than mangled', () => {
+  // ~ expansion belongs to the caller, which knows the home directory; silently rewriting it
+  // here would make the reported path differ from the one in the config file.
+  const seen = []
+  checkReferencedPaths([{ source: 's', kind: 'hook', path: '~/.claude/hooks/x.sh' }], p => { seen.push(p); return true })
+  assert.deepEqual(seen, ['~/.claude/hooks/x.sh'])
+})
