@@ -8,6 +8,9 @@ import { classifyConversation, tierDistribution } from '../lib/complexity.mjs'
 import { classifyError } from '../lib/error-taxonomy.mjs'
 import fs from 'node:fs'
 import { groupEvents } from '../lib/event-grouping.mjs'
+import { searchTranscripts, detectAbnormalEnd, compactionEvents } from '../lib/session-search.mjs'
+import { cacheHitRate, costByProjectBranch, subagentUsage, anonymiseUsage } from '../lib/usage-report.mjs'
+import { toCsv } from '../lib/csv.mjs'
 import path from 'node:path'
 
 let collectUsage, parsedRecords, transcriptsSince
@@ -86,6 +89,83 @@ app.get('/api/session/events', async (req, res) => {
 })
 
 // ---------- lessons ----------
+
+// Search every transcript ever written, not just the listed ones. Tool inputs are searched but
+// their values are never returned: that is where "which session ran that command" lives, and
+// also where a token would be.
+app.get('/api/search/sessions', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim()
+    if (!q) return res.status(400).json({ error: 'q required' })
+    const days = Math.min(365, Number(req.query.days) || 90)
+    const { files } = transcriptsSince(Date.now() - days * 24 * 3600_000)
+    const hits = []
+    let scanned = 0, unparsable = 0
+    for (const f of files) {
+      const { records, malformed } = await parsedRecords(f)
+      if (!records.length) continue
+      scanned++; unparsable += malformed
+      const r = searchTranscripts(records, q, { limit: 40 })
+      for (const h of (r.results || [])) hits.push({ ...h, sessionId: path.basename(f, '.jsonl') })
+    }
+    hits.sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    const CAP = 300
+    res.json({ query: q, days, sessionsScanned: scanned, hits: hits.slice(0, CAP), total: hits.length, cap: CAP, truncated: hits.length > CAP, unparsableLines: unparsable })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Sessions that stopped mid-turn, plus every compaction and what it reclaimed.
+app.get('/api/sessions/health', async (req, res) => {
+  try {
+    const days = Math.min(365, Number(req.query.days) || 30)
+    const now = Date.now()
+    const { files } = transcriptsSince(now - days * 24 * 3600_000)
+    const out = []
+    for (const f of files) {
+      const { records } = await parsedRecords(f)
+      if (!records.length) continue
+      const end = detectAbnormalEnd(records, { now })
+      const comp = compactionEvents(records)
+      out.push({ sessionId: path.basename(f, '.jsonl'), ended: end.ended, reason: end.reason, compactions: comp.events || [] })
+    }
+    res.json({
+      days, sessions: out,
+      counts: out.reduce((a, s) => { a[s.ended] = (a[s.ended] || 0) + 1; return a }, {}),
+      // No compaction exists on this machine, so those field names are inferred from documented
+      // shapes rather than observed. Said out loud so a zero is not read as "never compacted".
+      compactionFieldsVerified: false,
+    })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
+// Cost by project and branch, cache hit rate, and which subagent type costs the most.
+app.get('/api/usage/report', (req, res) => {
+  try {
+    const { entries, files } = collectUsage()
+    const byBranch = costByProjectBranch(files)
+    if (req.query.format === 'csv') {
+      // Field names taken from the real response shape, not assumed: projects carry `proj`/
+      // `label`, branches carry `label` with `branchKnown` distinguishing "no branch" from
+      // "not recorded". tokensComplete rides along because the collector only stores `out` per
+      // branch, so an incomplete token count must not read as a measured zero.
+      const rows = (byBranch.projects || []).flatMap(p => (p.branches || []).map(b => ({
+        project: p.label ?? p.proj,
+        branch: b.label,
+        branchKnown: b.branchKnown,
+        cost: b.cost,
+        messages: b.msgs,
+        outputTokens: b.tokens?.out ?? null,
+        tokensComplete: b.tokensComplete,
+      })))
+      const anon = req.query.anonymised === '1'
+      const body = toCsv(anon ? (anonymiseUsage(rows).rows || rows) : rows)
+      res.setHeader('content-type', 'text/csv; charset=utf-8')
+      res.setHeader('content-disposition', `attachment; filename="usage-by-branch${anon ? '-anonymised' : ''}.csv"`)
+      return res.send(body)
+    }
+    res.json({ cache: cacheHitRate(entries), byProjectBranch: byBranch, subagents: subagentUsage(entries, files) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 
 app.get('/api/lessons', async (req, res) => {
   try {
