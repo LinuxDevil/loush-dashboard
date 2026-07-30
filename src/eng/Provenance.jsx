@@ -17,7 +17,17 @@ export default function Provenance({ snap, onRefresh, busy }) {
   const [copy, copied] = useCopy()
   const p = snap.provenance || {}
   const errors = snap.errors || []
-  const stale = snap.generatedAt && Date.now() - Date.parse(snap.generatedAt) > (p.ttlMs || 7200000)
+  // Age is judged on its own threshold, NOT on the cache window. Keying the warning to ttlMs
+  // meant raising that window silently made this indicator less sensitive — at a 24h window,
+  // data twenty hours old rendered as current. The refresh policy is an operational choice; how
+  // old data has to be before a reader should be told is a separate question, so: amber past an
+  // hour, and the wording sharpens past a working day. The strip stays amber rather than going
+  // red, because red here means a source ERROR — stale data is not the same failure and
+  // conflating them would make both easier to ignore. The exact age is always printed.
+  const AGE_WARN_MS = 3600_000, AGE_BAD_MS = 8 * 3600_000
+  const ageMs = snap.generatedAt ? Date.now() - Date.parse(snap.generatedAt) : null
+  const stale = ageMs != null && ageMs > AGE_WARN_MS
+  const veryStale = ageMs != null && ageMs > AGE_BAD_MS
   const bad = errors.length > 0
   const c = bad ? RED : stale ? GOLD : 'var(--bg-surface-active)'
   const bg = bad ? 'var(--red-bg)' : stale ? 'var(--amber-bg)' : 'var(--bg-surface)'
@@ -26,7 +36,10 @@ export default function Provenance({ snap, onRefresh, busy }) {
       <span style={{ font: `500 11px ${MONO}`, color: bad ? RED : stale ? GOLD : 'var(--text-secondary)' }}>
         {bad ? '✕' : stale ? '⚠' : '●'} JIRA {snap.issues?.length || 0} issues · GitHub {snap.prs?.length || 0} PRs
         {!snap.ghAvailable && ' (gh unavailable — PR panels are EMPTY, not zero)'}
-        {' · built '}{snap.generatedAt ? ago(snap.generatedAt) : '—'}{stale ? ' · cache stale' : ''}
+        {' · built '}{snap.generatedAt ? ago(snap.generatedAt) : '—'}
+        {/* Say how long the window is, so "built 6h ago" is readable as expected rather than
+            broken — and name the escape hatch instead of leaving the reader stuck with it. */}
+        {stale && ` · ${veryStale ? 'well past' : 'past'} the ${Math.round((p.ttlMs || 0) / 3600000) || '?'}h refresh window — hit refresh for live data`}
       </span>
       {bad && <span style={{ font: `500 11px ${BODY}`, color: RED }}>{errors.length} source error{errors.length > 1 ? 's' : ''}</span>}
       <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>

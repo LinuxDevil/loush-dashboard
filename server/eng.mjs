@@ -48,6 +48,23 @@ import { adfToText, isAdf, markdownToAdf } from '../lib/adf.mjs'
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, ENG_STATE } from '../lib/paths.mjs'
 
 const DAY = 864e5
+// ---------- external-data cache policy ----------
+// One window for everything fetched from JIRA and GitHub. Previously three different numbers —
+// 2h for the snapshot, 30m for CI, 10m for a ticket — which meant the same screen could mix data
+// of three different ages with nothing saying so.
+//
+// This is a REFRESH trigger, not an expiry: the cache is stale-while-revalidate, so past the
+// window a request is still answered immediately from cache and a refresh runs behind it. What
+// the window actually decides is how old data may get before anyone goes looking for newer.
+//
+// What that costs, stated plainly because it is the real tradeoff: CI is the most time-sensitive
+// thing here, and at 24h a check that went red this morning can read green until something forces
+// a refresh. `?fresh=1` on /api/eng/snapshot waits for a live fetch, POST /api/eng/refresh clears
+// the cache outright, every cached answer
+// carries `cachedAt`/`ageMs` and renders amber in the provenance strip, and ENG_CACHE_TTL_HOURS
+// overrides it without a code change.
+const CACHE_TTL_HOURS = Number(process.env.ENG_CACHE_TTL_HOURS) || 24
+export const DATA_TTL = Math.max(60_000, CACHE_TTL_HOURS * 3600_000)
 const H = 3600e3
 
 // ---------- projects (§0) — ALL of this is user config now, one JIRA board + repo each ----------
@@ -557,7 +574,7 @@ function fetchPRs(cfg) {
 }
 
 // ---------- CI health (§11) — NEW gh calls, existing auth. Cached separately, shorter TTL. ----------
-const CI_FILE_TTL = 30 * 60_000
+const CI_FILE_TTL = DATA_TTL
 const ciCache = new Map() // project key -> {at, data}
 const ghJSON = (pathQ, timeout = 30000) => JSON.parse(gh(['api', pathQ], timeout))
 function ciFor(cfg, errs) {
@@ -1002,7 +1019,7 @@ const snaps = new class extends Map {
   delete(k) { const r = super.delete(k); queueMicrotask(persistDisk); return r }
   clear() { super.clear(); queueMicrotask(persistDisk) }
 }()
-const SNAP_TTL = 2 * 3600_000 // cache the JIRA+GitHub aggregate for 2 hours
+const SNAP_TTL = DATA_TTL // the JIRA+GitHub aggregate
 const SNAP_FILE = path.join(os.homedir(), '.claude', 'eng-snapshot.json') // alongside career.json
 const SNAP_SCHEMA = 1
 const SNAP_MAX_AGE = 14 * DAY // older than this the disk copy is scrapped, not served
@@ -1065,7 +1082,11 @@ const derive = (issues, prs, members, ci) => ({
 })
 // fresh in memory → serve it · warm but past TTL (incl. anything seeded off disk) → serve it stale and
 // refresh behind · genuinely cold → block on the live fetch, because a wrong answer is worse than a slow one
-async function snapshot(cfg) {
+async function snapshot(cfg, { fresh = false } = {}) {
+  // `fresh` blocks on a live fetch instead of answering from cache. With a 24h window this is
+  // the difference between "I know it changed and I want to see it" and waiting a day, so it is
+  // per-request rather than only the cache-clearing POST.
+  if (fresh) return refresh(cfg)
   const hit = snaps.get(cfg.key)
   if (hit && Date.now() - hit.at < SNAP_TTL) return hit.data
   if (hit) { refresh(cfg); return staleView(hit.data, hit.at) }
@@ -1115,9 +1136,9 @@ async function computeSnapshot(cfg) {
   if (!prsFailed) persistDisk() // ← the whole point: the next boot comes up warm instead of paying 65s again
   return data
 }
-async function snapshotAll() {
+async function snapshotAll({ fresh = false } = {}) {
   const projs = loadProjects()
-  const parts = await Promise.all(projs.map(p => snapshot(p).catch(e => ({ available: false, key: p.key, name: p.name, error: e.message }))))
+  const parts = await Promise.all(projs.map(p => snapshot(p, { fresh }).catch(e => ({ available: false, key: p.key, name: p.name, error: e.message }))))
   const avail = parts.filter(p => p.available)
   if (!avail.length) { const e = new Error(parts.every(p => p.error === 'no-jira-creds') ? 'no-jira-creds' : (parts[0]?.error || 'no-jira-creds')); throw e }
   const issues = avail.flatMap(p => p.issues)
@@ -1145,14 +1166,14 @@ async function snapshotAll() {
     ...derive(issues, prs, members, ci),
   }
 }
-async function snapFor(key) {
-  if (key === 'all') return snapshotAll()
+async function snapFor(key, opts = {}) {
+  if (key === 'all') return snapshotAll(opts)
   const projs = loadProjects()
   // String()-coerced for the same reason as cfgFor: `?project[]=x` arrives as an array, which has
   // no .toUpperCase. Here it is caught by the routes' try blocks and surfaces as a 500 with a
   // TypeError message rather than killing the process — still wrong, same one-line fix.
   const k = String(key ?? '').toUpperCase()
-  return snapshot(projs.find(p => p.key === k) || projs[0])
+  return snapshot(projs.find(p => p.key === k) || projs[0], opts)
 }
 
 // ---------- OKRs (§4) — every measure is AUTO, computed by the UI from live aggregates ----------
@@ -1259,7 +1280,7 @@ function snapWarm(cfg) {
 }
 
 const ticketCache = new Map() // key -> {at, data}
-const TICKET_TTL = 10 * 60_000
+const TICKET_TTL = DATA_TTL
 /**
  * @param {boolean} waitForPrs  true = the old behaviour (block until the snapshot exists). The
  *   Sprint-analytics drawer already has a warm snapshot by construction, so it costs nothing there;
@@ -1411,7 +1432,8 @@ export default function mountEng(app) {
     res.json({ ok: true, ownership: o[key] || null })
   })
   app.get('/api/eng/snapshot', async (req, res) => {
-    try { res.json(await snapFor(req.query.project)) }
+    // ?fresh=1 skips the cache window entirely and waits for a live fetch.
+    try { res.json(await snapFor(req.query.project, { fresh: req.query.fresh === '1' })) }
     catch (e) {
       const projs = projectList()
       if (e.message === 'no-jira-creds') return res.json({ available: false, reason: 'no-jira-token', projects: projs, team: projs[0] })
