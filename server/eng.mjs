@@ -11,6 +11,7 @@ import {
 import { estAccuracy, escapeRateSeries, busFactor } from '../lib/eng-metrics.mjs'
 import { adfToText, isAdf, markdownToAdf } from '../lib/adf.mjs'
 import { partitionByReadiness, unblockImpact } from '../lib/task-graph.mjs'
+import { withMarker, planSync, SECTIONS } from '../lib/progress-sync.mjs'
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, ENG_STATE } from '../lib/paths.mjs'
 
 const DAY = 864e5
@@ -1141,7 +1142,7 @@ async function ticketDetail(cfg, key, { waitForPrs = false, withCommits = false 
   const a = await jiraAuth(cfg)
   const iss = await jira(a, `/issue/${encodeURIComponent(key)}?expand=renderedFields,changelog&fields=summary,description,comment,status,issuetype,assignee,created,updated`)
   const rf = iss.renderedFields || {}
-  const comments = (rf.comment?.comments || iss.fields.comment?.comments || []).map(c => ({ author: c.author?.displayName || '', at: c.created, body: richText(c.body) }))
+  const comments = (rf.comment?.comments || iss.fields.comment?.comments || []).map(c => ({ id: c.id ?? null, author: c.author?.displayName || '', at: c.created, body: richText(c.body) }))
   const snap = waitForPrs ? await snapshot(cfg).catch(() => null) : snapWarm(cfg)
   const prsRaw = (snap?.prs || []).filter(p => p.ticket === key)
   const prs = prsRaw.map(p => ({
@@ -1313,6 +1314,62 @@ export default function mountEng(app) {
         generatedAt: s.generatedAt, stale: s.stale ?? false, team: s.team ?? null,
         source: 'jira issue links (fields.issuelinks) on the current snapshot',
       })
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+  })
+
+  // ---- idempotent progress-comment sync ----
+  // The plain /comment route posts unconditionally, so running a sync twice leaves two comments
+  // on a ticket a real team reads. This one carries identity in the comment body and updates in
+  // place. `?dryRun=1` returns the plan and the rendered body without writing anything.
+  app.post('/api/eng/ticket/:key/progress', async (req, res) => {
+    const key = String(req.params.key || '').toUpperCase()
+    const cfg = cfgForTicket(key, req.query.project || req.body?.project)
+    if (!cfg) return res.status(404).json({ error: `no project configured for "${key.split('-')[0]}" — add it in Setup` })
+    const dryRun = req.query.dryRun === '1' || req.body?.dryRun === true
+    if (!cfg.writes && !dryRun) return res.status(403).json({ error: 'writes disabled — set "writes": true on this project in projects.json (dryRun=1 still works)' })
+
+    const data = req.body?.sections
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return res.status(400).json({ error: 'sections required', expected: SECTIONS.map(([f, t]) => ({ field: f, title: t })) })
+    }
+    const { body, hash } = withMarker(key, data)
+
+    try {
+      const a = await jiraAuth(cfg)
+      // Read the comments fresh rather than from ticketCache: a cached list from before an
+      // earlier sync would show no marker and turn this into the duplicate post it prevents.
+      let existing = null
+      try {
+        const r = await fetch(`${a.base}/issue/${encodeURIComponent(key)}/comment?maxResults=100&orderBy=created`, { headers: a.headers })
+        if (r.ok) {
+          const j = await r.json()
+          existing = (j.comments || []).map(c => ({ id: c.id, body: isAdf(c.body) ? adfToText(c.body).text : String(c.body ?? '') }))
+          // JIRA pages comments. If there are more than we read, the marker could be in the
+          // unread part, so we do not know — and planSync refuses on "do not know".
+          if (typeof j.total === 'number' && j.total > existing.length) existing = null
+        }
+      } catch { existing = null }
+
+      const plan = planSync(existing, key, hash)
+      if (dryRun) return res.json({ ...plan, dryRun: true, body, hash })
+      if (plan.action === 'refuse') {
+        return res.status(409).json({ ...plan, error: `refusing to post: ${plan.detail}`, body })
+      }
+      if (plan.action === 'skip') return res.json({ ...plan, hash, url: `https://${cfg.jiraHost}/browse/${key}` })
+
+      const adf = { body: markdownToAdf(body) }
+      const url = plan.action === 'update'
+        ? `${a.base}/issue/${encodeURIComponent(key)}/comment/${encodeURIComponent(plan.commentId)}`
+        : `${a.base}/issue/${encodeURIComponent(key)}/comment`
+      const r = await fetch(url, {
+        method: plan.action === 'update' ? 'PUT' : 'POST',
+        headers: { ...a.headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(adf),
+      })
+      if (!r.ok) throw new Error(`jira ${r.status}: ${(await r.text()).slice(0, 180)}`)
+      const j = await r.json()
+      ticketCache.delete(key)
+      res.json({ ...plan, ok: true, id: j.id, hash, url: `https://${cfg.jiraHost}/browse/${key}?focusedCommentId=${j.id}` })
     } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
   })
 

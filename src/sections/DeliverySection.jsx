@@ -3,6 +3,7 @@ import Hub from '../ui/Hub.jsx'
 import Skeleton from '../ui/Skeleton.jsx'
 import EngDashboard from './EngDashboard.jsx'
 import EngineeringSection from './EngineeringSection.jsx'
+import ProgressSync from './ProgressSync.jsx'
 import { api, toast } from '../lib/api.js'
 
 // ---------- 2: Eng folds into the shell as the Delivery section ----------
@@ -31,6 +32,7 @@ export default function DeliverySection({ onNav }) {
     { label: 'AI ROI', el: <Roi /> },
     { label: 'DORA', el: <Dora /> },
     { label: '1:1 prep', el: <OneOnOne /> },
+    { label: 'Progress comment', el: <ProgressSync /> },
   ]
   if (features?.engineering) items.splice(1, 0, { label: 'Quality & risk', el: <EngineeringSection /> })
   return <Hub items={items} />
