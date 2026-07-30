@@ -2,26 +2,17 @@ import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const A = 'var(--accent)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
-// null/undefined must not render as 0%. `Math.round((x || 0) * 100)` made "not measured" and
-// "measured, and it is zero" indistinguishable — the idiom that laundered every honest null.
 const pct = x => (x == null ? '—' : Math.round(x * 100) + '%')
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : m + 'm' }
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-// Proposals derived from what actually happened in transcripts — a failed call retried with a
-// changed input that then worked, a file edited five or more times, a user reversing a previous
-// instruction, a run of consecutive failures.
-//
-// Every row is a PROPOSAL, never an accepted rule, and every row cites the records that produced
-// it. That framing is load-bearing: the output of this screen is a sentence someone may paste
-// into their CLAUDE.md, so a lesson that was not grounded in evidence would be a fabricated
-// instruction carrying the authority of a measurement.
 function Lessons() {
   const [days, setDays] = useState(14)
   const [d, setD] = useState(null)
@@ -54,8 +45,7 @@ function Lessons() {
             <button className="mini" style={{ marginTop: 0 }} onClick={() => toggle(i)}>{open.has(i) ? 'hide' : 'evidence'}</button>
           </div>
           <div style={{ color: 'var(--text-primary)', marginTop: 3 }}>▸ {l.rule}</div>
-          {/* 'unknown' is a real value here: the transcript showed the mistake but never showed a
-              fix, and inventing one would be exactly the fabrication this feature avoids. */}
+          {}
           <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>fix: {l.fix === 'unknown' ? <em>not observed in the transcript</em> : l.fix}</div>
           {open.has(i) && (
             <div style={{ marginTop: 6, paddingLeft: 12, borderLeft: '2px solid var(--border-default)', color: 'var(--text-tertiary)' }}>
@@ -71,9 +61,6 @@ function Lessons() {
 
 const TIER_COLOR = { simple: 'var(--text-tertiary)', standard: 'var(--accent-light)', complex: 'var(--amber, #d79921)', reasoning: 'var(--red)' }
 
-// What tier of work you are asking for, scored offline from prompt text alone. Deliberately
-// shows a distribution and not a dollar figure: the boundaries have never been fitted against
-// real data, and pricing an uncalibrated classifier would dress a guess up as an invoice.
 function Complexity() {
   const [days, setDays] = useState(30)
   const [d, setD] = useState(null)
@@ -106,9 +93,8 @@ function Complexity() {
         )
       })}
       <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--amber, #d79921)', lineHeight: 1.6 }}>
-        {/* The caveat is read from the API, not restated, so it cannot drift from the truth. */}
-        {/* Show the caveat either way — a fitted classifier is not a proven one, and the
-            distinction is exactly what a reader needs to decide how hard to lean on this. */}
+        {}
+        {}
         <div style={{ color: d.calibrated ? 'var(--text-tertiary)' : 'var(--amber, #d79921)' }}>
           {d.calibrated ? '' : '⚠ '}{d.caveat}
           {d.calibration && ` (n=${d.calibration.sampleSize})`}
@@ -157,7 +143,7 @@ function Kpi({ label, value, sub, color = 'var(--text-primary)' }) {
   return (
     <div style={{ ...PANEL, padding: '15px 17px' }}>
       <div style={{ font: `600 11px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</div>
-      <div style={{ marginTop: 7, font: `600 20px ${HEAD}`, color }}>{value}</div>
+      <div style={{ marginTop: 7, font: `600 26px ${MONO}`, color }}>{value}</div>
       <div style={{ marginTop: 2, font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{sub}</div>
     </div>
   )
@@ -171,7 +157,7 @@ const Bars = ({ data, fmt = fmtTok }) => {
         <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 11, font: `500 11px ${MONO}` }}>
           <span style={{ width: 130, textAlign: 'right', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</span>
           <div style={{ flex: 1, height: 9, borderRadius: 6, background: 'var(--bg-surface-hover)', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: (d.value / max) * 100 + '%', borderRadius: 6, background: `linear-gradient(90deg,${d.color || A},${d.color || A}bb)`, transformOrigin: 'left', animation: 'grow .7s cubic-bezier(.2,.8,.2,1) both' }} />
+            <div style={{ height: '100%', width: (d.value / max) * 100 + '%', borderRadius: 6, background: (d.color || A), transformOrigin: 'left', animation: 'grow .7s cubic-bezier(.2,.8,.2,1) both' }} />
           </div>
           <span style={{ width: 58, textAlign: 'right', color: 'var(--text-secondary)' }}>{fmt(d.value)}</span>
         </div>
@@ -223,7 +209,7 @@ function Stats() {
         </div>
         <div style={{ ...PANEL }}>
           <div style={{ font: `600 14px ${HEAD}`, marginBottom: 12 }}>Cost by model</div>
-          <Bars data={s.byModel.map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v, color: ['var(--violet)', 'var(--blue)', 'var(--green)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
+          <Bars data={s.byModel.map(([m, v], i) => ({ label: modelName(m), value: v, color: ['var(--violet)', 'var(--blue)', 'var(--green)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
           <div style={{ font: `600 14px ${HEAD}`, margin: '18px 0 12px' }}>Cost by project</div>
           <Bars data={s.byProj.map(([p, v], i) => ({ label: p.split('-').slice(-2).join('-'), value: v, color: ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
         </div>
@@ -293,7 +279,7 @@ function Dupes() {
       {data?.clusters.map((c, i) => (
         <div key={i} style={{ ...PANEL, padding: '14px 18px' }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <span style={{ font: `600 14px ${HEAD}`, color: A, flexShrink: 0 }}>{c.count}×</span>
+            <span style={{ font: `600 14px ${MONO}`, color: A, flexShrink: 0 }}>{c.count}×</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ font: "400 13px var(--body)", color: 'var(--text-primary)', lineHeight: 1.5, cursor: 'pointer' }} onClick={() => setOpen(open === i ? null : i)}>{c.canonical.slice(0, 220)}{c.canonical.length > 220 ? '…' : ''}</div>
               <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 4 }}>

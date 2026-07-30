@@ -1,18 +1,30 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PRICE_PER_M, isPriced, entryCost, dedupeTurns } from '../../lib/pricing.mjs'
+import {
+  PRICE_PER_M, isPriced, entryCost, dedupeTurns,
+  rateFor, setPriceTable, getPriceTable, DEFAULT_PRICE_TABLE,
+  splitCacheWrite, entryCacheRates, FALLBACKS, UNTIERED_CACHE_WRITE_TIER,
+} from '../../lib/pricing.mjs'
 
 const entry = (over = {}) => ({ model: 'claude-sonnet-5', in: 0, out: 0, cc: 0, cr: 0, ...over })
+const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`)
 
 test('known models resolve to their published input rate', () => {
-  assert.equal(PRICE_PER_M('claude-opus-5'), 15)
+  assert.equal(PRICE_PER_M('claude-fable-5'), 10)
+  assert.equal(PRICE_PER_M('claude-opus-5'), 5)
+  assert.equal(PRICE_PER_M('claude-opus-4-8'), 5)
   assert.equal(PRICE_PER_M('claude-sonnet-5'), 3)
+  assert.equal(PRICE_PER_M('claude-sonnet-4-6'), 3)
   assert.equal(PRICE_PER_M('claude-haiku-4-5-20251001'), 1)
 })
 
+test('a dated snapshot matches its family rule, and one generation cannot shadow another', () => {
+  assert.equal(PRICE_PER_M('claude-haiku-4-5-20251001'), PRICE_PER_M('claude-haiku-4-5'))
+  assert.equal(rateFor('claude-opus-4-8').out, 25)
+  assert.equal(PRICE_PER_M('claude-opus-4-9'), null, 'an unreleased neighbour must not inherit 4-8’s rate')
+})
+
 test('an unrecognised model is unpriced rather than silently billed at another rate', () => {
-  // The regression this guards: the old ladder ended in `: 3`, so a local model was
-  // indistinguishable from Sonnet on every dollar figure in the product.
   assert.equal(PRICE_PER_M('llama3-local'), null)
   assert.equal(isPriced('llama3-local'), false)
   assert.equal(isPriced('claude-opus-5'), true)
@@ -24,17 +36,133 @@ test('cost of an unpriced model is 0, never NaN', () => {
   assert.ok(Number.isFinite(c))
 })
 
-test('entry cost applies the output and cache ratios off the input rate', () => {
-  const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≈ ${expected}`)
-  near(entryCost(entry({ in: 1e6 })), 3)      // input at 1x
-  near(entryCost(entry({ out: 1e6 })), 15)    // output at 5x
-  near(entryCost(entry({ cc: 1e6 })), 3.75)   // cache write at 1.25x
-  near(entryCost(entry({ cr: 1e6 })), 0.3)    // cache read at 0.1x
+test('entry cost bills each category at its own rate', () => {
+  near(entryCost(entry({ in: 1e6 })), 3)
+  near(entryCost(entry({ out: 1e6 })), 15)
+  near(entryCost(entry({ cr: 1e6 })), 0.3)
+  near(entryCost(entry({ cc: 1e6 })), 3.75)
 })
 
+// ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+
+test('a 1-hour cache write costs more than a 5-minute one', () => {
+  near(entryCost(entry({ cc5: 1e6 })), 3.75)
+  near(entryCost(entry({ cc1h: 1e6 })), 6)
+  assert.ok(
+    entryCost(entry({ cc1h: 1e6 })) > entryCost(entry({ cc5: 1e6 })),
+    'pricing 1h at the 5m rate is the understatement this whole change fixes',
+  )
+})
+
+test('a tiered entry ignores the flat total and prices the split', () => {
+  const split = entryCost(entry({ cc: 1e6, cc5: 400_000, cc1h: 600_000 }))
+  near(split, (400_000 * 3.75 + 600_000 * 6) / 1e6)
+  assert.ok(split > entryCost(entry({ cc: 1e6 })), 'a mostly-1h record must cost more than the 5m fallback')
+})
+
+test('an entry with no tier fields falls back to 5m and says that it did', () => {
+  const before = FALLBACKS.untieredCacheWrite
+  entryCost(entry({ cc: 1e6 }))
+  assert.equal(FALLBACKS.untieredCacheWrite, before + 1, 'an assumed tier must be countable, never silent')
+  assert.equal(UNTIERED_CACHE_WRITE_TIER, '5m', 'the fallback preserves the pre-tier numbers to the cent')
+})
+
+test('a zero cache-creation total is not a fallback', () => {
+  const before = FALLBACKS.untieredCacheWrite
+  entryCost(entry({ in: 1e6 }))
+  assert.equal(FALLBACKS.untieredCacheWrite, before, 'nothing was assumed, so nothing should be counted')
+})
+
+test('splitCacheWrite treats either tier field as authoritative', () => {
+  assert.deepEqual(splitCacheWrite(1e6, 0, 1e6), { cc5: 0, cc1h: 1e6 })
+  assert.deepEqual(splitCacheWrite(1e6, 1e6, 0), { cc5: 1e6, cc1h: 0 })
+  assert.deepEqual(splitCacheWrite(500, 500, 0), { cc5: 500, cc1h: 0 })
+})
+
+test('entryCacheRates blends the write rate across the tiers actually present', () => {
+  assert.deepEqual(entryCacheRates(entry({ cc5: 1e6 })), { write: 3.75, read: 0.3 })
+  assert.deepEqual(entryCacheRates(entry({ cc1h: 1e6 })), { write: 6, read: 0.3 })
+  const mixed = entryCacheRates(entry({ cc5: 1e6, cc1h: 1e6 }))
+  near(mixed.write, (3.75 + 6) / 2)
+  assert.deepEqual(entryCacheRates(entry({ model: 'llama3-local', cc1h: 1e6 })), { write: 0, read: 0 })
+})
+
+test('entryCacheRates does not double-count the untiered fallback', () => {
+  const before = FALLBACKS.untieredCacheWrite
+  entryCacheRates(entry({ cc: 1e6 }))
+  assert.equal(FALLBACKS.untieredCacheWrite, before, 'only entryCost owns the counter, or one entry counts twice')
+})
+
+// ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+
+test('usage on or before the promo cutoff prices at the intro rate', () => {
+  assert.equal(PRICE_PER_M('claude-sonnet-5', '2026-08-30T12:00:00Z'), 2, 'day before the cutoff')
+  assert.equal(PRICE_PER_M('claude-sonnet-5', '2026-08-31T23:59:00Z'), 2, 'cutoff day is inclusive')
+  assert.equal(PRICE_PER_M('claude-sonnet-5', '2026-09-01T00:00:00Z'), 3, 'day after reverts to standard')
+})
+
+test('a model with no promo is unaffected by its timestamp', () => {
+  assert.equal(PRICE_PER_M('claude-opus-5', '2026-01-01T00:00:00Z'), 5)
+  assert.equal(PRICE_PER_M('claude-opus-5', '2027-01-01T00:00:00Z'), 5)
+})
+
+test('an entry with no timestamp prices at standard, not at the promo', () => {
+  assert.equal(PRICE_PER_M('claude-sonnet-5'), 3)
+  near(entryCost(entry({ in: 1e6 })), 3)
+  near(entryCost(entry({ in: 1e6, t: '2026-08-01T00:00:00Z' })), 2)
+})
+
+test('an unparseable timestamp prices at standard rather than throwing', () => {
+  assert.equal(PRICE_PER_M('claude-sonnet-5', 'not-a-date'), 3)
+})
+
+// ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+
+test('an injected table overrides the defaults, and clearing it restores them', () => {
+  try {
+    setPriceTable([{ match: 'claude-opus-5', in: 99, out: 1, cacheRead: 1, cacheWrite5m: 1, cacheWrite1h: 1 }])
+    assert.equal(PRICE_PER_M('claude-opus-5'), 99)
+    setPriceTable([])
+    assert.equal(PRICE_PER_M('claude-opus-5'), 5, 'an emptied table reads as "reset", never as $0')
+    setPriceTable(null)
+    assert.equal(getPriceTable(), DEFAULT_PRICE_TABLE)
+  } finally {
+    setPriceTable(null)
+  }
+})
+
+test('a user table that omits a model leaves it unpriced rather than defaulted', () => {
+  try {
+    setPriceTable([{ match: 'claude-sonnet-5', in: 3, out: 15, cacheRead: 0.3, cacheWrite5m: 3.75, cacheWrite1h: 6 }])
+    assert.equal(PRICE_PER_M('claude-opus-5'), null)
+    assert.equal(isPriced('claude-opus-5'), false)
+    assert.equal(entryCost(entry({ model: 'claude-opus-5', in: 1e6 })), 0)
+  } finally {
+    setPriceTable(null)
+  }
+})
+
+test('every default rule carries all five rates', () => {
+  for (const r of DEFAULT_PRICE_TABLE) {
+    for (const k of ['in', 'out', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h']) {
+      assert.equal(typeof r[k], 'number', `${r.id || r.match} is missing ${k}`)
+    }
+    if (r.intro) {
+      assert.ok(r.intro_until, `${r.id || r.match} has intro rates but no cutoff date`)
+      for (const k of ['in', 'out', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h']) {
+        assert.equal(typeof r.intro[k], 'number', `${r.id || r.match} intro is missing ${k}`)
+      }
+    }
+  }
+})
+
+// ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+
 test('repeated records for one streamed turn collapse to the last', () => {
-  // Real transcripts append a turn repeatedly as it streams; each record carries the same
-  // message.id and cumulative usage. Counting them all inflated total cost by ~2.12x.
   const deduped = dedupeTurns([
     { id: 'msg_a', e: entry({ out: 2 }) },
     { id: 'msg_a', e: entry({ out: 235 }) },
@@ -51,7 +179,6 @@ test('a repeated id keeps the position of its first sighting', () => {
     { id: 'second', e: entry({ out: 2 }) },
     { id: 'first', e: entry({ out: 99 }) },
   ])
-  // Chronological order has to survive dedup, since first/last timestamps are folded in order.
   assert.deepEqual(deduped.map(r => r.id), ['first', 'second'])
   assert.equal(deduped[0].e.out, 99)
 })

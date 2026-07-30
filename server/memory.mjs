@@ -4,17 +4,12 @@ import os from 'node:os'
 import { spawnSync } from 'node:child_process'
 import YAML from 'yaml'
 
-// Memory Recall — read-only search over the "why" of your Claude Code practice.
-// Two sources, zero new storage:
-//   1. curated memory facts  ~/.claude/projects/<proj>/memory/*.md   (high signal, distilled decisions)
-//   2. raw transcripts       ~/.claude/projects/<proj>/**/*.jsonl    (the full record, via ripgrep)
 // ponytail: keyword ranking, not embeddings. Add sqlite-vec only if recall quality is bad in practice.
 
 const HOME = os.homedir()
 const PROJ_BASE = path.join(HOME, '.claude', 'projects')
-const RG = 'rg' // ripgrep — already on this machine; far faster than scanning 360MB in Node
+const RG = 'rg'
 
-// transcript dir name -> a readable project label (last meaningful path segment)
 const projLabel = dir => dir.replace(/^-Users-[^-]+-/, '').split('-').slice(-2).join('-') || dir
 
 function parseFM(src) {
@@ -25,7 +20,6 @@ function parseFM(src) {
   return { fm, body: src.slice(m[0].length) }
 }
 
-// score a memory file against the query terms; name/description weigh more than body
 function scoreMem(terms, hay) {
   let s = 0
   for (const t of terms) {
@@ -72,7 +66,6 @@ function searchMemories(terms, projFilter) {
   return out
 }
 
-// pull readable text out of a matched transcript JSONL line
 function transcriptText(line) {
   try {
     const j = JSON.parse(line)
@@ -80,7 +73,7 @@ function transcriptText(line) {
     const c = j.message?.content
     const text = typeof c === 'string' ? c
       : Array.isArray(c) ? c.filter(b => b.type === 'text').map(b => b.text).join(' ') : ''
-    if (!text || text.startsWith('<')) return null // skip system-reminder / tool-result envelopes
+    if (!text || text.startsWith('<')) return null
     return { role: j.type, text: text.replace(/\s+/g, ' ').trim(), t: j.timestamp ? Date.parse(j.timestamp) : null }
   } catch { return null }
 }
@@ -88,7 +81,6 @@ function transcriptText(line) {
 function searchTranscripts(query, projFilter, limit = 30) {
   const scope = projFilter ? path.join(PROJ_BASE, projFilter) : PROJ_BASE
   if (!fs.existsSync(scope)) return []
-  // fixed-string, case-insensitive, capped per file — rg stays fast even over the full history
   const r = spawnSync(RG, ['-i', '-F', '--json', '-m', '3', '-g', '*.jsonl', query, scope],
     { maxBuffer: 64 * 1024 * 1024, timeout: 15000 })
   if (r.status !== 0 && !r.stdout?.length) return []
@@ -118,19 +110,16 @@ function searchTranscripts(query, projFilter, limit = 30) {
   return out
 }
 
-// Grounding for inline chat (L1): top curated-memory hits for a query, scoped to a project when it
-// has memories, else global. Curated facts only (never raw transcripts) — high-signal + self-authored.
 export function retrieveContext(query, projFilter = null, limit = 3) {
   const terms = String(query || '').toLowerCase().split(/\s+/).filter(t => t.length > 2)
   if (!terms.length) return []
   let hits = searchMemories(terms, projFilter)
-  if (!hits.length && projFilter) hits = searchMemories(terms, null) // fall back to all projects
+  if (!hits.length && projFilter) hits = searchMemories(terms, null)
   return hits.sort((a, b) => b.score - a.score).slice(0, limit)
     .map(h => ({ name: h.name, path: h.path, excerpt: h.excerpt.replace(/\s+/g, ' ').slice(0, 240) }))
 }
 
 export default function mountMemory(app) {
-  // list projects that have curated memory, for the filter dropdown
   app.get('/api/memory/projects', (req, res) => {
     const out = []
     let dirs = []
@@ -144,8 +133,6 @@ export default function mountMemory(app) {
     res.json(out)
   })
 
-  // auto-surface: a project's curated memories, newest first — no query.
-  // Accepts either the real project path (?path=) or the mangled transcript dir (?project=).
   app.get('/api/memory/recent', (req, res) => {
     const dir = req.query.project || (req.query.path ? String(req.query.path).replace(/[\\/:._]/g, '-') : '')
     const memDir = path.join(PROJ_BASE, dir, 'memory')
@@ -159,7 +146,6 @@ export default function mountMemory(app) {
     res.json({ project: projLabel(dir), items })
   })
 
-  // GET /api/memory/search?q=...&project=<dir>&sources=memory,transcript
   app.get('/api/memory/search', (req, res) => {
     const q = String(req.query.q || '').trim()
     if (q.length < 2) return res.json({ results: [] })
@@ -169,14 +155,12 @@ export default function mountMemory(app) {
     const results = []
     if (sources.includes('memory')) results.push(...searchMemories(terms, projFilter))
     if (sources.includes('transcript')) results.push(...searchTranscripts(q, projFilter))
-    // memory hits first (curated), then by score, then most recent
     results.sort((a, b) =>
       (a.source === 'memory' ? 0 : 1) - (b.source === 'memory' ? 0 : 1) ||
       b.score - a.score || (b.mtime || 0) - (a.mtime || 0))
     res.json({ results: results.slice(0, 60), q })
   })
 
-  // full body of one memory file, for the expand view
   app.get('/api/memory/file', (req, res) => {
     const p = path.resolve(String(req.query.path || ''))
     if (!p.startsWith(PROJ_BASE + path.sep)) return res.status(403).json({ error: 'out of scope' })

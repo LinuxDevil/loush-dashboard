@@ -2,10 +2,11 @@ import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const kTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n || 0)))
 
 function useScopes() {
@@ -34,9 +35,6 @@ export default function ReliabilitySection() {
   )
 }
 
-// Groups failures by cause rather than listing them. A rate limit and a broken tool call read
-// identically in a raw transcript, and the difference decides whether you have a bug or a
-// retry policy problem.
 function ErrorCauses() {
   const [days, setDays] = useState(30)
   const [d, setD] = useState(null)
@@ -60,15 +58,14 @@ function ErrorCauses() {
             <div style={{ width: `${(g.count / max) * 100}%`, height: '100%', background: g.retryable ? 'var(--amber, #d79921)' : 'var(--red)' }} />
           </div>
           <span style={{ width: 46, textAlign: 'right', color: 'var(--text-secondary)' }}>{g.count}</span>
-          {/* retryable null means we could not tell — shown as a question mark, not as "no". */}
+          {}
           <span style={{ width: 78, color: 'var(--text-tertiary)' }}>
             {g.retryable === true ? 'retryable' : g.retryable === false ? 'not retryable' : 'retryable?'}
           </span>
         </div>
       ))}
       <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
-        {/* Both caveats come straight from the API rather than being restated here, so they
-            cannot drift apart from what the endpoint actually did. */}
+        {}
         {d.scope}
         {d.samplesCapped && <div>sample list capped at {d.sampleCap} — counts above are complete, examples are not</div>}
       </div>
@@ -273,7 +270,6 @@ function Evals() {
   )
 }
 
-// feature 27: run the eval suite in real CI on PRs touching .claude/, with a merge-blocking pass-rate gate
 function CiGate() {
   const scopes = useScopes()
   const [project, setProject] = useState('')
@@ -385,7 +381,7 @@ function Costs() {
           <div style={{ font: `600 14px ${HEAD}`, marginBottom: 14 }}>Spend per day</div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120 }}>
             {dayKeys.map(k => (
-              <div key={k} title={`${k}: $${d.byDay[k].usd.toFixed(2)} · ${kTok(d.byDay[k].tok)} tok`} style={{ flex: 1, height: `${(d.byDay[k].usd / maxDay) * 100}%`, minHeight: 2, borderRadius: '3px 3px 0 0', background: 'linear-gradient(180deg,var(--accent-light),var(--accent))' }} />
+              <div key={k} title={`${k}: $${d.byDay[k].usd.toFixed(2)} · ${kTok(d.byDay[k].tok)} tok`} style={{ flex: 1, height: `${(d.byDay[k].usd / maxDay) * 100}%`, minHeight: 2, borderRadius: '3px 3px 0 0', background: 'var(--blue)' }} />
             ))}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', font: `400 9px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 5 }}><span>{dayKeys[0]}</span><span>{dayKeys[dayKeys.length - 1]}</span></div>
@@ -401,7 +397,7 @@ function Costs() {
           <div style={{ borderTop: '1px solid var(--border-default)', marginTop: 8, paddingTop: 8 }}>
             {Object.entries(d.byModel).sort((a, b) => b[1].usd - a[1].usd).map(([m, v]) => (
               <div key={m} style={{ display: 'flex', justifyContent: 'space-between', font: `400 11px ${MONO}`, padding: '4px 0', color: 'var(--violet)' }}>
-                <span>{m.replace(/^claude-/, '')}</span>
+                <span>{modelName(m)}</span>
                 <span style={{ color: 'var(--text-secondary)' }}>${v.usd.toFixed(2)}</span>
               </div>
             ))}

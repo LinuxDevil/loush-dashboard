@@ -2,11 +2,6 @@ import React from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, DIM, HI, Card, CardHead, Empty, H1, Kpi, fx } from './ui.jsx'
 import { Lines } from './charts.jsx'
 
-// §14 — the ONE panel in this roadmap with deliberately NO action. If it goes red the answer is a
-// conversation, not a button.
-// HARD CONSTRAINT: this component renders NO per-engineer breakdown, ever. It cannot: the server applies
-// min-N=5 suppression before serialising and no person's name is in the payload. Do not try to
-// reconstruct one client-side from prs[] — that is the exact panel the EM said he would reject.
 const band = (v, watch, red) => (v == null ? DIM : v >= red ? RED : v >= watch ? GOLD : GREEN)
 
 export default function Load({ snap }) {

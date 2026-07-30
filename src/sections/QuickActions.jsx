@@ -4,9 +4,8 @@ import { buildBlocks, Block } from './ChatSection.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
-// each button is just a slash command + the project context — the run primitive does the rest
 const ACTIONS = [
   { cmd: '/code-review', label: 'Review branch', hint: 'review the current diff for correctness bugs' },
   { cmd: '/security-review', label: 'Security review', hint: 'same diff, security lens' },
@@ -43,11 +42,9 @@ function Analysis({ a }) {
   )
 }
 
-// live output window: subscribes to the run's SSE stream, renders the same blocks as Chat.
-// exported — the Cursor dashboard reuses it for cursor-agent runs.
 export function RunWindow({ run, onClose }) {
   const [events, setEvents] = useState([])
-  const [live, setLive] = useState(null) // refreshed run row (analysis arrives on exit)
+  const [live, setLive] = useState(null)
   const endRef = useRef(null)
   useEffect(() => {
     setEvents([])
@@ -83,7 +80,7 @@ export default function QuickActions() {
   const [cwd, setCwd] = useState('')
   const [custom, setCustom] = useState('')
   const [runs, setRuns] = useState([])
-  const [open, setOpen] = useState(null) // run to show in the output window
+  const [open, setOpen] = useState(null)
   useEffect(() => { api.get('/api/projects').then(ps => { const ex = ps.filter(p => p.exists !== false); setProjects(ex); setCwd(c => c || ex[0]?.path || '') }).catch(() => {}) }, [])
   useEffect(() => {
     const load = () => api.get('/api/actions').then(setRuns).catch(() => {})

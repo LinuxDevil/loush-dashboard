@@ -2,29 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 import { tidyPositions } from './tidy.js'
 
-// Undo/redo + structural editing for the design graph.
-//
-// WHY A STACK AND NOT A FLAG
-// Shneiderman's third principle of direct manipulation is "rapid, incremental, REVERSIBLE
-// operations". Reversibility is constitutive of a canvas, not a feature on top of one: people will
-// not drag, delete or rename in something they cannot back out of. Retrofitting undo onto mutable
-// state is a rewrite, so the graph is only ever replaced wholesale here and every replacement
-// pushes the previous value.
-//
-// The stack is deliberately CLIENT-side and in-memory. The server owns `rev` and rejects a stale
-// write with 409; undo is about the last few seconds of intent, not durable history.
 
 const LIMIT = 100
 
 export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
   const [past, setPast] = useState([])
   const [future, setFuture] = useState([])
-  const [saving, setSaving] = useState(null)     // null | 'saving' | 'error'
+  const [saving, setSaving] = useState(null)
   const revRef = useRef(rev)
   useEffect(() => { revRef.current = rev }, [rev])
 
-  // A new ticket, or a re-derive landing, invalidates the history — those snapshots describe a
-  // different graph and undoing into them would silently resurrect deleted work.
   useEffect(() => { setPast([]); setFuture([]) }, [tKey])
 
   const persist = useCallback(async next => {
@@ -37,14 +24,11 @@ export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
       return true
     } catch (e) {
       setSaving('error')
-      // 409 means someone else moved first. Reloading would throw away what the user just did, so
-      // say so and leave their version on screen to copy out of.
       toast(/changed elsewhere/i.test(e.message) ? 'this design changed elsewhere — your edit was not saved' : `could not save: ${e.message}`, 'error')
       return false
     }
   }, [tKey, workspace, onGraph])
 
-  /** Replace the graph, remembering the previous value. */
   const commit = useCallback(next => {
     setPast(p => [...p.slice(-(LIMIT - 1)), graph])
     setFuture([])
@@ -84,12 +68,9 @@ export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
   const removeNode = useCallback(id => {
     const lost = graph.edges.filter(e => e.source === id || e.target === id).length
     commit({ nodes: graph.nodes.filter(n => n.id !== id), edges: graph.edges.filter(e => e.source !== id && e.target !== id) })
-    // Naming the collateral edge deletions is the part people forget, and it is the reason a
-    // delete feels like data loss when it is actually undoable.
     toast(lost ? `deleted 1 component and ${lost} connection${lost > 1 ? 's' : ''} — ⌘Z to undo` : 'deleted 1 component — ⌘Z to undo')
   }, [graph, commit])
 
-  /** Delete a multi-selection in ONE undo step — N separate steps would be N undos to get back. */
   const removeNodes = useCallback(ids => {
     const set = new Set(ids)
     const lost = graph.edges.filter(e => set.has(e.source) || set.has(e.target)).length
@@ -118,8 +99,6 @@ export function useGraphEditor({ tKey, workspace, graph, rev, onGraph }) {
 
   const removeEdge = useCallback(id => commit({ ...graph, edges: graph.edges.filter(e => e.id !== id) }), [graph, commit])
 
-  // Re-layout every node. Goes through commit() like any other edit, so it is one ⌘Z away — which is
-  // the whole reason it is safe to offer on a graph the user may have hand-arranged.
   const tidy = useCallback(() => {
     if (!graph?.nodes?.length) return
     commit({ ...graph, nodes: tidyPositions(graph) })

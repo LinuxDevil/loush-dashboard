@@ -2,10 +2,6 @@ import React, { useMemo, useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, Empty, H1, miniBtn, primaryBtn, useCopy, first, fx } from './ui.jsx'
 import { Stagger } from '../ui/anim.jsx'
 
-// §1 — THE landing route. ONE ranked list of the server's triage records. No charts. No kanban.
-// Row = subject · owner · what is stuck · how long · how far over budget · an ACTION.
-// "Mine" is a filter over IDENTICAL rows (not a persona switcher — the user banned those).
-// Every action's default is COPY A LINE FOR A HUMAN TO SEND. No auto-ping, ever.
 const KIND = {
   'red-main':             { label: 'RED MAIN',        c: RED,    why: 'main is red — the whole team is blocked' },
   'over-budget':          { label: 'OVER BUDGET',     c: RED,    why: 'past its stage budget' },
@@ -22,7 +18,6 @@ const KIND = {
 const SEV = [RED, GOLD, PURPLE]
 const isPr = r => /^pr-/.test(r.kind)
 
-// the nudge is a sentence a human sends. It names the thing, who is waiting, and for how long.
 export function nudgeFor(r) {
   const who = r.waitingOn?.length ? r.waitingOn.map(w => '@' + w).join(' ') : (r.owner?.login ? '@' + r.owner.login : r.owner?.name || 'team')
   const age = r.ageWorkDays != null ? `${fx(r.ageWorkDays)} working day${r.ageWorkDays === 1 ? '' : 's'}` : ''
@@ -36,13 +31,10 @@ const standup = rows => ['*Attention queue* — ' + new Date().toLocaleDateStrin
 export default function AttentionQueue({ snap, me, mine, setMine, project, onOpenTicket, reload }) {
   const [copy, copied] = useCopy()
   const [busy, setBusy] = useState(null)
-  const [gone, setGone] = useState({})        // optimistic dismiss — the server persists it to eng-triage.json
+  const [gone, setGone] = useState({})
   const [err, setErr] = useState(null)
   const [kind, setKind] = useState('all')
-  const [limit, setLimit] = useState(40) // a ranked list you scroll forever is a landfill — top 40, then ask
-  // The server sorts severity × age, which floats 3-year-old zombie tickets (1,150 working days in a QA
-  // column nobody owns) above the PR that blocked someone this morning. Those are a backlog-hygiene job,
-  // not an intervention. They are one click away, never gone — and this is a filter over identical rows.
+  const [limit, setLimit] = useState(40)
   const [zomb, setZomb] = useState(false)
   const ZOMBIE = 60
   const all0 = (snap.triage || []).filter(r => !gone[r.id])
@@ -64,7 +56,6 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
     fetch('/api/eng/triage/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: r.id }) })
       .catch(() => setGone(g => { const n = { ...g }; delete n[r.id]; return n }))
   }
-  // stage-2 writes only exist when projects.json says "writes": true. Otherwise the row copies a line.
   const write = (r, url, body) => {
     setBusy(r.id); setErr(null)
     fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -118,7 +109,7 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
             </div>
           </div>
           <div style={{ flexShrink: 0, textAlign: 'right', width: 84 }}>
-            <div style={{ font: `700 14px ${HEAD}`, color: r.overBudgetBy != null ? RED : HI }}>{r.ageWorkDays != null ? fx(r.ageWorkDays) + 'd' : '—'}</div>
+            <div style={{ font: `600 14px ${MONO}`, color: r.overBudgetBy != null ? RED : HI }}>{r.ageWorkDays != null ? fx(r.ageWorkDays) + 'd' : '—'}</div>
             <div style={{ font: `400 9px ${MONO}`, color: r.overBudgetBy != null ? RED : DIM }}>{r.overBudgetBy != null ? `+${fx(r.overBudgetBy)}d over` : 'in stage'}</div>
           </div>
           <div style={{ flexShrink: 0, display: 'flex', gap: 6 }}>
@@ -144,11 +135,7 @@ export default function AttentionQueue({ snap, me, mine, setMine, project, onOpe
       {!snap.writes && ' Write actions are off — set "writes": true on the project in projects.json to post a nudge or transition a ticket with your own credentials.'}
     </div>
 
-    {/* Your progress — deliberately BELOW the queue, never above it. The queue answers "what is stuck,
-        act on it" and must be the first thing on the page; clearing stuck work is the job, not a score.
-        This is the reward you scroll down to AFTER triage: your own XP/level/streak and the single badge
-        you are closest to (self-only — there is NO team XP and NO XP on any person row up in the queue).
-        It scopes `recent` to eng outcomes — ships, PRs merged, reviews given, red mains fixed. */}
+    {}
   </section>
 }
 const Chip = ({ on, onClick, c, children, title }) => <button onClick={onClick} title={title} style={{ padding: '4px 10px', borderRadius: 7, cursor: 'pointer', font: `600 10px ${MONO}`, letterSpacing: '0.03em', border: `1px solid ${on ? c : 'var(--bg-surface-active)'}`, background: on ? c + '22' : 'transparent', color: on ? c : 'var(--text-secondary)' }}>{children}</button>

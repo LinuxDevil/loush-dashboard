@@ -13,7 +13,6 @@ test('the taxonomy is inspectable and internally consistent', () => {
     assert.ok(c.description.length > 0, `${c.id} explains itself`)
     assert.ok([true, false, null].includes(c.retryable), `${c.id}.retryable is a tri-state`)
   }
-  // The set the product depends on for grouping. Adding is fine; dropping one breaks callers.
   for (const required of [
     'rate_limit', 'overloaded', 'auth', 'quota', 'context_length',
     'timeout', 'network', 'tool_error', 'invalid_request', 'model_refusal', 'unknown',
@@ -35,8 +34,6 @@ test('retryable is right where it matters — waiting fixes some of these and no
 })
 
 test('an unrecognised error is unknown at zero confidence, not the nearest category', () => {
-  // The regression this guards is the pricing bug's shape: a fallthrough default that makes an
-  // unclassifiable thing indistinguishable from a real classification on every chart.
   const r = classifyError('the flux capacitor disagreed with the manifold')
   assert.equal(r.category, 'unknown')
   assert.equal(r.confidence, 0)
@@ -70,7 +67,7 @@ test('documented provider error types map across both vocabularies', () => {
   assert.equal(cat({ type: 'authentication_error' }), 'auth')
   assert.equal(cat({ type: 'permission_error' }), 'auth')
   assert.equal(cat({ type: 'billing_error' }), 'quota')
-  assert.equal(cat({ type: 'insufficient_quota' }), 'quota')       // OpenAI-shaped
+  assert.equal(cat({ type: 'insufficient_quota' }), 'quota')
   assert.equal(cat({ type: 'context_length_exceeded' }), 'context_length')
   assert.equal(cat({ type: 'invalid_request_error' }), 'invalid_request')
   assert.equal(cat({ type: 'content_filter' }), 'model_refusal')
@@ -100,8 +97,6 @@ test('an unmapped status falls through to unknown instead of a 5xx-shaped guess'
 })
 
 test('a named type outranks the status it arrived with', () => {
-  // A 429 carrying billing_error is a quota problem. Calling it a rate limit would tell the
-  // user to wait for something that never clears — the exact misdirection this module prevents.
   const r = classifyError({ status: 429, error: { type: 'billing_error' } })
   assert.equal(r.category, 'quota')
   assert.equal(r.retryable, false)
@@ -109,7 +104,6 @@ test('a named type outranks the status it arrived with', () => {
 })
 
 test('status outranks message text', () => {
-  // Tool output can legitimately contain the words "rate limit"; a real 401 must still win.
   const r = classifyError({ status: 401, message: 'rate limit docs say to slow down' })
   assert.equal(r.category, 'auth')
   assert.equal(r.matchedOn, 'status:401')
@@ -133,8 +127,6 @@ test('provider prose patterns land in the categories a user can act on', () => {
 })
 
 // --- shapes read out of real transcripts under ~/.claude/projects/ -------------------------
-// These four strings are verbatim from `is_error: true` tool_result blocks in this repo's own
-// session log. They are the only error text in this module confirmed against real data.
 
 test('confirmed transcript tool failures classify as tool_error', () => {
   assert.equal(cat('Exit code 144'), 'tool_error')
@@ -143,8 +135,6 @@ test('confirmed transcript tool failures classify as tool_error', () => {
 })
 
 test('a user declining a tool is not counted as a failure', () => {
-  // Verbatim from a real transcript. Folding this into tool_error would report a human's
-  // deliberate decision as a bug in the "37% were rate limits" breakdown.
   const r = classifyError("The user doesn't want to proceed with this tool use. The tool use was rejected")
   assert.equal(r.category, 'user_rejected')
   assert.equal(r.retryable, false)
@@ -157,9 +147,6 @@ test('a transcript tool_result block classifies through its envelope', () => {
 })
 
 test('an is_error block with unrecognised text is still a tool error, at low confidence', () => {
-  // The envelope is a real signal — the harness told us a tool call failed — so this classifies
-  // rather than falling to unknown. The low confidence records that we learned it from the
-  // wrapper, not the content.
   const r = classifyError({ type: 'tool_result', is_error: true, content: 'zork returned a grue' })
   assert.equal(r.category, 'tool_error')
   assert.equal(r.matchedOn, 'shape:is_error')
@@ -181,8 +168,6 @@ test('a refusal stop_reason is trusted over prose', () => {
 })
 
 test('patterns declare which are confirmed against real data and which are speculative', () => {
-  // The module is required to be honest about its evidence; this keeps the tags from rotting
-  // into a uniform "confirmed" as patterns get added.
   const { confirmed, speculative } = patternEvidence()
   assert.ok(confirmed.length >= 4, 'the transcript-verified patterns are labelled')
   assert.ok(speculative.length > 0, 'the doc-derived patterns are not passed off as verified')
@@ -202,7 +187,6 @@ test('summarize ranks categories by count with shares that sum to one', () => {
 })
 
 test('summarize rolls up the retryable share — the headline claim', () => {
-  // "37% of your failed turns were rate limits, not bugs" is exactly this number.
   const s = summarizeErrors([{ status: 429 }, { status: 529 }, { status: 401 }, 'Exit code 2'])
   assert.equal(s.retryable.count, 2)
   assert.equal(s.retryable.share, 0.5)

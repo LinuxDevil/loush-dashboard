@@ -1,24 +1,3 @@
-// server/todos.mjs — /api/todos/* — the date-scoped delivery TODO list.
-//
-// WHAT THIS IS
-// A checkable to-do list whose stages are the delivery pipeline the team actually uses
-// (Draft → In progress → Code review → Design QA → Manual QA → Ready for release → Live), scoped to
-// ONE DAY at a time, and filed under the directory and file the work belongs to.
-//
-// WHY IT IS NOT A SECOND TASK BOARD
-// /api/board is the AGENT's board: tickets there own a worktree, a branch, runs and QA results, and a
-// ticket moves stage because a run finished. This is the HUMAN's list for a given day — typed in one
-// line at a time, or pulled from what the agent actually did to the repo that day. Nothing here spawns
-// a process, and nothing here is derived: a stage changes because a person changed it.
-//
-// THE JOIN TO REAL DATA
-// /api/todos/suggest reads the same transcripts every other screen reads (scanTranscripts + failStats,
-// injected — this module opens no files of its own beyond its store) and answers "which files did the
-// agent edit on THIS day, in THIS repo, and which of them fought back". One click files those as Draft
-// todos already bound to their directory and file. That is what makes the list start from the current
-// data instead of from an empty box.
-//
-// PLANE: B (self-only). Transcript-derived, never keyed by a person, no user/machine parameter.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -28,9 +7,6 @@ import {
   normalizeTodo, applyPatch, partitionByDate, dayStats, groupByPath, suggestFromActivity, normalizeRel,
   rollForward, insights, timeInStages, carriedDays,
 } from '../lib/todos.mjs'
-// The Ticket section already owns "what counts as a JIRA key" — it accepts every form a human pastes,
-// including a full browse URL, and REFUSES a bare number rather than guessing a prefix. Re-implementing
-// that here would be a second, subtly different answer to the same question.
 import { normalizeKey } from './ticket.mjs'
 import { loadEngConfig } from '../lib/eng-config.mjs'
 import { PROJECTS_FILE } from '../lib/paths.mjs'
@@ -64,7 +40,6 @@ function jiraFor(key) {
   return { key, host, url: host ? `https://${host}/browse/${key}` : null }
 }
 
-/** Hosts + known prefixes, so the client can explain what a key will link to before one is typed. */
 function jiraConfig() {
   let cfg
   try { cfg = loadEngConfig(PROJECTS_FILE) } catch { cfg = { jiraHost: null, projects: [] } }
@@ -75,9 +50,6 @@ function jiraConfig() {
 export default function mountTodos(app, deps = {}) {
   const { scanTranscripts, failStats, track, backup } = deps
 
-  // Writes go through `track` when the host provides it, so a todo edit lands in the same versioned
-  // history (and the same rollback UI) as every other write this app makes. The fallback is a plain
-  // write rather than a throw: the list must keep working if it is ever mounted standalone.
   const writeStore = (store, summary) => {
     const body = JSON.stringify(store, null, 2)
     fs.mkdirSync(path.dirname(STORE), { recursive: true })
@@ -86,9 +58,6 @@ export default function mountTodos(app, deps = {}) {
     fs.writeFileSync(STORE, body)
   }
 
-  // Repos we have agent history for — the same derivation the Working Set uses (session cwd, longest
-  // prefix wins so a session started in a subdirectory still attributes to its repo root). This is the
-  // only list of roots the UI offers, so a todo can never be bound to a directory nothing knows about.
   const roots = () => {
     if (typeof scanTranscripts !== 'function') return []
     const all = scanTranscripts()
@@ -107,8 +76,6 @@ export default function mountTodos(app, deps = {}) {
     return [...byRoot.values()].sort((a, b) => b.lastT - a.lastT).slice(0, 20)
   }
 
-  // Every edit + tool error the transcripts hold, flattened once per request. Scoped to a day by the
-  // caller, not here, because the same harvest answers both the suggestion list and the day counts.
   const activity = () => {
     if (typeof scanTranscripts !== 'function') return { edits: [], errors: [] }
     const all = scanTranscripts()
@@ -138,7 +105,6 @@ export default function mountTodos(app, deps = {}) {
     const { todos, moved, changed } = rollForward(store.todos, today)
     store.todos = todos
     store.lastRollover = today
-    // The stamp is written even when nothing moved, so an empty morning does not re-scan all day.
     writeStore(store, changed ? `todos rolled forward to ${today}: ${moved.length}` : `todo roll-over checked for ${today}`)
     if (changed) console.log(`[claude-dashboard] rolled ${moved.length} unfinished todo(s) forward to ${today}`)
     return store
@@ -151,14 +117,9 @@ export default function mountTodos(app, deps = {}) {
       const date = dateOf(req)
       const store = maybeRollover()
       const rootFilter = req.query.root ? String(req.query.root) : null
-      // A repo filter hides todos bound to OTHER repos but never hides unbound ones: a plain "call
-      // the designer" todo belongs to the day, not to a checkout, and must not disappear behind a
-      // scope selector the user set for something else.
       const scoped = rootFilter ? store.todos.filter(t => !t.root || t.root === rootFilter) : store.todos
       const { onDate, carry, later } = partitionByDate(scoped, date)
       const now = Date.now()
-      // Timing travels WITH the row rather than as a second request: every card shows how long it has
-      // been sitting where it is, and a card that has to wait for another round trip shows nothing.
       const withTime = t => ({ ...t, timing: timeInStages(t, now), carriedDays: carriedDays(t, date) })
       res.json({
         date,
@@ -172,16 +133,11 @@ export default function mountTodos(app, deps = {}) {
         stats: dayStats(onDate),
         tree: groupByPath(onDate.map(withTime)),
         roots: roots(),
-        // Days that already hold something — the date strip marks them so the user can find the day
-        // they were working on instead of clicking backwards through empty ones.
         days: [...new Set(store.todos.map(t => t.date))].sort().slice(-90),
       })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
-  // The badge on the floating button. Deliberately its own tiny endpoint: the dock polls this every
-  // 30s from every screen in the app, and it must not drag the whole day payload (or the transcript
-  // scan behind `roots`) along with it.
   app.get('/api/todos/count', (req, res) => {
     try {
       const date = dateOf(req)
@@ -191,8 +147,6 @@ export default function mountTodos(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
-  // What the agent did to this repo on this day, grouped directory → file, with the todos that
-  // already exist for those files marked so nothing gets filed twice.
   app.get('/api/todos/suggest', (req, res) => {
     try {
       const date = dateOf(req)
@@ -229,8 +183,6 @@ export default function mountTodos(app, deps = {}) {
       res.json({
         ...out,
         statuses: STATUSES,
-        // Stated rather than implied: with an empty window the UI must say "nothing in this window",
-        // not draw a flat line that reads as a real zero.
         available: !out.empty,
         detail: out.empty ? `No todos were open or created in ${out.range.label}. Insights are computed from the todos you file here — this window is empty, which is not the same as a week with no work.` : null,
       })
@@ -239,8 +191,6 @@ export default function mountTodos(app, deps = {}) {
 
   // ---------------- write ----------------
 
-  // Roll-over is the one behaviour here that changes data without the user asking, so it is a setting
-  // with a visible toggle rather than a hidden policy.
   app.get('/api/todos/settings', (req, res) => {
     const store = readStore()
     res.json({ ...store.settings, lastRollover: store.lastRollover, jira: jiraConfig() })
@@ -254,8 +204,6 @@ export default function mountTodos(app, deps = {}) {
     } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
   })
 
-  // Roll the day forward on demand — the button next to the toggle, for when you want it now rather
-  // than at the next calendar flip (and the only way to get it at all with the setting off).
   app.post('/api/todos/rollover', (req, res) => {
     try {
       const store = readStore()
@@ -278,8 +226,6 @@ export default function mountTodos(app, deps = {}) {
     } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
   })
 
-  // Bulk file from the suggestion panel. Partial success is reported rather than rolled back — one
-  // unreadable path should not discard the eleven rows the user just ticked.
   app.post('/api/todos/import', (req, res) => {
     try {
       const { root, date, files, status } = req.body || {}
@@ -320,9 +266,6 @@ export default function mountTodos(app, deps = {}) {
       if (req.body?.status !== undefined && !isStatus(req.body.status))
         return res.status(400).json({ error: `status must be one of: ${STATUS_IDS.join(', ')}` })
       const patch = { ...(req.body || {}) }
-      // `jira: "abc-123"` / a pasted browse URL / "" to unlink. Refusing an unparseable key is the
-      // point: normalizeKey will not guess a prefix for a bare number, and a todo linked to the wrong
-      // ticket is worse than one linked to none.
       if (patch.jira !== undefined) {
         const raw = typeof patch.jira === 'object' && patch.jira ? patch.jira.key : patch.jira
         if (!raw) patch.jira = null
@@ -350,7 +293,6 @@ export default function mountTodos(app, deps = {}) {
     } catch (e) { res.status(400).json({ error: String(e.message || e) }) }
   })
 
-  // Move a batch of unfinished todos onto another day — the action on the carry-over strip.
   app.post('/api/todos/move', (req, res) => {
     try {
       const { ids, date } = req.body || {}

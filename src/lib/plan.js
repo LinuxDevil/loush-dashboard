@@ -1,9 +1,4 @@
-// Execution-plan graph schema: parse the JSON DAG a session emits, and lay it out by dependency depth.
-// The schema (one object per step): { step_id, description, dependencies[], expected_skill[],
-// active_rules[], mcp_server, tool_to_call, expected_params{} }. Placeholder values like
-// "TBD based on step 1" are just strings — nothing here special-cases them.
 
-// Return the LAST valid plan found in the chat text blocks (most recent plan wins).
 export function extractPlan(blocks) {
   let plan = null
   for (const b of blocks) {
@@ -12,20 +7,13 @@ export function extractPlan(blocks) {
       try {
         const p = JSON.parse(m[1])
         if (Array.isArray(p) && p.length && p.every(s => s && typeof s === 'object' && 'step_id' in s)) plan = p
-      } catch { /* not a plan block — skip */ }
+      } catch { }
     }
   }
   return plan
 }
 
-// Derive a plan-shaped step list from what a session ACTUALLY did — one step per tool call.
-// `column` = conversation turn (each user message starts a new column); dependencies chain
-// each action to the previous one so the graph reads as one connected thread of execution.
-// Subagent (Task/Agent) actions are attached as `substeps` so you can see what they did.
-// Same schema as extractPlan output, so it renders in the same PlanGraph.
 const CAP = 60
-// Paths are clipped from the HEAD (…/parent/file) — a tail-clip eats the basename, the only part worth
-// reading. Everything else (commands, prompts) reads left-to-right, so those clip from the tail.
 export const shortArg = i => {
   if (i == null || typeof i !== 'object') return String(i ?? '')
   const path = i.file_path || i.path
@@ -52,7 +40,6 @@ export function blocksToPlan(blocks) {
     const isMcp = b.name.startsWith('mcp__')
     const [, mserver] = isMcp ? b.name.split('__') : []
     const isAgent = b.name === 'Task' || b.name === 'Agent'
-    // recurse into the subagent's own actions so each subagent gets its own graph (nested arbitrarily deep)
     const subplan = isAgent && Array.isArray(b.children) ? blocksToPlan(b.children) : null
     const desc = b.name === 'Skill' ? `/${b.input?.skill || 'skill'}`
       : isAgent ? `${b.input?.subagent_type || 'agent'}: ${shortArg(b.input) || 'subagent'} (${subplan ? subplan.length : 0} actions)`
@@ -69,7 +56,7 @@ export function blocksToPlan(blocks) {
       expected_params: b.input && typeof b.input === 'object' ? b.input : {},
       result: b.result ?? null,
       isError: b.isError === true,
-      toolResult: b.toolResult ?? null, // structuredPatch / stdout / stderr / filePath
+      toolResult: b.toolResult ?? null,
       ts: b.ts ?? null,
       usage: b.usage ?? null,
       subplan,
@@ -80,11 +67,6 @@ export function blocksToPlan(blocks) {
   return steps
 }
 
-// Per-turn (column) metrics: tokens and wall-clock seconds.
-// `tokens` counts FRESH tokens only (input + output + cache creation) — the work the turn actually did.
-// cache_read is tracked separately as `cached`: it's the same prompt prefix replayed on every message in the
-// turn, so summing it into the headline would multiply one context by the message count (a 36-action turn
-// reported ~8.9M "tokens" that way). ms spans the step timestamps — null for live streams, which carry none.
 export function turnMetrics(steps) {
   const m = new Map()
   for (const s of steps) {
@@ -102,7 +84,6 @@ export function turnMetrics(steps) {
   return m
 }
 
-// Files touched across the session — reads/writes and +/- line counts from structuredPatch.
 export function filesTouched(steps) {
   const map = new Map()
   const bump = (p, k, n = 1) => { if (!p) return; const e = map.get(p) || { path: p, reads: 0, writes: 0, added: 0, removed: 0 }; e[k] += n; map.set(p, e) }
@@ -118,10 +99,8 @@ export function filesTouched(steps) {
   return [...map.values()].sort((a, b) => (b.writes - a.writes) || (b.reads - a.reads))
 }
 
-// Heuristic diagnosis of a session from its blocks — concrete, actionable findings.
-// level: 'warn' (worth fixing) | 'info' (consider) | 'good' (positive signal).
 export function diagnoseSession(blocks) {
-  const plan = blocksToPlan(blocks) // top-level steps carry tool_to_call, params, result, isError
+  const plan = blocksToPlan(blocks)
   const out = []
   if (!plan.length) return out
   const idsWhere = fn => plan.filter(fn).map(s => s.step_id)
@@ -133,7 +112,6 @@ export function diagnoseSession(blocks) {
   const dupPaths = new Set(reads.filter((f, i) => reads.indexOf(f) !== i))
   if (dupPaths.size) out.push({ level: 'info', title: `${dupPaths.size} file(s) read more than once`, detail: 'Re-reading suggests lost context: ' + [...dupPaths].slice(0, 3).map(f => f.split('/').pop()).join(', '), stepIds: idsWhere(s => s.tool_to_call === 'Read' && dupPaths.has(s.expected_params?.file_path)) })
 
-  // real is_error flag always; regex fallback only on Bash output (an Edit's diff legitimately contains "error")
   const errRe = /\b(error|failed|not found|no such|cannot|exception|traceback|denied)\b/i
   const errIds = idsWhere(s => s.isError || (s.tool_to_call === 'Bash' && errRe.test(String(s.result || ''))))
   if (errIds.length) out.push({ level: errIds.length >= 3 ? 'warn' : 'info', title: `${errIds.length} tool call(s) hit errors`, detail: 'Check for wasted retry loops — the first failure is usually the real signal.', stepIds: errIds })
@@ -160,14 +138,12 @@ export function diagnoseSession(blocks) {
   return out.sort((a, b) => order[a.level] - order[b.level])
 }
 
-// Depth = longest dependency chain to a root. Cycle-safe (a step inside a cycle resolves to 0).
-// Returns { depth: Map<step_id,int>, byId: Map<step_id,step>, maxDepth }.
 export function planLayout(steps) {
   const byId = new Map(steps.map(s => [s.step_id, s]))
   const depth = new Map(), visiting = new Set()
   const compute = id => {
     if (depth.has(id)) return depth.get(id)
-    if (visiting.has(id)) return 0 // cycle guard
+    if (visiting.has(id)) return 0
     visiting.add(id)
     const deps = (byId.get(id)?.dependencies || []).filter(d => byId.has(d))
     const d = deps.length ? 1 + Math.max(...deps.map(compute)) : 0

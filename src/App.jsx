@@ -42,15 +42,7 @@ import TodoDock from './ui/TodoDock.jsx';
 import TodosSection from './sections/TodosSection.jsx';
 import { api, forceFresh } from './lib/api.js';
 
-// THE GAMIFICATION LAYER IS GONE — deleted, not hidden. The topbar carried a "Lv N · 🔥Nd" chip whose
-// level was derived from all-time assistant MESSAGE COUNT, so the fastest way to level up was a long,
-// thrashing, unproductive conversation. A token-count level plus a streak is one product decision away
-// from a per-engineer leaderboard, at which point every number on this screen stops being trusted.
-// src/Gamification.jsx is deleted. Overview's XP bar, streak flame and 10 achievement badges are deleted.
 
-// The four-shell portal is DISSOLVED. Eng folds in as `delivery`. Cursor and Career move out of the
-// topbar (one click from an IC's Overview is precisely what made this app feel like surveillance) into
-// a sidebar-footer "switch dashboard" menu.
 const BASE_SECTIONS = [
   {
     id: 'overview',
@@ -60,9 +52,6 @@ const BASE_SECTIONS = [
     title: 'What needs a human today',
     el: <Overview />,
   },
-  // Directly under Overview because it answers the one question you have before any other when
-  // you open this app: is something running right now, and does it need me. Everything else here
-  // is retrospective; this is the only screen about the present tense.
   {
     id: 'live',
     label: 'Now',
@@ -71,9 +60,6 @@ const BASE_SECTIONS = [
     title: 'Now — sessions running right now',
     el: <LiveSection />,
   },
-  // The only section in this app scoped to your CODE rather than your harness or your JIRA board, and
-  // the only one that needs zero external config. It sits directly under Overview because Overview's
-  // top fold is a "not configured" card for anyone without JIRA + gh, and this is not.
   {
     id: 'workingset',
     label: 'Working Set',
@@ -82,9 +68,6 @@ const BASE_SECTIONS = [
     title: 'Working Set — what the agent did to your code',
     el: <WorkingSet />,
   },
-  // The human's day list, next to the two screens that tell you what the day contained. The floating
-  // dock (TodoDock, mounted in the shell) opens the same list in a drawer from anywhere; this tab is
-  // the full board — same data, room to plan.
   {
     id: 'todos',
     label: 'Todos',
@@ -109,9 +92,6 @@ const BASE_SECTIONS = [
     title: 'Delivery — JIRA, GitHub, CI',
     el: <DeliverySection />,
   },
-  // Delivery answers "how is the board doing"; this answers "I have a key, what do I do with it".
-  // The distinction is load-bearing: everything in Delivery needs a ~65s snapshot, and this needs
-  // nothing but the key. Sits directly after Delivery because it is the same subject, one level in.
   {
     id: 'ticket',
     label: 'Ticket',
@@ -151,16 +131,11 @@ const BASE_SECTIONS = [
           { label: 'Quality', el: <QualitySection /> },
           { label: 'Bugs', el: <BugsSection /> },
           { label: 'Reliability', el: <ReliabilitySection /> },
-          // /api/team has been served since PR #3 with nothing reading it. It belongs here
-          // rather than at top level: an agent team is a way of doing agent work, which is
-          // what this hub already collects.
           { label: 'Agent Teams', el: <TeamsSection /> },
         ]}
       />
     ),
   },
-  // ROI ledger leads. The Inventory table and its frontmatter linter are demoted OFF the landing page
-  // to the end of this hub, reframed as what they are: an authoring aid, not a metric.
   {
     id: 'capabilities',
     label: 'Capabilities',
@@ -183,12 +158,6 @@ const BASE_SECTIONS = [
       />
     ),
   },
-  // Harness had grown to ten children — a junk drawer nobody scans past the third item, with
-  // Governance (which now owns the project access matrix) buried two clicks deep. Split by the
-  // question each screen answers: Harness keeps "how is my harness set up and what did it do",
-  // Governance is promoted to top level because it is the control surface, and the two items
-  // that were only ever there by adjacency (Library, MCP) move to Capabilities where the rest of
-  // the installed-things live.
   {
     id: 'harness',
     label: 'Harness',
@@ -208,8 +177,6 @@ const BASE_SECTIONS = [
       />
     ),
   },
-  // Top level, not a hub child: this is where approvals, the audit log and the per-project rwx
-  // access matrix live. A security surface that takes two clicks to find is one that goes unread.
   {
     id: 'governance',
     label: 'Governance',
@@ -218,13 +185,10 @@ const BASE_SECTIONS = [
     title: 'Governance — versions, approvals, access & audit',
     el: <GovernanceSection />,
   },
-  // Prompt Quality joins Authoring (from main). Constitution and Figma Capture do NOT return as
-  // top-level entries — they moved into COMPANY_SECTION below, behind the Company_Tools flag.
-  // The Memory browse UI stays deleted (server/memory.mjs is kept; Overview's recall tile uses it).
   {
     id: 'authoring',
     label: 'Authoring',
-    icon: '✍',
+    icon: '✍︎',
     kicker: 'Authoring',
     title: 'Authoring — prompt studio & prompt quality',
     el: (
@@ -238,8 +202,6 @@ const BASE_SECTIONS = [
   },
   { id: 'hooks', label: 'Hooks', icon: '⑂', kicker: 'Automation', title: 'Hooks', el: <HooksSection /> },
   { id: 'artifacts', label: 'Artifacts', icon: '⬡', kicker: 'Output', title: 'Artifacts', el: <ArtifactsSection /> },
-  // Everything org-specific is user config now, so there has to be somewhere to enter it. Credentials
-  // here are write-only: no endpoint returns a stored token, so the fields are always blank on load.
   {
     id: 'setup',
     label: 'Setup',
@@ -250,10 +212,6 @@ const BASE_SECTIONS = [
   },
 ];
 
-// Org-specific bundle. These were deleted outright once — wrongly, because for the org that HAS a
-// `.wakeel/constitution/` knowledge base and that design-system catalog they are load-bearing. They
-// are now behind `companyTools` in projects.json, gated at MOUNT TIME on the server too, so with the
-// flag off the routes do not exist rather than 404-ing from a nav entry that should not be there.
 const COMPANY_SECTION = {
   id: 'company',
   label: 'Company tools',
@@ -265,24 +223,33 @@ const COMPANY_SECTION = {
       items={[
         { label: 'Constitution', el: <ConstitutionSection /> },
         { label: 'Figma Capture', el: <FigmaCaptureSection /> },
-        // lib/design-map.mjs had neither an endpoint nor a screen since PR #4; it sits here
-        // because it answers the question next to Capture's — which component in code is a
-        // given frame supposed to be.
         { label: 'Design Map', el: <DesignMapSection /> },
       ]}
     />
   ),
 };
+const NAV_GROUPS = [
+  { label: 'WORK', ids: ['overview', 'live', 'workingset', 'todos', 'inbox', 'delivery', 'ticket', 'projects', 'chat', 'workflows'] },
+  { label: 'INTELLIGENCE', ids: ['capabilities', 'harness', 'authoring', 'hooks', 'artifacts'] },
+  { label: 'ADMIN', ids: ['governance', 'setup', 'company'] },
+];
+const groupSections = (sections) => {
+  const claimed = new Set(NAV_GROUPS.flatMap((g) => g.ids));
+  return NAV_GROUPS.map((g, i) => ({
+    label: g.label,
+    items: [
+      ...g.ids.map((id) => sections.find((s) => s.id === id)).filter(Boolean),
+      ...(i === 0 ? sections.filter((s) => !claimed.has(s.id)) : []),
+    ],
+  })).filter((g) => g.items.length);
+};
+
 const sectionsFor = (features) => {
   const out = [...BASE_SECTIONS];
-  // The Engineering flag no longer adds a nav entry: the quality metrics render as a tab inside
-  // Delivery, next to the restored Engineering dashboard, so there is one place for this subject.
   if (features?.companyTools) out.push(COMPANY_SECTION);
   return out;
 };
 
-// There is one shell now. The Cursor and Career dashboards were separate SPAs behind this menu;
-// both are deleted, so the switcher has nothing to switch to. What remains is the harness-health strip.
 function SidebarFoot() {
   const [h, setH] = useState(null);
   const [alerts, setAlerts] = useState([]);
@@ -323,9 +290,6 @@ function SidebarFoot() {
   );
 }
 
-// Theme lives on <html data-theme>, which is what the token block in styles.css keys off. The initial
-// value is set by an inline script in index.html so there is no flash of the wrong palette; this hook
-// only owns the toggle and the persistence.
 function useTheme() {
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark');
   useEffect(() => {
@@ -333,7 +297,6 @@ function useTheme() {
     try {
       localStorage.setItem('theme', theme);
     } catch {
-      /* private mode — session-only theme is fine */
     }
   }, [theme]);
   return [theme, () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))];
@@ -342,9 +305,6 @@ function useTheme() {
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [navOpen, setNavOpen] = useState(false);
-  // ?dash=eng no longer opens a separate shell — Eng IS the Delivery section now. The Eng panels write
-  // dash=eng into the query string themselves (src/eng/urlState.js), so an old link, or any link copied
-  // out of the folded-in dashboard, lands on Delivery rather than on a shell that no longer exists.
   const initial = new URLSearchParams(window.location.search).get('dash') || 'claude';
   const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview');
   const [inboxCount, setInboxCount] = useState(0);
@@ -352,8 +312,6 @@ export default function App() {
   const [tick, setTick] = useState(0);
   const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true });
   const [toasts, setToasts] = useState([]);
-  // Feature flags decide which nav entries exist at all. The server gates the same flag at mount
-  // time, so this is presentation only — a stale client cannot reach a disabled route.
   const [features, setFeatures] = useState({});
   useEffect(() => {
     api
@@ -403,7 +361,6 @@ export default function App() {
   useEffect(() => {
     const navChat = () => nav('chat');
     window.addEventListener('nav-chat', navChat);
-    // inbox badge + desktop notifications for new error/warning items (277 real items, not harness trivia)
     const seen = new Set();
     let first = true;
     const poll = () =>
@@ -448,25 +405,30 @@ export default function App() {
           <div className="brand-name">Loush</div>
           <span className="brand-beta">BETA</span>
         </div>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            className={section === s.id ? 'active' : ''}
-            title={s.label}
-            onClick={() => {
-              nav(s.id);
-              setNavOpen(false);
-            }}
-          >
-            <span className="nav-icon">{s.icon}</span> {s.label}
-            {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
-          </button>
+        {groupSections(SECTIONS).map((g) => (
+          <div className="nav-group" key={g.label}>
+            <div className="nav-group-label">{g.label}</div>
+            {g.items.map((s) => (
+              <button
+                key={s.id}
+                className={section === s.id ? 'active' : ''}
+                title={s.label}
+                onClick={() => {
+                  nav(s.id);
+                  setNavOpen(false);
+                }}
+              >
+                <span className="nav-dot" />
+                <span className="nav-icon">{s.icon}</span> {s.label}
+                {s.id === 'inbox' && inboxCount > 0 && <span className="nav-badge">{inboxCount}</span>}
+              </button>
+            ))}
+          </div>
         ))}
         <SidebarFoot />
       </nav>
       <main className="content">
-        {/* 48px bar: breadcrumb left, status + controls right. The section title is the breadcrumb
-            leaf — a second heading row under it was 60px of chrome saying the same thing twice. */}
+        {}
         <header className="topbar">
           <button className="icon-btn nav-toggle" aria-label="menu" onClick={() => setNavOpen((o) => !o)}>
             ☰
@@ -493,6 +455,7 @@ export default function App() {
             >
               {theme === 'dark' ? '☀' : '☾'}
             </button>
+            <div className="div" />
             <div className="avatar">AM</div>
           </div>
         </header>
@@ -507,8 +470,7 @@ export default function App() {
         ))}
       </main>
       <Palette sections={SECTIONS} onNav={nav} />
-      {/* Floating on every screen: capture and tick off without leaving what you were reading.
-          "Open full board" hands off to the Todos tab, which is the same list with room to plan. */}
+      {}
       <TodoDock onNav={nav} />
       {toasts.length > 0 && (
         <div
@@ -534,9 +496,9 @@ export default function App() {
                   background: 'var(--bg-elevated)',
                   border: '1px solid var(--border-default)',
                   borderLeft: `2px solid ${c}`,
-                  borderRadius: 6,
-                  padding: '10px 12px',
-                  font: '400 11px var(--mono)',
+                  borderRadius: 10,
+                  padding: '12px 14px',
+                  font: '400 11.5px var(--mono)',
                   color: 'var(--text-primary)',
                   boxShadow: 'var(--shadow-md)',
                 }}

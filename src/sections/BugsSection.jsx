@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { critical: 'var(--red)', high: 'var(--accent-light)', medium: 'var(--amber)', low: 'var(--text-secondary)' }
 const STATUS = { open: 'var(--red)', 'in-session': 'var(--blue)', fixed: 'var(--green)', closed: 'var(--text-tertiary)' }
 const age = t => { const d = Math.floor((Date.now() - t) / 86400_000); return d === 0 ? 'today' : d + 'd' }
@@ -68,12 +68,6 @@ function Bisect({ bug, onRefresh }) {
   )
 }
 
-// Findings from the claude-code-security-review action. Kept next to Bugs because that is what
-// they are, and separate from JIRA bugs because their provenance is different: these are a
-// scanner's opinion, not something a human filed.
-//
-// Takes a path because the artifact has a 7-day retention on GitHub — fetching it is a CI wiring
-// decision, and guessing at one here would produce a screen that silently shows nothing.
 function SecurityFindings() {
   const [file, setFile] = useState('')
   const [d, setD] = useState(null)
@@ -97,9 +91,7 @@ function SecurityFindings() {
       {err && <div style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>}
       {d && (
         <>
-          {/* The single most important thing on this screen. When the upstream filter errors it
-              keeps findings UNFILTERED and only admits it in a justification string — so a
-              filtered count can silently include unfiltered results. Badged, not buried. */}
+          {}
           {d.filterFailedOpen && (
             <div style={{ font: '400 11px var(--mono)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 6, padding: 8, margin: '8px 0' }}>
               ⚠ The upstream filter failed open — findings below were NOT filtered as the summary claims.
@@ -108,7 +100,7 @@ function SecurityFindings() {
           )}
           <div style={{ display: 'flex', gap: 16, font: '400 11px var(--mono)', flexWrap: 'wrap', marginBottom: 8 }}>
             <span>{(d.findings || []).length} kept</span>
-            {/* null, not 0 — an absent stat is not a measured zero. */}
+            {}
             <span style={{ color: 'var(--text-tertiary)' }}>hard-excluded: {d.filterStats?.hardExcluded ?? '—'}</span>
             <span style={{ color: 'var(--text-tertiary)' }}>claude-excluded: {d.filterStats?.claudeExcluded ?? '—'}</span>
             <span style={{ color: 'var(--text-tertiary)' }}>avg confidence: {d.filterStats?.averageConfidence ?? '—'}</span>
@@ -143,7 +135,7 @@ export default function BugsSection() {
   const [fProj, setFProj] = useState('')
   const [fStatus, setFStatus] = useState('')
   const load = () => api.get('/api/bugs').then(setBugs).catch(() => {})
-  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, []) // pause while tab hidden
+  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, [])
   if (!bugs) return <Skeleton tiles={0} rows={6} />
 
   const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => toast(e.message, 'error'))
@@ -210,8 +202,7 @@ export default function BugsSection() {
           )}
         </div>
       ))}
-      {/* "no bugs recorded" is not "no bugs". A green tick over a store that has never been written
-          is the same failure as a dashboard reporting 0% because it could not read its source. */}
+      {}
       {shown.length === 0 && (bugs.length === 0
         ? <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-secondary)' }}>no bugs have been recorded here yet — this is an empty log, not a clean bill of health</div>
         : <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--green)' }}>✓ none of the {bugs.length} recorded bug{bugs.length === 1 ? '' : 's'} match this filter</div>)}

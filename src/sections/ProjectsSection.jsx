@@ -3,11 +3,12 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { usePager } from '../ui/Pager.jsx'
 import { Stagger, CountUp, Draw } from '../ui/anim.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const LANG_COLOR = { TypeScript: 'var(--blue)', JavaScript: 'var(--amber)', Python: 'var(--green)', Go: 'var(--blue)', Rust: 'var(--red)', Ruby: 'var(--red)', CSS: 'var(--violet)', Markdown: 'var(--text-secondary)', Shell: 'var(--green)', Vue: 'var(--green)', PHP: 'var(--violet)', Java: 'var(--accent-light)', Kotlin: 'var(--violet)', Swift: 'var(--accent-light)', Dart: 'var(--blue)' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
@@ -19,9 +20,6 @@ const sparkPts = (arr, h) => {
 
 function ResChips({ p }) {
   const groups = [['skills', p.skills], ['commands', p.commands], ['agents', p.agents], ['mcp', p.mcp]]
-  // How this project's tests run, detected from markers on disk. Rendered even when nothing was
-  // found, because "we could not tell" is a different answer from "it has no tests" and the
-  // detector deliberately declines rather than emitting a command that would vacuously pass.
   const test = p.test
   if (!groups.some(([, v]) => v.length) && !test) return null
   return (
@@ -46,7 +44,6 @@ function ResChips({ p }) {
   )
 }
 
-// feature 18: new-project harness scaffolder — dry-run preview, then real writes via /api/scaffold
 function Scaffolder({ projects, onClose, onDone }) {
   const [dir, setDir] = useState('')
   const [profiles, setProfiles] = useState([])
@@ -117,9 +114,6 @@ function Scaffolder({ projects, onClose, onDone }) {
   )
 }
 
-// Which worktree each agent session actually ran in. This dashboard already records every
-// session's cwd, so it can answer that; a worktree cannot report it from inside itself, which is
-// why the tool this idea came from never could.
 function Worktrees({ repo }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
@@ -128,8 +122,6 @@ function Worktrees({ repo }) {
   if (err) return <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>
   if (!d) return null
   if (d.status !== 'ok') {
-    // "we could not look" is reported as itself. An empty list here would read as "this repo has
-    // no worktrees", which is a different and possibly false claim.
     return (
       <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)' }}>
         <b style={{ color: 'var(--text-primary)' }}>Worktrees</b> — could not determine ({d.code}): {d.reason}
@@ -172,11 +164,10 @@ export default function ProjectsSection() {
   const [scaffolding, setScaffolding] = useState(false)
   const { slice, pager } = usePager(projects || [], 9)
   const load = () => api.get('/api/projects').then(setProjects)
-  // The current project, or the first known one — the worktree panel needs a repo to ask about.
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
-    const open = () => setScaffolding(true) // palette action
+    const open = () => setScaffolding(true)
     window.addEventListener('open-scaffolder', open)
     return () => { clearInterval(t); window.removeEventListener('open-scaffolder', open) }
   }, [])
@@ -213,7 +204,7 @@ export default function ProjectsSection() {
       </div>
       <Stagger className="proj-grid" step={40} max={360}>
         {slice.map((p, i) => {
-          const color = PROJ_COLORS[i % 6]
+          const color = PROJ_COLORS[i % PROJ_COLORS.length]
           const live = p.running + p.runningAgents > 0
           return (
             <div key={p.path} className="proj-card" style={{ '--pc': color }}>
@@ -247,7 +238,7 @@ export default function ProjectsSection() {
               <ResChips p={p} />
               <div className="proj-foot">
                 last active {p.usage ? ago(p.usage.last) : 'never'}
-                {p.usage?.topModel ? ` · mostly ${p.usage.topModel.replace(/^claude-/, '')}` : ''}
+                {p.usage?.topModel ? ` · mostly ${modelName(p.usage.topModel)}` : ''}
               </div>
             </div>
           )

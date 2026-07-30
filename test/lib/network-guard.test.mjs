@@ -12,9 +12,6 @@ import {
   NetworkGuardError,
 } from '../../lib/network-guard.mjs'
 
-// Nothing in this file opens a real socket. Instead we stand a spy in for
-// net.Socket.prototype.connect before installing the guard, so the guard's "original" is the
-// spy: we can see whether a connection would have been attempted without attempting one.
 const REAL_CONNECT = net.Socket.prototype.connect
 
 const withSpy = (fn, opts = {}) => {
@@ -30,7 +27,6 @@ const withSpy = (fn, opts = {}) => {
     return fn({ calls, spy, handle, socket: Object.create(net.Socket.prototype) })
   } finally {
     uninstallNetworkGuard()
-    // The spy was what the guard restored; put the genuine method back for everyone else.
     assert.equal(net.Socket.prototype.connect, spy, 'uninstall must restore the function it replaced')
     net.Socket.prototype.connect = REAL_CONNECT
     clearViolations()
@@ -55,7 +51,6 @@ test('loopback recognition survives the shapes hosts actually arrive in', () => 
 })
 
 test('lookalike hosts are not loopback', () => {
-  // The dangerous cases are the ones that read as local to a human skimming a log.
   assert.equal(isLoopback('127.0.0.1.evil.com'), false)
   assert.equal(isLoopback('localhost.evil.com'), false)
   assert.equal(isLoopback('notlocalhost'), false)
@@ -66,7 +61,6 @@ test('lookalike hosts are not loopback', () => {
 })
 
 test('an unparseable host is treated as non-loopback (fail closed)', () => {
-  // "Unknown is a value": we must never launder input we could not read into "probably local".
   assert.equal(isLoopback(undefined), false)
   assert.equal(isLoopback(null), false)
   assert.equal(isLoopback(''), false)
@@ -132,7 +126,6 @@ test('a violation records host, port, time and a stack to investigate with', () 
     assert.equal(v.port, 443)
     assert.ok(!Number.isNaN(Date.parse(v.at)), 'at is an ISO timestamp')
     assert.equal(typeof v.stack, 'string')
-    // Without a frame pointing back at the caller, "something phoned home" is not actionable.
     assert.ok(v.stack.includes('network-guard.test'), 'the stack leads back to the call site')
   })
 })
@@ -217,8 +210,6 @@ test('a guard removed mid-flight leaves no live patch behind', () => {
     installNetworkGuard({ mode: 'block' })
     const patched = net.Socket.prototype.connect
     uninstallNetworkGuard()
-    // A stray reference to the patched function can outlive uninstall; it must still behave
-    // rather than dereference torn-down state.
     assert.doesNotThrow(() => patched.call(Object.create(net.Socket.prototype), { host: '127.0.0.1', port: 1 }))
   } finally {
     net.Socket.prototype.connect = REAL_CONNECT

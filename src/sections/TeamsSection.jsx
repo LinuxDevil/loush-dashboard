@@ -3,16 +3,9 @@ import { api, fmtDate } from '../lib/api.js'
 
 const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const POLL_MS = 5000
 
-// /api/team has existed since PR #3 with nothing reading it. It reports multi-agent team state:
-// members with their model, status and current task, plus the task graph with its blocking edges.
-//
-// Member status is a heuristic — the server says so in its own comment, because no status file
-// exists and it is inferred from transcript freshness, task claims and idle pings. That caveat is
-// repeated on screen rather than left in the source, since a status that looks authoritative and
-// is actually inferred is the kind of number people build decisions on.
 const STATUS = {
   working: { color: 'var(--green)', gloss: 'transcript changed recently, or holds an in-progress task' },
   planning: { color: 'var(--accent-light)', gloss: 'plan mode required and a plan message was seen' },
@@ -74,8 +67,7 @@ export default function TeamsSection() {
                 <span style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)' }}>{m.name}</span>
                 {m.isLead && <span className="chip" title="team lead">lead</span>}
                 <span style={{ color: 'var(--text-tertiary)' }}>{m.model || 'model unknown'}</span>
-                {/* permissionMode is shown because it decides what this agent can do without
-                    being asked — the same reason the Now board badges it. */}
+                {}
                 {m.permissionMode && m.permissionMode !== 'default' && <span className="chip">{m.permissionMode}</span>}
                 {m.currentTask && <span style={{ color: 'var(--text-secondary)' }}>▸ {m.currentTask}</span>}
                 {m.error && <span style={{ color: 'var(--red)' }} title={m.error}>error: {String(m.error).slice(0, 60)}</span>}
@@ -99,8 +91,6 @@ export default function TeamsSection() {
         </div>
         {tasks.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no tasks recorded for this team</div>}
         {tasks.map(t => {
-          // A task is only actually startable when everything it waits on is done. Showing the
-          // unmet blockers by name is the difference between a list and a plan.
           const unmet = (t.blockedBy || []).filter(id => byId[String(id)] && byId[String(id)].status !== 'completed')
           return (
             <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', font: `400 11px ${MONO}`, flexWrap: 'wrap' }}>

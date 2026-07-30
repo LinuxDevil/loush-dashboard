@@ -2,9 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 
 // ---------- Customize — one place to manage skills / commands / subagents / rules / mcp / hooks / plugins ----------
-// Presentation only: the inventory + real enable/disable live behind /api/customize (server/index.mjs). A toggle
-// here renames the file / edits the config that Claude actually reads, so "off" means Claude skips it — never
-// a cosmetic flag. The existing Capabilities → Skills/Commands/Agents editors stay for deep editing.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const CATS = [
@@ -74,7 +71,7 @@ export default function CustomizeSection() {
   const [err, setErr] = useState('')
   const [pill, setPill] = useState('all')
   const [q, setQ] = useState('')
-  const [busy, setBusy] = useState(null) // id being toggled
+  const [busy, setBusy] = useState(null)
   const [banner, setBanner] = useState(() => localStorage.getItem('customize-banner') !== 'off')
 
   const load = () => api.get('/api/customize').then(d => { setData(d); setErr('') }).catch(e => setErr(e.message))
@@ -88,7 +85,7 @@ export default function CustomizeSection() {
     return (data?.[kind] || []).filter(i => !ql || (i.name + ' ' + (i.description || '')).toLowerCase().includes(ql))
       .sort((a, b) => a.name.localeCompare(b.name))
   }
-  const groupsOf = items => { // group by item.group, preserving first-seen order
+  const groupsOf = items => {
     const g = new Map()
     for (const i of items) { const k = i.group || 'other'; (g.get(k) || g.set(k, []).get(k)).push(i) }
     return [...g.entries()]
@@ -97,13 +94,12 @@ export default function CustomizeSection() {
   const toggle = async item => {
     const id = idOf(item), next = !item.enabled
     setBusy(id)
-    // optimistic
     setData(d => ({ ...d, [item.kind]: d[item.kind].map(x => idOf(x) === id ? { ...x, enabled: next } : x) }))
     try {
       const r = await api.post('/api/customize/toggle', { kind: item.kind, scope: item.scope, name: item.name, enable: next, ref: item.ref })
       if (r.error) throw new Error(r.error)
       toast(`${item.name} ${next ? 'enabled' : 'disabled'}`, 'success')
-      load() // re-read truth (rename may have changed the backing path)
+      load()
     } catch (e) {
       setData(d => ({ ...d, [item.kind]: d[item.kind].map(x => idOf(x) === id ? { ...x, enabled: !next } : x) }))
       toast('toggle failed: ' + e.message, 'error')
@@ -123,7 +119,7 @@ export default function CustomizeSection() {
   return (
     <div style={{ ...wrap, display: 'flex', flexDirection: 'column', gap: 16 }}>
       {banner && (
-        <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 6, border: '1px solid var(--blue)', background: 'linear-gradient(160deg,var(--bg-surface),var(--bg-inset))' }}>
+        <div style={{ display: 'flex', gap: 12, padding: '14px 16px', borderRadius: 6, border: '1px solid var(--blue)', background: 'var(--bg-surface)' }}>
           <span style={{ fontSize: 16 }}>✦</span>
           <div style={{ flex: 1 }}>
             <div style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>Customize</div>
@@ -163,7 +159,7 @@ export default function CustomizeSection() {
               <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>· {items.filter(i => i.enabled).length} on</span>
             </div>
             {groupsOf(items).map(([group, rows]) => (
-              <div key={group} style={{ borderRadius: 6, border: '1px solid var(--blue)', background: 'linear-gradient(160deg,var(--bg-surface),var(--bg-inset))', overflow: 'hidden' }}>
+              <div key={group} style={{ borderRadius: 6, border: '1px solid var(--blue)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
                 {groupsOf(items).length > 1 && <div style={{ font: `600 9px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)', padding: '8px 14px 2px' }}>{group} · {rows.length}</div>}
                 {rows.map(i => <Card key={idOf(i)} item={i} busy={busy === idOf(i)} onToggle={toggle} onDelete={del} onCopy={copy} />)}
               </div>

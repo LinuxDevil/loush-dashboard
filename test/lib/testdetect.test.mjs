@@ -5,8 +5,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { DETECTORS, CONFIDENCE_RANK, detectTestCommand, detectAll } from '../../lib/testdetect.mjs'
 
-// Same temp-tree fixture pattern as flat-kind-walk.test.mjs: never write fixtures into the repo,
-// always clean up in `finally`. Keys are relative paths; a key ending in `/` makes a directory.
 const withTree = (files, fn) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'testdetect-'))
   try {
@@ -44,8 +42,6 @@ test('the table is inspectable data: every entry is renderable', () => {
 })
 
 test('a directory with no recognised marker is null, never a guess', () => {
-  // The design rule this guards: "unknown is a value". Emitting `make test` for an arbitrary
-  // directory produces a failing command that the caller reports as a failing test suite.
   withTree({ 'README.md': '# hi', 'src/main.txt': 'x' }, root => {
     assert.equal(detectTestCommand(root), null)
     assert.deepEqual(detectAll(root), [])
@@ -244,8 +240,6 @@ test('swift needs only its manifest, and Package.resolved corroborates it', () =
 })
 
 test('a polyglot repo reports every ecosystem, not just the winner', () => {
-  // The common shape this guards: a JS frontend beside a Go backend. Returning only one of them
-  // silently hides half the test suite from whoever asked "how do I test this?".
   withTree({
     'package.json': pkg({ scripts: { test: 'vitest run' } }),
     'go.mod': 'module example.com/x',
@@ -255,16 +249,12 @@ test('a polyglot repo reports every ecosystem, not just the winner', () => {
     const all = detectAll(root)
     assert.deepEqual(all.map(m => m.id).sort(), ['go', 'make', 'npm'])
     assert.ok(all.every(m => m.confidence === 'high'))
-    // All three are high confidence, so the tie breaks on priority: Make is the weakest signal
-    // about a project's identity and must never outrank a language-specific detector.
     assert.equal(all.at(-1).id, 'make')
     assert.equal(all[0].id, 'go', 'lowest priority number wins at equal confidence')
   })
 })
 
 test('confidence outranks priority when ordering matches', () => {
-  // A bare package.json (no test script -> low) must not beat a corroborated Go module, even
-  // though npm has the stronger priority.
   withTree({ 'package.json': pkg({ name: 'x' }), 'go.mod': 'module x', 'go.sum': '' }, root => {
     const all = detectAll(root)
     assert.equal(all[0].id, 'go')
@@ -285,8 +275,6 @@ test('every match reports the marker path that triggered it', () => {
 })
 
 test('detection is shallow: markers nested in subdirectories do not answer for the root', () => {
-  // Deliberate — a monorepo's per-package markers belong to per-package calls, and an unbounded
-  // crawl is not what a caller asking about one directory agreed to pay for.
   withTree({ 'packages/api/go.mod': 'module x', 'README.md': '' }, root => {
     assert.equal(detectTestCommand(root), null)
     assert.equal(detectTestCommand(path.join(root, 'packages/api')).id, 'go')

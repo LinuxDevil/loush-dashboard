@@ -4,10 +4,6 @@ import { MIN_N, fx } from './stats.js'
 import { metricsFor, buildRadars } from './memberMetrics.mjs'
 
 // ---------- Per-member insight cards + charts (Members tab) ----------
-// The pure aggregation + relative-radar maths live in ./memberMetrics.mjs (tested under node). This file is
-// only the visuals. House rule holds: every number is a JIRA ticket or GitHub PR the subject can open about
-// themselves, scoped to the selected window; the radar is RELATIVE (rank inside this team), flagged low-
-// confidence below MIN_N shipped tickets; cards are alphabetical because a sort order is a scoreboard.
 export { metricsFor, buildRadars } from './memberMetrics.mjs'
 
 // ---------- Radar (hexagon) — 0.5 ring = the median teammate ----------
@@ -39,7 +35,6 @@ function Radar({ axes, size = 210, lowN }) {
   )
 }
 
-// tiny weekly throughput bars over the window — the trend, not a single number
 function Throughput({ shipped, reopened, win }) {
   const bars = useMemo(() => {
     const WK = 7 * 86400000, out = []
@@ -56,14 +51,13 @@ function Throughput({ shipped, reopened, win }) {
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
       {bars.map((b, i) => (
         <div key={i} title={`${b.n} shipped${b.bad ? ` · ${b.bad} reworked` : ''}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-          <div style={{ height: (b.n / max) * 100 + '%', minHeight: b.n ? 3 : 0, borderRadius: 3, background: b.bad ? `linear-gradient(180deg,${GOLD},${RED})` : `linear-gradient(180deg,${GREEN},${BB})` }} />
+          <div style={{ height: (b.n / max) * 100 + '%', minHeight: b.n ? 3 : 0, borderRadius: 3, background: b.bad ? RED : GREEN }} />
         </div>
       ))}
     </div>
   )
 }
 
-// one rule-based recommended next move per sprint ticket — same rules the ticket detail uses, distilled
 function recFor(i) {
   if (i.rec?.atRisk) return { c: RED, t: `Overdue in ${i.status} — move to ${i.rec.next} now (${fx(Math.abs(i.rec.remaining))}d over budget)` }
   if (i.active && !(i.prNums || []).length) return { c: BB, t: 'No PR yet — open one to unblock review' }
@@ -75,19 +69,18 @@ function recFor(i) {
 
 const Tile = ({ label, v, c = HI, sub }) => (
   <div style={{ minWidth: 0 }}>
-    <div style={{ font: `700 16px ${HEAD}`, color: c }}>{v}</div>
+    <div style={{ font: `600 16px ${MONO}`, color: c }}>{v}</div>
     <div style={{ font: `600 8px ${MONO}`, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</div>
     {sub && <div style={{ font: `400 9px ${MONO}`, color: DIM }}>{sub}</div>}
   </div>
 )
 
-// compact card in the grid — the who-owns-what glance
 export function MemberCard({ name, m, radar, active, onClick }) {
   const top = m.focus[0] || m.inFlight[0]
   return (
     <button onClick={onClick} style={{ textAlign: 'left', cursor: 'pointer', padding: 14, border: `1px solid ${active ? 'var(--violet-bg)' : 'var(--bg-surface-active)'}`, borderRadius: 8, background: active ? 'var(--violet-bg)' : 'var(--bg-surface)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 11 }}>
-        <div style={{ width: 30, height: 30, borderRadius: 6, background: 'linear-gradient(135deg,var(--accent-light),var(--text-secondary))', color: 'var(--bg-surface-active)', display: 'grid', placeItems: 'center', font: `700 11px ${HEAD}`, flexShrink: 0 }}>{initials(name)}</div>
+        <div style={{ width: 30, height: 30, borderRadius: 6, background: 'var(--bg-surface-active)', color: 'var(--bg-surface-active)', display: 'grid', placeItems: 'center', font: `700 11px ${HEAD}`, flexShrink: 0 }}>{initials(name)}</div>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: `600 13px ${BODY}`, color: HI, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
           <div style={{ font: `400 10px ${MONO}`, color: DIM }}>{m.shipped.length} shipped · {m.pts} pts</div>
@@ -107,7 +100,6 @@ export function MemberCard({ name, m, radar, active, onClick }) {
   )
 }
 
-// the expanded detail: radar (strengths/weaknesses) + trend + this-sprint recommendations
 export function MemberDetail({ name, m, radar, win }) {
   const strong = radar.filter(a => a.pct != null && a.pct >= 0.66).sort((a, b) => b.pct - a.pct)
   const weak = radar.filter(a => a.pct != null && a.pct <= 0.34).sort((a, b) => a.pct - b.pct)

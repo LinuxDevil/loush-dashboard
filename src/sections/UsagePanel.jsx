@@ -1,14 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import { modelName } from '../lib/modelName.js'
 
-// DEMOTED off the landing page (all four personas):
-//   · the 18-week output-token heatmap — a GitHub-green-squares clone measuring TOKEN VOLUME, i.e. a proxy
-//     for "was he typing". It is the first panel anyone would screenshot to judge someone. It survives here,
-//     on the harness page, where it is what it actually is: a record of your own machine's activity.
-//   · tool-usage-all-time bars and most-used-models bars — mildly interesting, never a landing-page question.
 const A = 'var(--accent)'
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 
 function Bars({ data, unit }) {
@@ -18,7 +14,7 @@ function Bars({ data, unit }) {
       {data.map(d => (
         <div className="bar-row" key={d.label} title={`${d.label}: ${fmtTok(d.value)} ${unit}`}>
           <div className="bar-label">{d.label}</div>
-          <div className="bar-track"><div className="bar-fill" style={{ width: (d.value / max) * 100 + '%', background: `linear-gradient(90deg, ${d.color || A}, ${d.color || A}cc)` }} /></div>
+          <div className="bar-track"><div className="bar-fill" style={{ width: (d.value / max) * 100 + '%', background: (d.color || A) }} /></div>
           <div className="bar-value">{fmtTok(d.value)}</div>
         </div>
       ))}
@@ -37,7 +33,7 @@ export default function UsagePanel() {
   }, [budget])
   if (!usage) return err ? <p className="small">{err}</p> : <Skeleton tiles={0} rows={8} />
   const max = Math.max(...usage.daily.map(d => d.out), 1)
-  const models = Object.entries(usage.perModel).map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5)
+  const models = Object.entries(usage.perModel).map(([m, v], i) => ({ label: modelName(m), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5)
   const GRADE_COLOR = { A: 'var(--green)', B: 'var(--green)', C: 'var(--accent-light)', D: 'var(--amber)', F: 'var(--red)' }
   const reg = usage.regression
   return (
@@ -46,8 +42,7 @@ export default function UsagePanel() {
         <div className="panel" style={{ marginBottom: 0 }}>
           <div className="panel-head"><h3>Harness health <span className="muted">usage efficiency, not config completeness — see Harness ▸ Config for that</span></h3></div>
           <div className="kpi-grid" style={{ margin: '0 16px 12px' }}>
-            {/* null grade is "not measured", never a letter. Below MIN_TURNS the factors are noise:
-                one turn scored 0/F and a single good day flipped it to A. */}
+            {}
             <div className="kpi"><div className="kpi-label"><span>score</span></div>
               <div className="kpi-value" style={{ color: usage.health.grade ? GRADE_COLOR[usage.health.grade] : 'var(--text-secondary)' }}>
                 {usage.health.grade

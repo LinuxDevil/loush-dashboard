@@ -1,11 +1,3 @@
-// Access policy store and routes. The matrix itself lives in lib/access.mjs; this owns where it
-// is persisted, how it is audited, and the middleware other routes can hang off.
-//
-// The file sits in ~/.claude/, never inside a project. That placement is the one idea worth
-// keeping from NanoClaw — whose per-session container isolation is otherwise the wrong threat
-// model for a single-user localhost process. A policy file stored inside a repo can be widened
-// by anything that can write to that repo, including an agent working in it, which makes the
-// policy describe itself rather than constrain anything.
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -24,13 +16,8 @@ export function writeStore(store, file = ACCESS_FILE) {
   return store
 }
 
-// A project is identified by its absolute path — the same key /api/projects uses — so a cell
-// cannot be made to match a different directory by renaming or by a relative path.
 export const projectKey = p => path.resolve(String(p || ''))
 
-// Middleware for routes that act on a project. `need` is r/w/x, `pick` pulls the project path
-// out of the request. When the policy is not enforced this attaches req.access and continues,
-// so a route can still surface "this would have been blocked" without failing.
 export function requireAccess(need, pick = req => req.body?.repo || req.query?.repo) {
   return (req, res, next) => {
     const store = readStore()
@@ -44,14 +31,6 @@ export function requireAccess(need, pick = req => req.body?.repo || req.query?.r
 }
 
 export default function mountAccess(app, { track } = {}) {
-  // Every policy change lands in the same append-only log as any other config write, so the
-  // Audit log tab shows who widened access and when. A failure to record must not also block
-  // the change — but it must not pass silently either.
-  //
-  // track() is itself a tracked *write*: it writes the file and appends the version entry. The
-  // routes below call writeStore() first so the file is created with 0600 (writeFileSync
-  // preserves the mode of an existing file), then track() rewrites identical content and
-  // records it. Same bytes twice, and the ordering is what keeps the mode.
   const audit = (summary, store) => {
     try { track?.(ACCESS_FILE, JSON.stringify(store, null, 2), { scope: 'global', summary }) }
     catch (e) { console.error('[access] policy changed but was not written to the audit log:', e.message) }
@@ -59,13 +38,11 @@ export default function mountAccess(app, { track } = {}) {
 
   app.get('/api/access', (req, res) => {
     const store = readStore()
-    // Projects the dashboard already knows about, so the grid shows real rows on first open
-    // rather than an empty table the user has to populate from memory.
     let projects = []
     try {
       const cj = JSON.parse(fs.readFileSync(path.join(CLAUDE, '.claude.json'), 'utf8'))
       projects = Object.keys(cj.projects || {}).map(projectKey)
-    } catch { /* no ~/.claude.json is normal */ }
+    } catch { }
     res.json({
       file: ACCESS_FILE,
       enforced: store.enforced,
@@ -97,8 +74,6 @@ export default function mountAccess(app, { track } = {}) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
   })
 
-  // Turning enforcement on is the consequential action here, so it is its own route and its own
-  // audit line rather than a field buried in a general-purpose save.
   app.put('/api/access/enforced', (req, res) => {
     try {
       const enforced = req.body?.enforced === true
@@ -109,8 +84,6 @@ export default function mountAccess(app, { track } = {}) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
   })
 
-  // Preview a decision without performing anything — what makes it safe to fill the matrix in
-  // on a live install before switching enforcement on.
   app.post('/api/access/check', (req, res) => {
     try {
       const { profile = 'default', project, need = 'r' } = req.body || {}

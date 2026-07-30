@@ -20,13 +20,10 @@ import {
   tierDistribution,
 } from '../../lib/complexity.mjs'
 
-// A courtesy turn: down-signal only, no complexity vocabulary.
 const COURTESY = 'thanks, that worked'
 
-// An ordinary work turn: one mid-weight signal, short.
 const ORDINARY = 'Please add a unit test for the parseMode function.'
 
-// A turn that saturates many independent signals at once.
 const HEAVY = [
   "Prove that the scheduler's retry cap is an invariant. Step by step:",
   '1. Analyze the algorithm',
@@ -44,14 +41,8 @@ const HEAVY = [
 
 const dim = (result, name) => result.dimensions.find(d => d.name === name)
 
-// ── shape of the dimension table ────────────────────────────────────────────────────────
 
 test('the table is 34 dimensions: 22 keyword + 12 structural', () => {
-  // Upstream is described as "22 keyword + 10 structural" and this port started there. Two
-  // structural dimensions were added during calibration — scopeBreadth and clauseCount —
-  // because nothing in the original set measured how MUCH a turn touches, and without that
-  // "rename this in one file" and "rename it across four services" were indistinguishable.
-  // The keyword count is unchanged; those lists were widened, not added to.
   assert.equal(DIMENSION_COUNT, 34)
   assert.equal(DIMENSIONS.filter(d => d.kind === 'keyword').length, 22)
   assert.equal(DIMENSIONS.filter(d => d.kind === 'structural').length, 12)
@@ -60,8 +51,6 @@ test('the table is 34 dimensions: 22 keyword + 12 structural', () => {
 })
 
 test('every dimension is individually inspectable', () => {
-  // The point of this module is that a user can see WHY a turn scored as it did, so each
-  // dimension has to carry its own identity, weight and direction — not just fold into a sum.
   const names = new Set()
   for (const d of DIMENSIONS) {
     assert.equal(typeof d.name, 'string')
@@ -77,14 +66,6 @@ test('every dimension is individually inspectable', () => {
 })
 
 test('the keyword weights match upstream except where calibration required otherwise', () => {
-  // These come from manifest's scoring/config.ts as transcribed in RESEARCH_MERGED.md, and are
-  // kept because they are the only numbers here with a documented origin.
-  //
-  // analyticalReasoning is the one deliberate departure: at upstream's 0.06 the top two tiers
-  // interleaved, because "complex" and "reasoning" are different axes — breadth touched versus
-  // deliberation requested — and a wide-scoped rename outscored an explicit "evaluate three
-  // approaches and justify". Raising it to 0.11 is what lets them separate at all. Changing it
-  // back will fail the calibration test, which is the intended signal.
   const expected = {
     simpleIndicators: 0.08, formalLogic: 0.07, technicalTerms: 0.07, multiStep: 0.07,
     analyticalReasoning: 0.11, codeGeneration: 0.06, codeReview: 0.05, domainSpecificity: 0.05,
@@ -94,13 +75,10 @@ test('the keyword weights match upstream except where calibration required other
   for (const [name, weight] of Object.entries(expected)) {
     assert.equal(DIMENSIONS.find(d => d.name === name)?.weight, weight, name)
   }
-  // Only these two argue a turn is cheaper.
   assert.deepEqual(DIMENSIONS.filter(d => d.direction === 'down').map(d => d.name), ['simpleIndicators', 'relay'])
 })
 
 test('the eight specificity dimensions are scored but contribute nothing', () => {
-  // Upstream uses them for an independent task-category axis. They must still report hits —
-  // that is what makes the category axis buildable later — while moving the score by exactly 0.
   const zero = ['webBrowsing', 'dataAnalysis', 'imageGeneration', 'videoGeneration',
     'socialMedia', 'emailManagement', 'calendarManagement', 'trading']
   for (const name of zero) assert.equal(DIMENSIONS.find(d => d.name === name)?.weight, 0, name)
@@ -112,11 +90,8 @@ test('the eight specificity dimensions are scored but contribute nothing', () =>
   for (const name of zero) assert.equal(dim(r, name).contribution, 0, name)
 })
 
-// ── "unknown is a value" ────────────────────────────────────────────────────────────────
 
 test('empty input is tier null with confidence 0 — never a default of simple', () => {
-  // The regression this guards: defaulting to `simple` makes the headline claim
-  // ("you paid Opus rates for N simple turns") count every blank turn as overspend.
   for (const input of ['', '   ', '\n\t ']) {
     const r = scoreTurn(input)
     assert.equal(r.tier, null)
@@ -143,7 +118,6 @@ test('an unscoreable result still lists every dimension, so the UI never special
   assert.deepEqual(r.hits, [])
 })
 
-// ── scoring ─────────────────────────────────────────────────────────────────────────────
 
 test('a result is never a bare number: every dimension appears with its contribution', () => {
   const r = scoreTurn(ORDINARY)
@@ -157,7 +131,6 @@ test('a result is never a bare number: every dimension appears with its contribu
 })
 
 test('the raw score is exactly the sum of the reported contributions', () => {
-  // If the two ever diverge, the per-dimension breakdown is decoration rather than evidence.
   const r = scoreTurn(HEAVY, { tools: ['Read', 'Bash'], depth: 4 })
   const sum = r.dimensions.reduce((a, d) => a + d.contribution, 0)
   assert.ok(Math.abs(sum - r.rawScore) < 1e-12, `${sum} ≈ ${r.rawScore}`)
@@ -182,16 +155,11 @@ test('tiers separate as intended across a courtesy / ordinary / heavy turn', () 
   assert.equal(courtesy.tier, 'simple')
   assert.equal(ordinary.tier, 'standard')
   assert.equal(heavy.tier, 'reasoning')
-  // Ordering is the property that must hold even after the weights are recalibrated.
   assert.ok(courtesy.score < ordinary.score)
   assert.ok(ordinary.score < heavy.score)
 })
 
 test('an explicit compare-and-justify turn lands in reasoning', () => {
-  // This asserted `complex` before calibration. The prompt asks to compare three approaches and
-  // justify one, which is the definition of the reasoning tier in
-  // test/fixtures/complexity-labelled.mjs — the old expectation was an artifact of a scale on
-  // which reasoning was effectively unreachable.
   const r = scoreTurn(
     'Analyze the trade-offs between our caching layer and a distributed cache. Consider latency, ' +
     'throughput, and the race condition from last week. Compare three approaches step by step and justify one.',
@@ -210,49 +178,33 @@ test('tierFor treats each boundary as the inclusive top of its band', () => {
   assert.equal(tierFor(BOUNDARIES.complexMax + 1e-9), 'reasoning')
   assert.equal(tierFor(-WEIGHT_BUDGET.down), 'simple')
   assert.equal(tierFor(WEIGHT_BUDGET.up), 'reasoning')
-  // Unknown stays unknown rather than collapsing to a tier.
   for (const bad of [null, undefined, NaN, Infinity, 'x']) assert.equal(tierFor(bad), null)
 })
 
 test('every tier anchor lands inside the tier it anchors', () => {
-  // Momentum blends an anchor back in; an anchor outside its own band would make momentum
-  // pull toward the wrong tier.
   for (const t of TIERS) assert.equal(tierFor(TIER_ANCHOR[t]), t)
 })
 
-// ── keyword matching ────────────────────────────────────────────────────────────────────
 
 test('keywords match whole words, so "note" is not the courtesy word "no"', () => {
-  // Substring matching here would drag long technical turns down a tier on incidental letters.
   const prose = scoreTurn('Take note of the compiler behaviour and the nokia driver')
   assert.equal(dim(prose, 'simpleIndicators').hit, false)
   assert.equal(dim(scoreTurn('no, revert that'), 'simpleIndicators').hit, true)
-  // Same trap on the other side: "okay-ish" is not the courtesy word "okay".
   assert.equal(dim(scoreTurn('the latency is okay-ish for a distributed protocol'), 'simpleIndicators').hit, false)
 })
 
 test('one courtesy word saturates its dimension; one technical word does not', () => {
-  // Deliberate asymmetry. Evidence of complexity accumulates — three unrelated technical terms
-  // really are a stronger signal than one — but evidence of triviality does not: a turn whose
-  // whole content is "sure" is already as simple as a turn gets. Sharing the saturation of 3
-  // left a one-word acknowledgement at 1/3 activation, where the conversation-depth dimension
-  // alone could tip it out of `simple`.
   for (const d of DIMENSIONS.filter(d => d.kind === 'keyword')) {
     assert.equal(d.saturation, d.direction === 'down' ? 1 : 3, d.name)
   }
-  // Not exactly 1: the short-turn scaling below is still applied on top, and even a one-word
-  // turn is a token long. Near-saturation from a single hit is the property that matters.
   assert.ok(dim(scoreTurn('sure'), 'simpleIndicators').activation > 0.95)
   assert.ok(dim(scoreTurn('the algorithm'), 'technicalTerms').activation < 0.5)
 
-  // The case that motivated it: bare acknowledgements stay simple however late they appear.
   const results = classifyConversation(['ok', 'thanks', 'yes', 'sure', 'sounds good'])
   assert.deepEqual(results.map(r => r.tier), Array(5).fill('simple'))
 })
 
 test('courtesy words fade out as the turn gets longer', () => {
-  // "thanks" as the whole turn is the entire signal; "thanks" inside a 900-word spec is
-  // punctuation. Without this scaling a long, genuinely complex turn could be pulled down.
   const short = scoreTurn('thanks')
   const buried = scoreTurn('thanks. ' + 'Refactor the distributed protocol module carefully. '.repeat(30))
   assert.ok(dim(short, 'simpleIndicators').activation > 0)
@@ -260,7 +212,6 @@ test('courtesy words fade out as the turn gets longer', () => {
   assert.equal(dim(buried, 'simpleIndicators').activation, 0)
 })
 
-// ── structural dimensions ───────────────────────────────────────────────────────────────
 
 test('tool count comes from the caller, not from guessing tool names out of prose', () => {
   const none = scoreTurn(ORDINARY)
@@ -299,10 +250,8 @@ test('fenced code raises the code-to-prose fraction', () => {
   assert.ok(dim(code, 'codeToProse').activation > 0.5)
 })
 
-// ── no silent caps ──────────────────────────────────────────────────────────────────────
 
 test('truncation is reported, and the token estimate still measures the full text', () => {
-  // "No silent caps": if we only looked at part of the input, the result has to say so.
   const long = 'algorithm and latency '.repeat(3000)
   assert.ok(long.length > MAX_SCAN_CHARS)
   const r = scoreTurn(long)
@@ -310,7 +259,6 @@ test('truncation is reported, and the token estimate still measures the full tex
   assert.equal(r.truncated.originalChars, long.trim().length)
   assert.equal(r.truncated.scannedChars, MAX_SCAN_CHARS)
   assert.match(r.truncated.note, /limited to the first/)
-  // Length is cheap to measure exactly, so truncating the scan must not truncate the length.
   assert.equal(dim(r, 'tokenCount').activation, 1)
 })
 
@@ -321,17 +269,14 @@ test('an untruncated turn says so explicitly rather than omitting the field', ()
   assert.equal(r.truncated.scannedChars, ORDINARY.length)
 })
 
-// ── confidence ──────────────────────────────────────────────────────────────────────────
 
 test('confidence measures distance from the nearest tier boundary', () => {
   assert.equal(boundaryDistance(BOUNDARIES.standardMax), 0)
   assert.ok(boundaryDistance(WEIGHT_BUDGET.up) > boundaryDistance(BOUNDARIES.complexMax + 0.01))
-  // Sitting exactly on a boundary is the least confident a scoreable turn can be.
   const onEdge = computeConfidence(BOUNDARIES.standardMax)
   assert.ok(onEdge < computeConfidence(BOUNDARIES.standardMax + 0.05))
   assert.ok(computeConfidence(1) > 0.99)
   assert.equal(computeConfidence(null), 0)
-  // The midpoint is the half-confidence point by construction.
   assert.ok(Math.abs(computeConfidence(BOUNDARIES.standardMax + CONFIDENCE.midpoint) - 0.5) < 1e-9)
 })
 
@@ -343,14 +288,8 @@ test('the confident flag is the threshold applied, not a separate opinion', () =
   assert.equal(borderline.confident, borderline.confidence >= CONFIDENCE.threshold)
 })
 
-// ── momentum ────────────────────────────────────────────────────────────────────────────
 
 test('momentum pulls a short turn upward without relabelling it as expensive', () => {
-  // Before calibration this asserted that "ok" after heavy work came back as NOT simple. The
-  // wider simple band means the same pull no longer crosses the edge, and that is the better
-  // behaviour for what this feature is for: the headline use is "you paid Opus rates for N
-  // simple-tier turns", and counting acknowledgments as reasoning would hide exactly the waste
-  // being looked for. Momentum still damps score-space flapping, which is its real job.
   const [, ok] = classifyConversation([HEAVY, 'ok'])
   assert.equal(ok.momentum.tierBeforeMomentum, 'simple', 'on its own the turn reads as simple')
   assert.equal(ok.momentum.applied, true)
@@ -368,16 +307,12 @@ test('momentum is a tie-breaker: it never moves a turn more than one tier', () =
 })
 
 test('momentum never invents a tier that neither the text nor the prior turn supports', () => {
-  // The strong form of the tie-breaker property: the result always sits between what this
-  // turn's own text says and what the previous turn said. Momentum interpolates, never
-  // extrapolates — so it cannot manufacture a `reasoning` turn out of two `standard` ones.
   const results = classifyConversation([HEAVY, 'ok', 'ok', ORDINARY, 'ok'])
   for (const r of results.slice(1)) {
     const ends = [TIER_RANK[r.momentum.tierBeforeMomentum], TIER_RANK[r.momentum.previousTier]]
     assert.ok(TIER_RANK[r.tier] >= Math.min(...ends), `turn ${r.index} below both ends`)
     assert.ok(TIER_RANK[r.tier] <= Math.max(...ends), `turn ${r.index} above both ends`)
   }
-  // The pull also shrinks once the carried tier stops disagreeing with the text.
   assert.ok(results[2].momentum.weight < results[1].momentum.weight)
 })
 
@@ -412,7 +347,6 @@ test('the first turn of a conversation has no momentum to carry', () => {
   assert.equal(first.score, first.rawScore)
 })
 
-// ── classifyConversation ────────────────────────────────────────────────────────────────
 
 test('classifyConversation returns one indexed result per turn and accepts objects or strings', () => {
   const results = classifyConversation([
@@ -434,15 +368,12 @@ test('a non-array conversation yields no results rather than throwing', () => {
 })
 
 test('an unscoreable turn mid-conversation does not reset the momentum anchor', () => {
-  // Dropping the anchor on a blank turn would reintroduce exactly the flapping momentum exists
-  // to damp, and a blank turn carries no evidence in either direction.
   const results = classifyConversation([HEAVY, '', 'ok'])
   assert.equal(results[1].tier, null)
   assert.equal(results[1].momentum.applied, false)
   assert.equal(results[2].momentum.previousTier, 'reasoning', 'the blank turn was skipped, not honoured')
 })
 
-// ── aggregation helpers ─────────────────────────────────────────────────────────────────
 
 test('maxTier merges two tiers by the documented ordering', () => {
   assert.deepEqual(TIERS, ['simple', 'standard', 'complex', 'reasoning'])
@@ -455,8 +386,6 @@ test('maxTier merges two tiers by the documented ordering', () => {
 })
 
 test('the tier distribution counts unknown turns separately from simple ones', () => {
-  // This is the number the headline cost claim is made from, so an unscoreable turn must not
-  // quietly inflate it.
   const results = classifyConversation([COURTESY, '', HEAVY, null, ORDINARY])
   const d = tierDistribution(results)
   assert.equal(d.total, 5)

@@ -1,6 +1,3 @@
-// Ask-the-project atoms API — feature catalog, grounded search, and attestation triage
-// over a repo's .wakeel/constitution atom files. Shared by the Claude and Cursor shells.
-// Index is in-memory per repo, rebuilt when the constitution folder's mtime changes.
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -8,10 +5,7 @@ import { spawn } from 'node:child_process'
 import { buildIndex, newestMtime, constDir } from '../atoms/ingest.mjs'
 import { ATOMS_DIR } from '../lib/paths.mjs'
 
-// atoms/ stays at the repo root: .gitignore anchors atoms/index.json and atoms/reviewed.json with a
-// leading path segment, so moving the directory would start tracking user state and a build artifact.
-// ATOMS_DIR is resolved centrally so this file's own location stops mattering.
-const REVIEWED_PATH = path.join(ATOMS_DIR, 'reviewed.json') // { [repo]: { [atomId]: { at } } }
+const REVIEWED_PATH = path.join(ATOMS_DIR, 'reviewed.json')
 const WIN = process.platform === 'win32'
 
 const readReviewed = () => { try { return JSON.parse(fs.readFileSync(REVIEWED_PATH, 'utf8')) } catch { return {} } }
@@ -24,7 +18,6 @@ Rules:
 - Quote the citation (path:lineRange) when it strengthens the answer.
 - Be concise.`
 
-// grounded LLM call: API key if present, else the local claude CLI (same pattern as server.mjs)
 function askLLM(question, atoms) {
   const prompt = `Atoms:\n${JSON.stringify(atoms, null, 1)}\n\nQuestion: ${question}`
   const key = process.env.ANTHROPIC_API_KEY
@@ -52,7 +45,7 @@ function askLLM(question, atoms) {
   })
 }
 
-const memo = new Map() // repo -> index
+const memo = new Map()
 export default function mountAtoms(app) {
   const resolveRepo = req => {
     const repo = path.resolve(String(req.query.repo || req.body?.repo || ''))

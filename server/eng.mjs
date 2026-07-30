@@ -1,35 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// TWO DATA PLANES — structural, enforced here, not by policy. Read before editing.
-//
-//   PLANE A (this file) = WORK ARTIFACTS: JIRA issues, GitHub PRs/reviews, CI runs, bugs.
-//     Already team-visible — every engineer can open every underlying artifact about
-//     themselves. Per-person OPERATIONAL facts are therefore allowed (who owns a ticket,
-//     whose review a PR waits on, what is stuck). Per-person EVALUATIVE scores are NOT:
-//     no composite score, no ranking, no "delivery skills" radar, no bugs-caused counter.
-//
-//   PLANE B (server.mjs) = HARNESS TELEMETRY: transcripts, tokens,
-//     cost, session times, active hours. One machine's private data, self-only, forever.
-//
-//   HARD RULES for /api/eng/*:
-//     · Never emit a per-person token count, cost, session time, active-hours or any
-//       transcript-derived field. Guarded by test/eng-privacy.test.js.
-//     · No endpoint accepts a user/machine parameter for telemetry.
-//     · Sustainable-pace / load data is TEAM-AGGREGATE ONLY: min-N=5 suppression is applied
-//       IN THE ENDPOINT (cells return null below that), weekly buckets, no per-person rows,
-//       no drilldown. Sourced from PR createdAt/mergedAt — never transcripts.
-//     · Every write action (JIRA transition, gh pr comment) is gated on a projects.json
-//       `"writes": true` flag and uses the operator's own credentials. The default action
-//       everywhere is copy-to-clipboard. Never an auto-ping.
-// ─────────────────────────────────────────────────────────────────────────────
-// Engineering Metrics dashboard — fully separate read-only routes under /api/eng/*.
-// Multi-project: each project = a JIRA board (project key) + a GitHub repo. There are no built-in
-//   projects — they all come from projects.json (gitignored; see projects.example.json), added by
-//   hand or at runtime via POST /api/eng/projects.
-// JIRA: REST v3 Basic auth (email + API token) from .eng.local.json / config.json / env, or reuse
-//   acli's OAuth token from the keychain. GitHub: shells out to the already-authed `gh` CLI.
-// Time model (§time): durations are WORKING time. The hours, weekend days and UTC offset come from
-//   projects.json -> `work`; the week actually used is echoed in each payload's `provenance`.
-//   Estimates derive from story points via the org SP->days table (projects.json -> `storyPointDays`).
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -42,9 +10,6 @@ import {
 } from '../lib/eng-config.mjs'
 import { estAccuracy, escapeRateSeries, busFactor } from '../lib/eng-metrics.mjs'
 import { adfToText, isAdf, markdownToAdf } from '../lib/adf.mjs'
-// Anchored centrally: this module writes four state files and reads the credentials, and every one
-// of those reads degrades to a plausible default rather than throwing if the path is wrong — so a
-// path this file derived from its own location would fail as "unconfigured", not as an error.
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, ENG_STATE } from '../lib/paths.mjs'
 
 const DAY = 864e5
@@ -68,11 +33,6 @@ export const DATA_TTL = Math.max(60_000, CACHE_TTL_HOURS * 3600_000)
 const H = 3600e3
 
 // ---------- projects (§0) — ALL of this is user config now, one JIRA board + repo each ----------
-// There are deliberately NO built-in projects, emails or JIRA host. This file used to ship one
-// company's production setup as its defaults — ten real employee addresses, two private repos and a
-// live JIRA host, committed to git and seeded unconditionally, so a fresh clone showed a stranger's
-// board and attributed your team's work to four people at another company. Everything org-specific
-// now lives in projects.json (gitignored); projects.example.json is the committed template.
 const engCfg = () => loadEngConfig(PROJECTS_FILE)
 const WORK = () => engCfg().work
 function normalizeProject(p) {
@@ -88,16 +48,12 @@ function normalizeProject(p) {
     devEmails: (p.devEmails && p.devEmails.length ? p.devEmails : engCfg().defaultDevEmails).map(e => e.toLowerCase()),
     qaEmails: (p.qaEmails || []).map(e => e.toLowerCase()),
     productEmails: (p.productEmails || []).map(e => e.toLowerCase()),
-    writes: p.writes === true, // §writes: JIRA transitions / gh pr comment stay behind this. Default: copy-to-clipboard.
+    writes: p.writes === true,
   }
 }
-// projects.json is a bare array (legacy), {projects:[…], effortBuckets:{…}}, or the current shape
-// {jiraHost, work, storyPointDays, defaultDevEmails, projects:[…]} — see projects.example.json.
 function projectsFile() { try { return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) } catch { return null } }
 function extraProjects() { return engCfg().projects }
 function loadProjects() {
-  // No seeded defaults. An unconfigured install has zero projects and every eng endpoint reports
-  // `available:false` — which is the honest answer, and better than a stranger's board.
   const map = new Map()
   for (const p of extraProjects()) { const k = (p.key || p.jiraProjectKey || '').toUpperCase(); if (!k) continue; map.set(k, { ...(map.get(k) || {}), ...p, key: k }) }
   return [...map.values()].map(normalizeProject)
@@ -109,13 +65,10 @@ function upsertProject(rec) {
   const idx = extra.findIndex(p => (p.key || p.jiraProjectKey || '').toUpperCase() === k)
   if (idx >= 0) extra[idx] = { ...extra[idx], ...rec, key: k }
   else extra.push({ ...rec, key: k })
-  // Always write the object shape, so a legacy bare array is migrated on first edit rather than
-  // pinning the file to a format that cannot hold `work` / `jiraHost` / `storyPointDays`.
   const base = j && !Array.isArray(j) ? j : {}
   fs.writeFileSync(PROJECTS_FILE, JSON.stringify({ ...base, projects: extra }, null, 2))
-  invalidateEngConfig() // mtime has 1ms resolution; a same-ms write would otherwise serve a stale memo
+  invalidateEngConfig()
 }
-// members editor from the UI: [{email, role}] -> role email lists (only when members supplied)
 function rostersFrom(members) {
   if (!Array.isArray(members)) return {}
   const g = r => members.filter(m => m.role === r && m.email).map(m => m.email.trim().toLowerCase())
@@ -125,11 +78,6 @@ const projectPill = p => ({ key: p.key, name: p.name, jiraProjectKey: p.jiraProj
 const projectList = () => loadProjects().map(projectPill)
 
 // ---------- working-time engine (§time) ----------
-// Every duration in this dashboard — cycle time, lead time, stage budgets, off-hours, weekend work —
-// is measured in WORKING time, so the work week is the most load-bearing setting in the app. It was
-// hardcoded to 10:00–18:00 Sun–Thu Asia/Riyadh with no way to change it, which silently mis-measured
-// every user outside that one office. It now comes from projects.json → `work`, and the work week
-// actually in force is reported in each payload's `provenance`.
 const workMs = (from, to) => workMsWith(WORK(), from, to)
 const workDays = (from, to) => workDaysWith(WORK(), from, to)
 const addWorkTime = (from, budgetMs) => addWorkTimeWith(WORK(), from, budgetMs)
@@ -147,15 +95,11 @@ function pctl(arr, p) {
 }
 const median = a => pctl(a, 0.5)
 const round1 = v => (v == null ? null : +v.toFixed(1))
-const round2 = v => (v == null ? null : +v.toFixed(2))   // null in → null out: never turn "not measured" into 0
+const round2 = v => (v == null ? null : +v.toFixed(2))
 const monthKey = t => new Date(t).toISOString().slice(0, 7)
-// Week bucket key, starting on the configured first working day (projects.json → work.weekStartDay).
 const weekKey = t => weekKeyWith(WORK(), t)
 
 // ---------- story points -> estimated working-days (org reference table) ----------
-// Org-specific by nature: a "5" means different things at different companies, so this comes from
-// projects.json → `storyPointDays`. Scoring estimate accuracy against another org's conversion table
-// is how you end up with an OKR nobody's team ever agreed to.
 function estDaysFromPts(pts) {
   if (!pts || pts <= 0) return 0
   const SP_DAYS = engCfg().storyPointDays
@@ -171,7 +115,7 @@ function estDaysFromPts(pts) {
 // ---------- status model (§2) — matched case-insensitively; statusCategory is the fallback ----------
 const ACTIVE = ['in progress', 'in code review', 'design qa', 'in qa (dev)', 'in qa', 'reopen', 'reopened']
 const WAITING = ['pm backlog', 'to do', 'ready for qa', 'qa blocked', 'on hold', 'paused', 'ready for release', 'backlog']
-const PAUSED = ['on hold', 'paused'] // excluded from cycle/delivery — the clock stops while parked
+const PAUSED = ['on hold', 'paused']
 const DONE = ['live', 'closed', "won't fix", 'done', 'resolved']
 const REVIEWY = ['in code review', 'design qa', 'in qa (dev)', 'in qa', 'qa blocked', 'ready for qa']
 const norm = s => (s || '').trim().toLowerCase()
@@ -239,7 +183,7 @@ async function jira(a, pathAndQuery) {
   return r.json()
 }
 
-const FIELDS = new Map() // per-project field ids — resolved once by real usage, not just by name
+const FIELDS = new Map()
 async function resolveFields(a, cfg) {
   if (FIELDS.has(cfg.key)) return FIELDS.get(cfg.key)
   const all = await jira(a, '/field')
@@ -295,7 +239,7 @@ async function mapLimit(arr, n, fn) {
 function statusSegments(issue) {
   const created = Date.parse(issue.fields.created)
   const changes = []
-  const sprintEvents = [] // §8: the Sprint items sit right next to the status ones — keep them.
+  const sprintEvents = []
   for (const h of issue.changelog?.histories || [])
     for (const it of h.items || []) {
       if (it.field === 'status') changes.push({ at: Date.parse(h.created), from: it.fromString, to: it.toString, author: h.author ? { id: h.author.accountId, name: h.author.displayName } : null })
@@ -312,17 +256,14 @@ function statusSegments(issue) {
     const to = norm(c.to)
     if (to === 'in progress') { inProgEntries++; if (firstInProg == null) firstInProg = c.at; if (inProgEntries > 1) reworkN++ }
     if (to === 'reopen' || to === 'reopened') reopenN++
-    if (to === 'in qa (dev)' || to === 'in qa' || to === 'ready for qa') { qaEntries++; if (c.author) fixer = c.author } // whoever moves it to QA-ready owns the fix
+    if (to === 'in qa (dev)' || to === 'in qa' || to === 'ready for qa') { qaEntries++; if (c.author) fixer = c.author }
     if (DONE.includes(to) && liveAt == null && (to === 'live' || to === 'closed' || to === 'done')) liveAt = c.at
   }
   add(cur, t0, Date.now())
   if (firstInProg == null && norm(cur) === 'in progress') { firstInProg = created; curSince = created }
   const daysIn = {}; for (const k in days) daysIn[k] = days[k] / WORKDAY_MS_OF()
   const endT = liveAt || Date.now()
-  // cycle excludes time parked in On Hold / Paused — those don't count against the team
   const pausedMs = Object.entries(days).reduce((a, [k, v]) => a + (PAUSED.includes(norm(k)) ? v : 0), 0)
-  // A ticket that never entered In Progress has NO delivery duration — it is null, not 0. A 0 is a measured
-  // duration; a null is an absent one. Emitting 0 dragged every median (and the OKR ring) to zero.
   const delivery = firstInProg == null ? null : Math.max(0, workMs(firstInProg, endT) - pausedMs) / WORKDAY_MS_OF()
   return { daysIn, delivery, firstInProg, liveAt, curStatus: cur, curSince, qaCycles: qaEntries, rework: reworkN + reopenN, fixer, sprintEvents }
 }
@@ -330,7 +271,6 @@ const idList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean
 const nameList = s => String(s || '').split(',').map(x => x.trim()).filter(Boolean)
 
 function num(v) { if (v == null) return 0; if (typeof v === 'number') return v; if (typeof v === 'object') return v.value ?? 0; return Number(v) || 0 }
-// §8: BOTH forms carry startDate/endDate/completeDate — they were being thrown away.
 function parseSprintOne(one) {
   if (!one) return null
   if (typeof one === 'object') return one.name ? { id: one.id ?? null, name: one.name, state: one.state || '', startDate: one.startDate || null, endDate: one.endDate || null, completeDate: one.completeDate || null, boardId: one.boardId ?? null } : null
@@ -347,7 +287,6 @@ function parseSprintOne(one) {
 const parseSprints = raw => (raw ? (Array.isArray(raw) ? raw : [raw]) : []).map(parseSprintOne).filter(Boolean)
 function parseSprint(raw) { const a = parseSprints(raw); return a.length ? a[a.length - 1] : null }
 
-// hover recommendation: when to move to the next step to keep a good metric score
 function recFor(status, pts, curSince) {
   const n = norm(status)
   let next = null, budget = 0
@@ -366,12 +305,11 @@ function recFor(status, pts, curSince) {
 function computeIssue(issue, F, prsByTicket, cfg) {
   const f = issue.fields
   const seg = statusSegments(issue)
-  // null = the ticket never entered that status (no measurement exists). 0 = it did, and the clock read ~0.
   const dwell = want => { const e = Object.entries(seg.daysIn).find(([k]) => norm(k) === want); return e ? e[1] : null }
   const dev = dwell('in progress')
   const cr = dwell('in code review')
   const pts = num(f[F.sp])
-  const est = estDaysFromPts(pts)           // working-day estimate from story points
+  const est = estDaysFromPts(pts)
   const actual = dev || seg.delivery
   const estAcc = estAccuracy(est, actual)
   const status = f.status.name
@@ -386,18 +324,15 @@ function computeIssue(issue, F, prsByTicket, cfg) {
   let activeDays = 0, waitDays = 0, sawActive = false
   for (const [k, v] of Object.entries(seg.daysIn)) { const kk = kindOf(k); if (kk === 'active') { activeDays += v; sawActive = true } else if (kk === 'wait') waitDays += v }
   const isBug = /bug|defect/i.test(f.issuetype?.name || '')
-  const area = f.components?.[0]?.name || null // component only — labels aren't reliable enough
+  const area = f.components?.[0]?.name || null
   const assignee = f.assignee ? { name: f.assignee.displayName, email: f.assignee.emailAddress || '', id: f.assignee.accountId } : null
-  // bug linked to a parent story (AIR happy path: the bug hangs off the ticket it belongs to)
   let linkedKey = f.parent?.key || null
   if (isBug && !linkedKey) for (const l of f.issuelinks || []) { const o = l.outwardIssue || l.inwardIssue; if (o) { linkedKey = o.key; break } }
-  // issuelinks are fetched today and used only to resolve linkedKey — keep the whole graph (blocker matrix)
   const links = (f.issuelinks || []).map(l => {
     const o = l.outwardIssue || l.inwardIssue
     if (!o) return null
     return { key: o.key, dir: l.outwardIssue ? 'outward' : 'inward', type: l.type?.name || '', rel: (l.outwardIssue ? l.type?.outward : l.type?.inward) || '', status: o.fields?.status?.name || '' }
   }).filter(Boolean)
-  // assignee changelog → resolve dev/QA assignee by role in resolveRoles
   const assigneeHistory = []
   for (const h of issue.changelog?.histories || []) for (const it of h.items || []) if (it.field === 'assignee' && it.to) assigneeHistory.push({ id: it.to, name: it.toString || '' })
   if (assignee) assigneeHistory.push({ id: assignee.id, name: assignee.name })
@@ -408,10 +343,7 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     status, statusKind: kind, statusColor: colorFor(status), sprint: parseSprint(f[F.sprint]), sprints: parseSprints(f[F.sprint]), sprintEvents: seg.sprintEvents,
     assignee, assigneeHistory, devAssignee: null, qaAssignee: null, inCurrent: +workDays(seg.curSince, Date.now()).toFixed(2),
     reporter: f.reporter ? { name: f.reporter.displayName, email: f.reporter.emailAddress || '', id: f.reporter.accountId } : null, qaReported: false,
-    // bug ownership — owner = who has the bug (default assignee), fixer = who moved it to QA-ready. Resolved/overridden in snapshot.
     owner: assignee, ownerId: assignee?.id || null, fixer: seg.fixer, fixerId: seg.fixer?.id || null, linkedKey,
-    // dev / cr / delivery / activeDays are null when the ticket never entered the status they measure —
-    // an absent duration, not a zero one. Anything averaging them must drop nulls, never coerce to 0.
     pts, est: +est.toFixed(2), dev: round2(dev), cr: round2(cr), delivery: round2(seg.delivery),
     estAcc: estAcc == null ? null : +estAcc.toFixed(1), qaCycles: seg.qaCycles, rework: seg.rework,
     daysIn: Object.fromEntries(Object.entries(seg.daysIn).map(([k, v]) => [k, +v.toFixed(2)])),
@@ -420,9 +352,9 @@ function computeIssue(issue, F, prsByTicket, cfg) {
     live, active: kind === 'active', month: d.getMonth(), year: d.getFullYear(),
     created: f.created, closedAt: f.resolutiondate || (seg.liveAt ? new Date(seg.liveAt).toISOString() : null),
     curSince: new Date(seg.curSince).toISOString(),
-    firstInProg: seg.firstInProg ? new Date(seg.firstInProg).toISOString() : null, // §12: computed since day one, never exposed
+    firstInProg: seg.firstInProg ? new Date(seg.firstInProg).toISOString() : null,
     liveAt: seg.liveAt ? new Date(seg.liveAt).toISOString() : null,
-    leadDays: +workDays(Date.parse(f.created), seg.liveAt || Date.now()).toFixed(2), // created → live (the queue half #11)
+    leadDays: +workDays(Date.parse(f.created), seg.liveAt || Date.now()).toFixed(2),
     rec: live ? null : recFor(status, pts, seg.curSince),
     parent: f.parent ? { key: f.parent.key, summary: f.parent.fields?.summary || '' } : null,
     prNums: prs.map(p => p.num), stale, staleNote,
@@ -433,7 +365,6 @@ function computeIssue(issue, F, prsByTicket, cfg) {
 const BUGS_FILE = ENG_STATE.bugOwnership
 function readBugOwn() { try { return JSON.parse(fs.readFileSync(BUGS_FILE, 'utf8')) } catch { return {} } }
 function writeBugOwn(o) { fs.writeFileSync(BUGS_FILE, JSON.stringify(o, null, 2)) }
-// classify each ticket's dev/QA assignee from the assignee changelog + role rosters (by email)
 function resolveRoles(issues, cfg) {
   const emailById = {}
   for (const i of issues) { if (i.assignee?.email) emailById[i.assignee.id] = i.assignee.email.toLowerCase(); if (i.reporter?.email) emailById[i.reporter.id] = i.reporter.email.toLowerCase() }
@@ -442,15 +373,12 @@ function resolveRoles(issues, cfg) {
     let da = null, qaa = null
     for (const p of i.assigneeHistory || []) { const e = emailById[p.id]; if (!e) continue; if (dev.has(e)) da = p; if (qa.has(e)) qaa = p }
     i.devAssignee = da; i.qaAssignee = qaa
-    // role of whoever it's assigned to now — bug register only shows bugs assigned to a team member
     const ae = (i.assignee?.email || '').toLowerCase() || emailById[i.assignee?.id] || ''
     i.assigneeTeam = dev.has(ae) ? 'dev' : qa.has(ae) ? 'qa' : prod.has(ae) ? 'product' : null
-    // a bug counts only if the team's own QA reported it
     if (i.isBug) { const re = (i.reporter?.email || '').toLowerCase() || emailById[i.reporter?.id] || ''; i.qaReported = qa.has(re) }
-    delete i.assigneeHistory // trim payload
+    delete i.assigneeHistory
   }
 }
-// resolve AIR linked-bug owners to the parent story's assignee, then apply manual overrides
 function resolveOwnership(issues) {
   const byKey = {}; for (const i of issues) byKey[i.key] = i
   const accounts = {}
@@ -474,8 +402,6 @@ function gh(args, timeout = 60000) {
   return r.stdout.toString()
 }
 function ghAvailable() { try { return spawnSync('gh', ['auth', 'status'], { timeout: 8000 }).status === 0 } catch { return false } }
-// the operator's own GitHub login — for the UI's "Mine" filter, which was falling back to a hand-typed
-// localStorage field. Cached; NEVER throws — an unauthed gh degrades to null, it does not break the page.
 let ghLoginMemo
 function ghLogin() {
   if (ghLoginMemo !== undefined) return ghLoginMemo
@@ -485,8 +411,6 @@ function ghLogin() {
   } catch { ghLoginMemo = null }
   return ghLoginMemo
 }
-// login + the JIRA identity behind the creds already in use. Self-identification only — this is the
-// operator asking "who am I", never "who is that". No other person's identity is reachable here.
 let meMemo
 async function whoAmI() {
   if (meMemo) return meMemo
@@ -495,18 +419,13 @@ async function whoAmI() {
     const me = await jira(await jiraAuth(firstProject()), '/myself')
     accountId = me.accountId || null
     email = me.emailAddress || email
-  } catch {} // no JIRA creds → login still resolves
+  } catch {}
   meMemo = { login: ghLogin(), email, accountId }
   return meMemo
 }
 
-// §4/§11: three fields ADDED to the query we already run — no extra request.
-//   reviewRequests   → who was ASKED and never responded (invisible today)
-//   timelineItems    → REVIEW_REQUESTED_EVENT, so first-review latency starts at the REQUEST,
-//                      not at PR-open (the old firstReviewDays blames the author for the reviewer's queue)
-//   commits(last:1)  → statusCheckRollup, a per-PR checks state
 const prQuery = (owner, name) => `query($cur:String){repository(owner:"${owner}",name:"${name}"){defaultBranchRef{name} pullRequests(first:50,after:$cur,orderBy:{field:UPDATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor} nodes{number title headRefName baseRefName state createdAt mergedAt closedAt additions deletions changedFiles author{login} assignees(first:5){nodes{login}} reviews(first:30){nodes{state author{login} submittedAt}} comments{totalCount} reviewThreads{totalCount} files(first:30){nodes{path additions deletions}} reviewRequests(first:10){nodes{requestedReviewer{__typename ... on User{login} ... on Team{name}}}} timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],first:20){nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{__typename ... on User{login} ... on Team{name}}}}} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`
-const GQL = prQuery('<owner>', '<name>') // §13: shipped in the snapshot so the UI can offer "copy the gh command"
+const GQL = prQuery('<owner>', '<name>')
 const ghCommandFor = repo => `gh api graphql -f query='${prQuery(...String(repo).split('/'))}'`
 const reviewerLogin = r => r?.login || r?.name || ''
 
@@ -537,13 +456,12 @@ function fetchPRs(cfg) {
       else if (approved) state = 'Approved'
       else if (changesReq > 0) state = 'Changes requested'
       const reviewers = [...new Set(realReviews.map(r => r.login))]
-      // asked-but-never-responded + the honest clock: request → first review, per reviewer
       const requested = (p.reviewRequests?.nodes || []).map(n => reviewerLogin(n.requestedReviewer)).filter(l => l && !BOT(l))
       const reviewRequests = (p.timelineItems?.nodes || [])
         .map(n => ({ login: reviewerLogin(n.requestedReviewer), at: n.createdAt }))
         .filter(r => r.login && r.at && !BOT(r.login))
       const firstReqAt = reviewRequests.map(r => Date.parse(r.at)).sort((a, b) => a - b)[0]
-      const checks = p.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state || null // SUCCESS | FAILURE | PENDING | ERROR | EXPECTED | null
+      const checks = p.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state || null
       const approvedAt = reviews.filter(r => r.state === 'APPROVED' && r.at).map(r => Date.parse(r.at)).sort((a, b) => a - b)[0]
       prs.push({
         num: p.number, project: cfg.key, repo: cfg.githubRepo, ticket, title: p.title, branch: p.headRefName, state,
@@ -553,7 +471,6 @@ function fetchPRs(cfg) {
         additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles,
         comments: (p.comments?.totalCount || 0) + (p.reviewThreads?.totalCount || 0),
         firstReviewDays: firstReview ? +workDays(created, firstReview).toFixed(2) : null,
-        // the honest wait: clock starts when a reviewer was asked, not when the author pushed
         firstReviewFromRequestDays: firstReview && firstReqAt && firstReview >= firstReqAt ? +workDays(firstReqAt, firstReview).toFixed(2) : null,
         mergeDays: p.mergedAt ? +workDays(created, Date.parse(p.mergedAt)).toFixed(2) : null,
         openDays: +workDays(created, p.mergedAt ? Date.parse(p.mergedAt) : Date.now()).toFixed(1),
@@ -563,7 +480,6 @@ function fetchPRs(cfg) {
         files: (p.files.nodes || []).map(f => ({ path: f.path, add: f.additions, del: f.deletions })),
         reviewEvents: realReviews.map(r => ({ state: r.state, login: r.login, at: r.at })),
         requestedReviewers: [...new Set(requested)], reviewRequests,
-        // requested, never answered — the set nobody can see today
         unanswered: [...new Set(requested)].filter(l => !reviewers.includes(l)),
       })
     }
@@ -593,14 +509,12 @@ function ciFor(cfg, errs) {
       }))
       .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
     const fails = runs.filter(r => r.conclusion === 'failure')
-    // time-to-green: each red→next-green transition, in WORKING hours
     const greens = []
     let redAt = null
     for (const r of runs) {
       if (r.conclusion === 'failure' && redAt == null) redAt = Date.parse(r.at)
       else if (r.conclusion === 'success' && redAt != null) { greens.push(+(workMs(redAt, Date.parse(r.at)) / H).toFixed(2)); redAt = null }
     }
-    // flaky = the SAME headSha produced both a failure and a success
     const bySha = {}
     for (const r of runs) (bySha[r.sha] ||= []).push(r)
     const flakyShas = Object.entries(bySha).filter(([, rs]) => rs.some(r => r.conclusion === 'failure') && rs.some(r => r.conclusion === 'success'))
@@ -635,13 +549,12 @@ function ciFor(cfg, errs) {
 // ---------- triage (§1) — one pass, typed risk records. 100% of it is already-computed signal. ----------
 const TRIAGE_FILE = ENG_STATE.triage
 function readTriage() { try { return JSON.parse(fs.readFileSync(TRIAGE_FILE, 'utf8')) } catch { return {} } }
-function writeTriage(o) { fs.writeFileSync(TRIAGE_FILE, JSON.stringify(o, null, 2)) } // same versioned-write pattern as bug-ownership.json
+function writeTriage(o) { fs.writeFileSync(TRIAGE_FILE, JSON.stringify(o, null, 2)) }
 const jiraLink = i => i.url || `https://${i.host}/browse/${i.key}`
 
 function triage(issues, prs, ci = []) {
   const out = []
   const push = r => out.push({ id: `${r.kind}:${r.subjectKey}`, overBudgetBy: null, ageWorkDays: null, owner: null, ...r })
-  // sev 0 — red main. One red main blocks the whole team at once.
   for (const c of ci) if (c?.red) push({
     kind: 'red-main', severity: 0, subject: `${c.repo}@${c.branch} is red`, subjectKey: c.repo, project: c.project,
     owner: c.brokeIt ? { name: c.brokeIt } : null, deepLink: c.lastRun?.url || `https://github.com/${c.repo}/actions`,
@@ -696,7 +609,6 @@ function triage(issues, prs, ci = []) {
       ageWorkDays: p.openDays, deepLink: p.url, detail: 'checks failing',
     })
   }
-  // WIP > 2 per engineer — an operational fact about the queue, not a score about the person
   const wip = {}
   for (const i of issues) if (i.active && i.assignee) (wip[i.assignee.id] ||= { who: i.assignee, keys: [], project: i.project }).keys.push(i.key)
   for (const w of Object.values(wip)) if (w.keys.length > 2) push({
@@ -718,7 +630,6 @@ function reviewFlow(prs) {
   const rec = login => (R[login] ||= { login, awaiting: 0, oldestWaitDays: null, given30: 0, given90: 0, received30: 0, received90: 0, lat30: [], lat90: [] })
   for (const p of prs) {
     const open = p.state !== 'Merged' && p.state !== 'Closed'
-    // PRs sitting on a reviewer right now = requested and not yet reviewed by them
     if (open) for (const l of p.unanswered) {
       const r = rec(l)
       const askedAt = p.reviewRequests.filter(x => x.login === l).map(x => Date.parse(x.at)).sort((a, b) => a - b)[0] || Date.parse(p.createdAt)
@@ -726,7 +637,6 @@ function reviewFlow(prs) {
       r.awaiting++
       if (r.oldestWaitDays == null || wait > r.oldestWaitDays) r.oldestWaitDays = wait
     }
-    // reviews GIVEN + request→first-review latency, per reviewer
     const seen = new Set()
     for (const e of p.reviewEvents) {
       if (seen.has(e.login)) continue
@@ -739,7 +649,6 @@ function reviewFlow(prs) {
       if (lat != null && within(e.at, 90)) r.lat90.push(lat)
       if (lat != null && within(e.at, 30)) r.lat30.push(lat)
     }
-    // reviews RECEIVED, credited to the author
     if (p.author && !BOT(p.author)) {
       const a = rec(p.author)
       if (within(p.createdAt, 90)) a.received90 += p.reviewEvents.length
@@ -752,7 +661,6 @@ function reviewFlow(prs) {
     p50_30: pctl(r.lat30, 0.5), p90_30: pctl(r.lat30, 0.9), p50_90: pctl(r.lat90, 0.5), p90_90: pctl(r.lat90, 0.9),
     n30: r.lat30.length, n90: r.lat90.length,
   })).sort((a, b) => b.awaiting - a.awaiting || b.given90 - a.given90)
-  // team-level CONCENTRATION — the two seniors reviewing everything are the two people who will quit
   const totals = reviewers.map(r => r.given90).sort((a, b) => b - a)
   const sum = totals.reduce((a, b) => a + b, 0)
   const share = n => (sum ? +(totals.slice(0, n).reduce((a, b) => a + b, 0) / sum * 100).toFixed(1) : null)
@@ -778,11 +686,9 @@ function quality(issues, prs) {
     const parent = b.linkedKey ? byKey[b.linkedKey] : null
     const parentLive = parent?.liveAt ? Date.parse(parent.liveAt) : null
     const isEscaped = !!parentLive && Date.parse(b.created) > parentLive
-    b.escaped = isEscaped // escaped = filed AFTER the thing it belongs to went Live/Closed
+    b.escaped = isEscaped
     ;(isEscaped ? escaped : caught).push(b)
   }
-  // Cohort-correct: an escaped bug counts against the month ITS PARENT SHIPPED, so numerator and
-  // denominator describe the same release cohort. See eng-metrics.mjs for what this used to do.
   const escapeReport = escapeRateSeries({
     bugs: bugs.map(b => {
       const parent = b.linkedKey ? byKey[b.linkedKey] : null
@@ -791,7 +697,6 @@ function quality(issues, prs) {
     shipped: issues.filter(i => i.live && !i.isBug && i.liveAt).map(i => ({ liveAt: Date.parse(i.liveAt) })),
   })
   const escapeRate = escapeReport.series
-  // hotspots: bug → linkedKey → that ticket's prNums → prs[].files[].path, rolled up by the top-2 path segments
   const areaBugs = {}, areaShipped = {}
   const pathsOf = i => {
     const set = new Set()
@@ -808,7 +713,6 @@ function quality(issues, prs) {
     ...a, keys: a.keys.slice(0, 20), shipped: areaShipped[a.area] || 0,
     bugsPerShipped: areaShipped[a.area] ? +(a.bugs / areaShipped[a.area]).toFixed(2) : null,
   })).sort((a, b) => b.bugs - a.bugs).slice(0, 10)
-  // ownership concentration / bus factor — component × engineer, flagged at ≥70% from one person
   const comp = {}
   for (const i of issues) {
     if (!i.area || !i.live || !i.assignee) continue
@@ -817,8 +721,6 @@ function quality(issues, prs) {
   }
   const ownership = Object.values(comp).map(c => {
     const rows = Object.entries(c.by).map(([who, n]) => ({ who, n, share: +(n / c.total * 100).toFixed(1) })).sort((a, b) => b.n - a.n)
-    // An area with a single ticket has exactly one contributor; that is not a bus-factor risk,
-    // it is one ticket. Below the floor the answer is null — unknown, not safe and not risky.
     const bf = busFactor({ total: c.total, rows })
     return { area: c.area, total: c.total, contributors: rows.length, rows, top: rows[0] || null, busFactor: bf.busFactor, busFactorReason: bf.reason, busFactorMinN: bf.minN }
   }).sort((a, b) => b.total - a.total)
@@ -843,7 +745,7 @@ function bucketOf(i, B) {
   if (hits('ai')) return 'ai'
   if (hits('toil')) return 'toil'
   if (hits('feature')) return 'feature'
-  return 'feature' // sane default when no rule matches
+  return 'feature'
 }
 const BUCKETS = ['feature', 'bug-escaped', 'bug-qa', 'toil', 'ai']
 function investment(issues) {
@@ -856,7 +758,7 @@ function investment(issues) {
     const b = bucketOf(i, B)
     row.buckets[b].pts += i.pts; row.buckets[b].days += i.activeDays; row.buckets[b].n++
     row.pts += i.pts; row.days += i.activeDays
-    if (i.rework > 0) { row.reworkPts += i.pts; row.reworkDays += i.activeDays } // work we paid for twice
+    if (i.rework > 0) { row.reworkPts += i.pts; row.reworkDays += i.activeDays }
   }
   const months = Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)).slice(-6)
   for (const m of months) { m.pts = +m.pts.toFixed(1); m.days = +m.days.toFixed(1); m.reworkPts = +m.reworkPts.toFixed(1); m.reworkDays = +m.reworkDays.toFixed(1); for (const b of BUCKETS) { m.buckets[b].pts = +m.buckets[b].pts.toFixed(1); m.buckets[b].days = +m.buckets[b].days.toFixed(1) } }
@@ -870,12 +772,9 @@ function sprintNamesAt(i, t) {
   const evs = i.sprintEvents || []
   const before = evs.filter(e => e.at <= t)
   if (before.length) return nameList(before[before.length - 1].to)
-  if (evs.length) return nameList(evs[0].from)                 // never changed before t → the pre-first-event set
-  return (i.sprints || []).map(s => s.name)                    // no Sprint history at all → whatever it is in now
+  if (evs.length) return nameList(evs[0].from)
+  return (i.sprints || []).map(s => s.name)
 }
-// A sprint belongs to the PROJECT of the issues in it — never to a regex over its name. Half the boards
-// run sprints called "Sprint 5 - Week 10/11", which is not project-prefixed and (keyed by name alone)
-// merged two boards into one phantom team. Keyed by project+name, every sprint has a real owner.
 function sprintStats(issues) {
   const reg = {}
   for (const i of issues) for (const s of i.sprints || []) if (s.name) {
@@ -886,7 +785,6 @@ function sprintStats(issues) {
   for (const s of Object.values(reg)) if (s.startDate) (byProject[s.project] ||= []).push(s)
   const issuesOf = {}
   for (const i of issues) (issuesOf[i.project] ||= []).push(i)
-  // 6 most recent sprints PER PROJECT (a global top-6 starves the second board)
   const sprints = Object.values(byProject).flatMap(a => a.sort((x, y) => Date.parse(y.startDate) - Date.parse(x.startDate)).slice(0, 6))
   return sprints.map(s => {
     const start = Date.parse(s.startDate)
@@ -897,12 +795,10 @@ function sprintStats(issues) {
       const everIn = inNow || (i.sprintEvents || []).some(e => nameList(e.to).includes(s.name) || nameList(e.from).includes(s.name))
       if (!everIn) continue
       const liveAt = i.liveAt ? Date.parse(i.liveAt) : null
-      // A ticket that shipped BEFORE the sprint opened is sprint-tagged history, not a commitment and not
-      // a delivery. It was landing in both sets — that is where "delivered 4 months ago" came from.
       if (liveAt != null && liveAt < start) { preDone.push(i); continue }
       const atStart = sprintNamesAt(i, start).includes(s.name)
       const atEnd = sprintNamesAt(i, end).includes(s.name)
-      const done = liveAt != null && liveAt <= end   // ⇒ start ≤ liveAt ≤ end, by the guard above
+      const done = liveAt != null && liveAt <= end
       if (atStart) { committed.push(i); (done ? delivered : carried).push(i) }
       else if (atEnd || inNow) { added.push(i); if (done) addedDelivered.push(i) }
     }
@@ -912,18 +808,15 @@ function sprintStats(issues) {
       id: s.id, name: s.name, project: s.project, state: s.state, startDate: s.startDate, endDate: s.endDate, completeDate: s.completeDate,
       committed: committed.length, committedPts: cpts,
       added: added.length, addedPts: pts(added),
-      // delivered ⊆ committed, ALWAYS — say/do is "of what we committed, what shipped", so the numerator
-      // must be a subset of the denominator. It was not, and that is why sayDoPct read 2900%.
       delivered: delivered.length, deliveredPts: dpts,
       addedDelivered: addedDelivered.length, addedDeliveredPts: adpts,
-      shipped: delivered.length + addedDelivered.length, shippedPts: +(dpts + adpts).toFixed(1), // velocity: committed + injected
+      shipped: delivered.length + addedDelivered.length, shippedPts: +(dpts + adpts).toFixed(1),
       carriedOver: carried.length, carriedOverPts: pts(carried),
-      preDone: preDone.length, // already-Live tickets still tagged with this sprint — excluded from every number above
-      // n: the points-based ratio only speaks for the pointed tickets. Most are not pointed — show n, always.
+      preDone: preDone.length,
       committedPointed: committed.filter(i => i.pts > 0).length,
       injectionPct: cpts ? +(pts(added) / cpts * 100).toFixed(1) : null,
-      sayDoPct: cpts ? +(dpts / cpts * 100).toFixed(1) : null,                                   // ≤ 100 by construction
-      sayDoCountPct: committed.length ? +(delivered.length / committed.length * 100).toFixed(1) : null, // the honest one when nothing is pointed
+      sayDoPct: cpts ? +(dpts / cpts * 100).toFixed(1) : null,
+      sayDoCountPct: committed.length ? +(delivered.length / committed.length * 100).toFixed(1) : null,
       keys: { committed: committed.map(i => i.key), added: added.map(i => i.key), delivered: delivered.map(i => i.key), carriedOver: carried.map(i => i.key), preDone: preDone.map(i => i.key) },
     }
   })
@@ -936,7 +829,6 @@ function writeEpicTargets(o) { fs.writeFileSync(EPIC_FILE, JSON.stringify(o, nul
 function epicRollup(issues) {
   const byKey = {}; for (const i of issues) byKey[i.key] = i
   const targets = readEpicTargets()
-  // trailing-8-week velocity, in points per working day
   const since = Date.now() - 56 * DAY
   const vel = issues.filter(i => i.live && i.liveAt && Date.parse(i.liveAt) >= since).reduce((a, i) => a + (i.pts || 0), 0)
   const perDay = vel / Math.max(1, workDays(since, Date.now()))
@@ -945,7 +837,7 @@ function epicRollup(issues) {
   const bugsByParent = {}
   for (const i of issues) if (i.isBug && i.linkedKey) (bugsByParent[i.linkedKey] ||= []).push(i)
   return Object.values(groups)
-    .filter(g => g.kids.some(k => !k.live)) // in flight only
+    .filter(g => g.kids.some(k => !k.live))
     .map(g => {
       const done = g.kids.filter(k => k.live)
       const ptsDone = +done.reduce((a, k) => a + (k.pts || 0), 0).toFixed(1)
@@ -985,7 +877,7 @@ function loadStats(prs, issues, members) {
     if (p.author) w.authors.add(p.author)
   }
   const rows = Object.values(weeks).sort((a, b) => a.week.localeCompare(b.week)).slice(-12).map(w => {
-    const suppressed = w.authors.size < MIN_N // below the floor the cell renders "—", server-side. There is no drilldown.
+    const suppressed = w.authors.size < MIN_N
     return {
       week: w.week, prs: suppressed ? null : w.n, contributors: w.authors.size, suppressed,
       offHoursPct: suppressed ? null : +(w.off / w.n * 100).toFixed(1),
@@ -1002,19 +894,6 @@ function loadStats(prs, issues, members) {
 }
 
 // ---------- snapshot (cached per project: in-memory TTL, warm-started from disk) ----------
-// A cold snapshotAll() is ~65s of live JIRA + GitHub. Everything downstream waits on it (/api/inbox, the
-// delivery tiles, the career team plane, the game engine), so an in-memory-only cache made EVERY restart a
-// 65s first request. The snapshot is therefore also persisted to disk: on boot we seed the in-memory map
-// from it and answer immediately — stale but LABELLED (honest `generatedAt` + `stale`, which the UI's
-// provenance strip already renders amber) — while a background refresh replaces it.
-//   · absent / corrupt / older-schema / ancient file → ignored, we fall back to the live fetch. Never fatal.
-//   · errors[] on a stale answer describes the CURRENT auth state, not the state when the file was written,
-//     so a JIRA/GitHub login that broke since cannot hide behind the cache.
-//   · PLANE A only, by construction: this persists exactly the payload the API already serves — JIRA issues,
-//     GitHub PRs, CI runs. No transcript-derived or per-person telemetry field exists in it to persist.
-// key -> {at, data}. Every invalidation site (creds change, roster edit, ?fresh=1, ownership override) must
-// drop the DISK copy too, or the next restart resurrects exactly the snapshot we just invalidated — so the
-// map owns that. Deferred a microtask, to let a paired `ciCache.delete(k)` on the same line land first.
 const snaps = new class extends Map {
   delete(k) { const r = super.delete(k); queueMicrotask(persistDisk); return r }
   clear() { super.clear(); queueMicrotask(persistDisk) }
@@ -1022,28 +901,26 @@ const snaps = new class extends Map {
 const SNAP_TTL = DATA_TTL // the JIRA+GitHub aggregate
 const SNAP_FILE = path.join(os.homedir(), '.claude', 'eng-snapshot.json') // alongside career.json
 const SNAP_SCHEMA = 1
-const SNAP_MAX_AGE = 14 * DAY // older than this the disk copy is scrapped, not served
+const SNAP_MAX_AGE = 14 * DAY
 function loadDisk() {
   let j
-  try { j = JSON.parse(fs.readFileSync(SNAP_FILE, 'utf8')) } catch { return false } // absent or corrupt → cold
-  if (!j || j.v !== SNAP_SCHEMA || typeof j.snaps !== 'object') return false        // unknown/older schema → cold
+  try { j = JSON.parse(fs.readFileSync(SNAP_FILE, 'utf8')) } catch { return false }
+  if (!j || j.v !== SNAP_SCHEMA || typeof j.snaps !== 'object') return false
   const fresh = at => typeof at === 'number' && at > 0 && Date.now() - at < SNAP_MAX_AGE
   const sane = d => d && d.available && Array.isArray(d.issues) && Array.isArray(d.prs) && Array.isArray(d.members)
   for (const [k, e] of Object.entries(j.snaps)) if (e && fresh(e.at) && sane(e.data)) snaps.set(k, { at: e.at, data: e.data })
   for (const [k, e] of Object.entries(j.ci || {})) if (e && fresh(e.at) && Date.now() - e.at < CI_FILE_TTL) ciCache.set(k, { at: e.at, data: e.data })
   return snaps.size > 0
 }
-function persistDisk() { // atomic: a kill mid-write leaves the previous good file, never half a JSON
+function persistDisk() {
   try {
     fs.mkdirSync(path.dirname(SNAP_FILE), { recursive: true })
     const pick = m => Object.fromEntries([...m].map(([k, e]) => [k, { at: e.at, data: e.data }]))
     const tmp = `${SNAP_FILE}.${process.pid}.tmp`
     fs.writeFileSync(tmp, JSON.stringify({ v: SNAP_SCHEMA, writtenAt: new Date().toISOString(), snaps: pick(snaps), ci: pick(ciCache) }))
     fs.renameSync(tmp, SNAP_FILE)
-  } catch (e) { console.error('[eng] snapshot persist failed:', e.message) } // a full disk must not break the API
+  } catch (e) { console.error('[eng] snapshot persist failed:', e.message) }
 }
-// The CURRENT auth state — cheap (a memoized `gh auth status` + two file reads), so a stale answer can still
-// tell the truth about a login that broke after the cache was written.
 let ghOkMemo = { at: 0, ok: false }
 function ghAuthed() { if (Date.now() - ghOkMemo.at > 60_000) ghOkMemo = { at: Date.now(), ok: ghAvailable() }; return ghOkMemo.ok }
 const GH_UNAUTHED = 'gh CLI not authenticated (`gh auth status` failed) — PR, review and CI panels are empty, not zero'
@@ -1055,13 +932,10 @@ function authErrors() {
   return errs
 }
 const dedupeErrs = errs => [...new Map(errs.map(e => [`${e.source}§${e.message}`, e])).values()]
-// what a consumer gets while the refresh runs behind it: the last good payload, its real generatedAt, and a
-// truthful errors[]. generatedAt is NOT bumped — the provenance strip must be able to see the age.
 const staleView = (data, at) => ({
   ...data, stale: true, refreshing: true, cachedAt: new Date(at).toISOString(), ageMs: Date.now() - at,
   errors: dedupeErrs([...(data.errors || []), ...authErrors()]),
 })
-// §3: the REAL error text, not console.error. A swallowed gh failure renders a confident zero-PR dashboard.
 function safe(fn, dflt, errs) {
   try { return fn() } catch (e) {
     console.error('[eng]', e.message)
@@ -1069,11 +943,10 @@ function safe(fn, dflt, errs) {
     return dflt
   }
 }
-// everything derived, computed once, over whatever issue/PR set it is handed (one project or all of them)
 const derive = (issues, prs, members, ci) => ({
   triage: triage(issues, prs, ci),
   review: reviewFlow(prs),
-  quality: quality(issues, prs),     // sets i.escaped as a side-effect — investment() reads it
+  quality: quality(issues, prs),
   investment: investment(issues),
   sprints: sprintStats(issues),
   epics: epicRollup(issues),
@@ -1092,13 +965,13 @@ async function snapshot(cfg, { fresh = false } = {}) {
   if (hit) { refresh(cfg); return staleView(hit.data, hit.at) }
   return refresh(cfg)
 }
-const inflight = new Map() // one live fetch per project, however many callers pile onto it
+const inflight = new Map()
 function refresh(cfg) {
   const k = cfg.key
   if (inflight.has(k)) return inflight.get(k)
   const p = computeSnapshot(cfg).finally(() => inflight.delete(k))
   inflight.set(k, p)
-  p.catch(e => console.error('[eng] refresh', k, e.message)) // background callers never await it
+  p.catch(e => console.error('[eng] refresh', k, e.message))
   return p
 }
 async function computeSnapshot(cfg) {
@@ -1107,9 +980,6 @@ async function computeSnapshot(cfg) {
   if (!gh0) errors.push({ source: 'gh', message: GH_UNAUTHED, at: new Date().toISOString() })
   const prErrN = errors.length
   const prs = gh0 ? safe(() => fetchPRs(cfg), [], errors) : []
-  // a transient gh failure (auth blip, GitHub 502) yields prs=[] — surfaced in errors[], cached in memory for
-  // this run, but NOT written to disk: a degraded snapshot must never overwrite the last-good one on disk, or
-  // a later restart would serve prs=0 as "warm" with gh auth healthy and so no error to flag it.
   const prsFailed = errors.length > prErrN
   const prsByTicket = {}; for (const p of prs) (prsByTicket[p.ticket] ||= []).push(p)
   const { issues: raw, F } = await jiraIssues(cfg)
@@ -1133,7 +1003,7 @@ async function computeSnapshot(cfg) {
     ...derive(issues, prs, members, ci),
   }
   snaps.set(cfg.key, { at: Date.now(), data })
-  if (!prsFailed) persistDisk() // ← the whole point: the next boot comes up warm instead of paying 65s again
+  if (!prsFailed) persistDisk()
   return data
 }
 async function snapshotAll({ fresh = false } = {}) {
@@ -1151,7 +1021,6 @@ async function snapshotAll({ fresh = false } = {}) {
     ...avail.flatMap(p => p.errors || []),
     ...parts.filter(p => !p.available).map(p => ({ source: 'project', project: p.key, message: `${p.name || p.key}: ${p.error}`, at: new Date().toISOString() })),
   ])
-  // the aggregate is only as fresh as its OLDEST part — bumping generatedAt to now would hide a stale half
   const stale = avail.some(p => p.stale)
   const gens = avail.map(p => Date.parse(p.generatedAt)).filter(t => t > 0)
   return {
@@ -1159,7 +1028,6 @@ async function snapshotAll({ fresh = false } = {}) {
     projects: projectList(), generatedAt: new Date(gens.length ? Math.min(...gens) : Date.now()).toISOString(),
     stale, refreshing: stale, ageMs: gens.length ? Date.now() - Math.min(...gens) : 0,
     ghAvailable: avail.some(p => p.ghAvailable), issues, prs, members, okrs: OKRS,
-    // §9: keep the project boundaries the old flatMap destroyed
     byProject: avail.map(p => ({ key: p.team.key, name: p.team.name, issues: p.issues, prs: p.prs })),
     errors, writes: avail.some(p => p.writes),
     provenance: { jql: loadProjects().map(p => ({ project: p.key, jql: p.jql })), graphql: GQL, ghCommand: loadProjects().filter(p => p.githubRepo).map(p => ({ project: p.key, cmd: ghCommandFor(p.githubRepo) })), workingTime: describeWork(WORK()), ttlMs: SNAP_TTL },
@@ -1169,9 +1037,6 @@ async function snapshotAll({ fresh = false } = {}) {
 async function snapFor(key, opts = {}) {
   if (key === 'all') return snapshotAll(opts)
   const projs = loadProjects()
-  // String()-coerced for the same reason as cfgFor: `?project[]=x` arrives as an array, which has
-  // no .toUpperCase. Here it is caught by the routes' try blocks and surfaces as a 500 with a
-  // TypeError message rather than killing the process — still wrong, same one-line fix.
   const k = String(key ?? '').toUpperCase()
   return snapshot(projs.find(p => p.key === k) || projs[0], opts)
 }
@@ -1209,33 +1074,15 @@ const OKRS = {
 }
 
 // ---------- per-ticket detail + AI artifacts (Sprint analytics) ----------
-// Detail is fetched on demand (not in the bulk snapshot) so the board stays lean: JIRA description +
-// comments (from renderedFields HTML) + status/assignee/sprint changelog timeline + linked-PR/commit
-// context (from the cached PR list, plus one `gh pr view` per PR for commit subjects). AC & test cases
-// are generated by `claude -p` (same mechanism as career-analyze) and persisted keyed by JIRA key.
 const ARTIFACTS_FILE = ENG_STATE.artifacts
 function readArtifacts() { try { return JSON.parse(fs.readFileSync(ARTIFACTS_FILE, 'utf8')) } catch { return {} } }
 function writeArtifacts(o) { fs.writeFileSync(ARTIFACTS_FILE, JSON.stringify(o, null, 2)) }
 const hashOf = s => crypto.createHash('sha256').update(s).digest('hex')
-// `|| projs[0]` used to be the fallback here. For the Sprint board that was harmless — the project
-// came from a row that already knew it. For a key-first entry point, where the KEY is the only input,
-// it silently resolves e.g. `XYZ-12` against the first configured project: wrong JIRA host, wrong
-// repo, no error. So an explicit project id still wins, then the key's own prefix, and an unknown
-// project is `null` — callers report "unknown project" rather than guessing (README.md §Honesty).
-// String() rather than `key || ''`: Express's query parser turns `?project[]=x` or a repeated
-// `?project=a&project=b` into an ARRAY, and `?project[x]=y` into an OBJECT, neither of which has
-// .toUpperCase. With at least one project configured the predicate runs and throws a TypeError —
-// and because the route handlers resolve the project before entering their try block, that becomes
-// an unhandled rejection, which Node 22 turns into a process exit. One malformed URL would take
-// the whole dashboard down.
 const cfgFor = key => { const k = String(key ?? '').toUpperCase(); return loadProjects().find(p => p.key === k) || null }
-/** Resolve the project that owns a ticket key: explicit id first, else the key's prefix. */
 const cfgForTicket = (key, project) => cfgFor(Array.isArray(project) ? project[0] : project) || cfgFor(String(key ?? '').split('-')[0])
-/** Legacy call sites that genuinely mean "the only/first project" say so out loud. */
 const firstProject = () => loadProjects()[0] || null
 
 const decodeEnt = s => String(s).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-// JIRA renderedFields give HTML — turn it into readable text, keeping block/list line breaks.
 function htmlToText(html) {
   if (!html) return ''
   return decodeEnt(String(html).replace(/<\s*(br|\/p|\/li|\/h[1-6]|\/tr)\s*\/?>/gi, '\n').replace(/<\s*li[^>]*>/gi, '• ').replace(/<[^>]+>/g, ''))
@@ -1257,21 +1104,11 @@ function prCommits(cfg, num) {
   } catch { return [] }
 }
 
-// A field can arrive as rendered HTML (`renderedFields`) or as raw ADF (`fields`), and which one you
-// get is NOT uniform: `expand=renderedFields` renders the DESCRIPTION but leaves COMMENT bodies as
-// ADF. Passing ADF to htmlToText() yields the literal string "[object Object]" — see lib/adf.mjs for
-// why that mattered far more than a display glitch. Select on shape, never on provenance.
 function richText(v) {
   if (isAdf(v)) return adfToText(v).text
   return htmlToText(v)
 }
 
-// The snapshot ONLY if one is already in memory. `snapshot()` blocks on a COLD cache — the module's
-// own comment at §snapshotAll calls that "~65s of live JIRA + GitHub" — and it was being awaited here
-// purely to attach linked-PR context. That made every ticket read pay a minute on a cold start, which
-// is precisely the cost a key-first entry point exists to avoid. Warm or stale: serve it. Cold: kick
-// off a background refresh and report `loaded:false`, so the UI can say "PR context not loaded"
-// instead of the false "no PRs" (README.md "Honesty rules" §1).
 function snapWarm(cfg) {
   const hit = snaps.get(cfg.key)
   if (!hit) { try { refresh(cfg) } catch {} ; return null }
@@ -1295,11 +1132,6 @@ async function ticketDetail(cfg, key, { waitForPrs = false, withCommits = false 
   const comments = (rf.comment?.comments || iss.fields.comment?.comments || []).map(c => ({ author: c.author?.displayName || '', at: c.created, body: richText(c.body) }))
   const snap = waitForPrs ? await snapshot(cfg).catch(() => null) : snapWarm(cfg)
   const prsRaw = (snap?.prs || []).filter(p => p.ticket === key)
-  // §commits — prCommits() shells out via gh(), which is spawnSync with a 20s timeout, called
-  // SERIALLY inside this map. Three linked PRs is up to a minute of blocked event loop on a
-  // single-process server, and it was paid on every ticket read whether or not anyone looked at the
-  // commit subjects. That is a larger and more reliable cost than the cold-snapshot path, because
-  // warmBoot() usually leaves the snapshot warm. Off by default; the generation path opts in.
   const prs = prsRaw.map(p => ({
     num: p.num, repo: p.repo, title: p.title, state: p.state, branch: p.branch, changedFiles: p.changedFiles,
     files: (p.files || []).map(f => f.path).slice(0, 40),
@@ -1308,8 +1140,6 @@ async function ticketDetail(cfg, key, { waitForPrs = false, withCommits = false 
   const data = {
     key, summary: iss.fields.summary, type: iss.fields.issuetype?.name || '', status: iss.fields.status?.name || '',
     description: richText(rf.description ?? iss.fields.description), comments, history: historyOf(iss.changelog), prs,
-    // `loaded:false` is not the same fact as `prs:[]`, and the UI must be able to tell them apart
-    // (README.md "Honesty rules" §1). `commits` says whether the subjects were fetched at all.
     prContext: { loaded: !!snap, prs: prs.length, commits: withCommits },
   }
   ticketCache.set(key, { at: Date.now(), data })
@@ -1325,29 +1155,16 @@ function genPrompt(kind, d) {
   return `${GEN[kind]}\n\n# ${d.key} — ${d.summary}\nType: ${d.type} · Status: ${d.status}\n\n## Description\n${d.description || '(none)'}\n\n## Comments\n${d.comments.map(c => `- ${c.author}: ${c.body}`).join('\n') || '(none)'}\n\n## Linked PR / commit context\n${prs || '(none)'}`
 }
 
-// §staleness — hash the REQUIREMENT, not the prompt.
-// Staleness used to be `inputHash !== hashOf(genPrompt(kind, d))`, and genPrompt interpolates the
-// ticket STATUS, every comment body, and per-PR commit subjects fetched live from `gh pr view`. So a
-// To-Do -> In Progress transition, a teammate's "+1", or one new commit flipped a perfectly current
-// artifact to "⚠ ticket changed since this was generated". High-frequency false positives train the
-// user to ignore the badge, which destroys the signal for the case that actually matters.
-// What makes acceptance criteria wrong is a change to what is being ASKED FOR.
 const reqHash = d => hashOf(JSON.stringify([d.summary || '', d.description || '', d.type || '']))
 
-/** Attach staleness to the saved artifacts for a ticket. `edited` is displayed, never a suppressor. */
 function artifactsFor(d) {
   const art = readArtifacts()[d.key] || {}
   const h = reqHash(d)
   const one = kind => {
     const a = art[kind]
     if (!a) return null
-    // Artifacts written before this change carry `inputHash` (over the whole prompt) and no
-    // `reqHash`. Their staleness is genuinely unknown — say so rather than claiming "current".
     if (a.reqHash === undefined) return { ...a, stale: null, staleReason: 'generated before staleness tracked the requirement — regenerate to start tracking' }
     const stale = a.reqHash !== h
-    // A requirement-only hash cannot see that the PR half of the input was missing when this ran,
-    // so that fact is carried on the artifact and reported separately rather than folded into
-    // `stale` — "generated from partial input" and "the requirement changed" are different facts.
     const thin = a.prContextLoaded === false && d.prContext.loaded
     return { ...a, stale, ...(thin && !stale ? { partialInput: 'generated before linked-PR context was available — regenerate to include it' } : {}) }
   }
@@ -1362,19 +1179,10 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
   return { md, model: out.model || 'claude' }
 }
 
-// Named exports for the other data-plane-A consumers (server.mjs inbox, scheduler).
-// Nothing here reads a transcript, a token count or a session — and nothing that does may import from it.
 export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
-// For server/ticket.mjs — the key-first Ticket section. These are PLANE A reads (JIRA work
-// artifacts); exporting them lets that module reuse the fetch path rather than re-implement it.
-// The dependency runs one way only: ticket.mjs may import from here, never the reverse — enforced
-// by test/server/eng-privacy.test.js, because ticket.mjs holds agent sessions and cost (plane B).
 export { ticketDetail, cfgForTicket, firstProject, artifactsFor, reqHash, readArtifacts, writeArtifacts, genPrompt }
 
 // ---------- routes ----------
-// Boot: seed from disk (sync, before the first request can land), then refresh in the background only what is
-// actually past its TTL. Deliberately NOT at module scope — importing this file (the privacy tests do) must
-// never fire a JIRA/GitHub fetch.
 function warmBoot() {
   const warm = loadDisk()
   const cold = loadProjects().filter(p => { const h = snaps.get(p.key); return !h || Date.now() - h.at >= SNAP_TTL })
@@ -1382,10 +1190,6 @@ function warmBoot() {
   if (!cold.length) return
   console.log(`[eng] refreshing ${cold.map(p => p.key).join(', ')} in the background`)
   // ponytail: refresh() is async in signature only — gh()/ghAuthed() are spawnSync, so it runs to completion
-  // synchronously. Called inline it blocks module eval, app.listen() never binds, and every proxied /api/* call
-  // gets ECONNREFUSED until the GitHub pagination ends. setImmediate lets eval finish and the port come up first.
-  // Ceiling: the refresh still blocks the event loop while it runs, so those first requests queue instead of
-  // failing. Move gh() to async spawn if the queueing pause itself becomes the problem.
   setImmediate(() => { for (const p of cold) refresh(p).catch(() => {}) })
 }
 
@@ -1408,17 +1212,16 @@ export default function mountEng(app) {
     const { name, githubRepo, jiraHost, members } = req.body || {}
     if (githubRepo && !/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) return res.status(400).json({ error: 'githubRepo must be owner/name' })
     upsertProject({ key, ...(name ? { name } : {}), ...(githubRepo ? { githubRepo } : {}), ...(jiraHost ? { jiraHost } : {}), ...rostersFrom(members) })
-    snaps.delete(key); FIELDS.delete(key) // roster/repo change invalidates this project's cache
+    snaps.delete(key); FIELDS.delete(key)
     res.json({ ok: true, projects: projectList() })
   })
   app.get('/api/eng/creds', (req, res) => { const { email, token } = creds(); res.json({ hasCreds: !!(email && token), email }) })
-  // who is running this dashboard: {login, email, accountId}. Any field may be null; it never 500s.
   app.get('/api/eng/me', async (req, res) => { try { res.json(await whoAmI()) } catch { res.json({ login: null, email: null, accountId: null }) } })
   app.post('/api/eng/creds', (req, res) => {
     const { email, token } = req.body || {}
     if (!email || !token) return res.status(400).json({ error: 'email and API token both required' })
     fs.writeFileSync(SECRETS_FILE, JSON.stringify({ jiraEmail: email, jiraToken: token }, null, 2))
-    snaps.clear() // new creds → recompute
+    snaps.clear()
     res.json({ ok: true })
   })
   app.get('/api/eng/bug-ownership', (req, res) => res.json(readBugOwn()))
@@ -1428,7 +1231,7 @@ export default function mountEng(app) {
     const o = readBugOwn()
     o[key] = { ...(o[key] || {}), ...(ownerId !== undefined ? { ownerId: ownerId || null } : {}), ...(fixerId !== undefined ? { fixerId: fixerId || null } : {}) }
     if (!o[key].ownerId && !o[key].fixerId) delete o[key]
-    writeBugOwn(o); snaps.clear() // ownership feeds ratios — invalidate so the next snapshot reflects it
+    writeBugOwn(o); snaps.clear()
     res.json({ ok: true, ownership: o[key] || null })
   })
   app.get('/api/eng/snapshot', async (req, res) => {
@@ -1456,7 +1259,6 @@ export default function mountEng(app) {
       res.json({ generatedAt: s.generatedAt, items: s.triage, dismissed: readTriage(), errors: s.errors, writes: s.writes })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
-  // dismiss-for-today (or forever). `until` is an ISO string; omit for a 1-working-day snooze.
   app.post('/api/eng/triage/dismiss', (req, res) => {
     const { id, until, forever } = req.body || {}
     if (!id) return res.status(400).json({ error: 'id required' })
@@ -1493,12 +1295,11 @@ export default function mountEng(app) {
     const o = readEpicTargets()
     if (targetDate) o[key] = { targetDate, at: new Date().toISOString() }
     else delete o[key]
-    writeEpicTargets(o); snaps.clear() // the forecast delta is computed in the snapshot
+    writeEpicTargets(o); snaps.clear()
     res.json({ ok: true, targets: o })
   })
 
   // ---- writes (§writes) — gated on projects.json "writes": true, operator's own credentials, one call each.
-  // The DEFAULT everywhere in the UI is copy-to-clipboard. These exist so an opt-in team can act in one click.
   app.post('/api/eng/pr/:num/comment', (req, res) => {
     const cfg = cfgFor(req.query.project || req.body?.project) || firstProject()
     if (!cfg) return res.status(400).json({ error: 'no project configured — add one in Setup' })
@@ -1536,19 +1337,14 @@ export default function mountEng(app) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // ticket detail — content, comments, history, linked-PR context + any saved AC/test-case artifacts
   app.get('/api/eng/ticket/:key', async (req, res) => {
     const cfg = cfgForTicket(req.params.key, req.query.project)
     if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
     try {
-      // The Sprint drawer keeps the old blocking snapshot behaviour: it is only reachable once a
-      // snapshot exists, so awaiting one costs nothing there. It does NOT render commit subjects,
-      // so it no longer pays for them either.
       const d = await ticketDetail(cfg, req.params.key.toUpperCase(), { waitForPrs: true })
       res.json({ ...d, artifacts: artifactsFor(d) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
-  // generate acceptance criteria / test cases via `claude -p`, persist keyed by JIRA key
   app.post('/api/eng/ticket/:key/generate', async (req, res) => {
     const cfg = cfgForTicket(req.params.key, req.query.project || req.body?.project)
     if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
@@ -1556,49 +1352,35 @@ export default function mountEng(app) {
       const kind = req.body?.kind
       if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
       const key = req.params.key.toUpperCase()
-      // Generation is the one path that genuinely reads commit subjects (genPrompt interpolates
-      // them), so it is the one path that pays for them.
       const d = await ticketDetail(cfg, key, { waitForPrs: true, withCommits: true })
       const prompt = genPrompt(kind, d)
       const { md, model } = claudeMarkdown(prompt)
       const store = readArtifacts()
       store[key] = {
         ...(store[key] || {}),
-        // `prContextLoaded` records whether the PR half of the input was actually present. Without
-        // it, an artifact generated while the snapshot was cold was built from
-        // "## Linked PR / commit context\n(none)" and — since staleness now keys only off the
-        // requirement — would never be flagged once the snapshot warmed. That is the same shape as
-        // the [object Object] bug: silently degraded input, confident output.
         [kind]: { md, at: new Date().toISOString(), model, reqHash: reqHash(d), prContextLoaded: d.prContext.loaded, edited: false },
       }
       writeArtifacts(store)
       res.json({ ...store[key][kind], stale: false })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
-  // save a hand-edited artifact
   app.put('/api/eng/ticket/:key/artifact', async (req, res) => {
     const { kind, md } = req.body || {}
     if (!['ac', 'tests'].includes(kind)) return res.status(400).json({ error: 'kind must be ac|tests' })
     const key = req.params.key.toUpperCase()
     const store = readArtifacts()
-    // §staleness — the hash is refreshed on a hand-edit too. It used to be left untouched while
-    // `edited:true` was ALSO used to suppress the staleness check, so the first hand-edit disabled
-    // staleness for that artifact permanently: the better the artifact got, the less it was
-    // monitored. `edited` is now presentation only.
     const prev = store[key]?.[kind] || {}
     let hash = prev.reqHash
     try {
       const cfg = cfgForTicket(key, req.query.project || req.body?.project)
       if (cfg) hash = reqHash(await ticketDetail(cfg, key))
-    } catch { /* offline / no creds: keep the previous hash rather than inventing one */ }
+    } catch { }
     store[key] = { ...(store[key] || {}), [kind]: { ...prev, md, at: new Date().toISOString(), reqHash: hash, edited: true } }
     writeArtifacts(store)
     res.json({ ...store[key][kind], stale: false })
   })
 
   // ---- write generated content back to the ticket (§writes) ----
-  // An artifact that cannot leave this app is a private note, not a deliverable. v3 comment bodies
-  // accept neither HTML nor markdown — the body MUST be an ADF document — hence markdownToAdf.
   app.post('/api/eng/ticket/:key/comment', async (req, res) => {
     const cfg = cfgForTicket(req.params.key, req.query.project || req.body?.project)
     if (!cfg) return res.status(404).json({ error: `no project configured for "${String(req.params.key).split('-')[0]}" — add it in Setup` })
@@ -1614,7 +1396,7 @@ export default function mountEng(app) {
       })
       if (!r.ok) throw new Error(`jira ${r.status}: ${(await r.text()).slice(0, 180)}`)
       const j = await r.json()
-      ticketCache.delete(key) // the comment we just posted is part of the ticket now
+      ticketCache.delete(key)
       res.json({ ok: true, id: j.id, url: `https://${cfg.jiraHost}/browse/${key}?focusedCommentId=${j.id}` })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })

@@ -4,9 +4,6 @@ import { Spark } from './charts.jsx'
 import { of, pos, MIN_N } from './stats.js'
 import { shippedIn, prevWindow } from './TimeLens.jsx'
 
-// §9 — when project = "all", render a ROW PER PROJECT instead of one merged blob. The EM manages 3-4 teams
-// and today physically cannot answer "which team needs me this Monday" without opening the dashboard four
-// times and diffing screenshots by eye. snapshotAll() keeps the boundaries now (byProject); we just draw them.
 const worst = (rows, f, inv = true) => {
   const vals = rows.map(f).filter(v => v != null)
   if (!vals.length) return null
@@ -24,7 +21,6 @@ export default function Compare({ snap, win, onProject }) {
     const escaped = p.issues.filter(i => i.isBug && i.escaped && shippedIn(win, i)).length
     const rev = of(p.prs.filter(x => x.firstReviewFromRequestDays != null), x => x.firstReviewFromRequestDays)
     const atRisk = (snap.triage || []).filter(t => t.project === p.key).length
-    // 6-month cycle-time p50 sparkline
     const spark = []
     for (let k = 5; k >= 0; k--) {
       const d = new Date(); d.setMonth(d.getMonth() - k)

@@ -15,11 +15,8 @@ import {
 } from '../../lib/capability-provenance.mjs'
 
 // ---------------------------------------------------------------------------
-// fixtures — the two malformed shapes found in the wild are spelled out in full, because the
-// exact bytes are the point: both files look fine to a human and are inert to Claude Code.
 // ---------------------------------------------------------------------------
 
-/** Healthy SuperClaude-shaped command, for contrast. */
 const GOOD_COMMAND = `---
 name: implement
 description: Implement a feature end to end
@@ -30,7 +27,6 @@ personas: [architect, security-engineer]
 Do the work.
 `
 
-/** REAL SHAPE 1 — the opening \`---\` was never typed. The keys are prompt text. */
 const MISSING_OPEN_DELIMITER = `name: troubleshoot
 description: Diagnose a failing build
 category: utility
@@ -39,7 +35,6 @@ category: utility
 Walk the failure back to its cause.
 `
 
-/** REAL SHAPE 2 — the frontmatter is inside a fenced block, i.e. it is documentation. */
 const FM_INSIDE_CODE_FENCE = '```yaml\n' + `---
 name: brainstorm
 description: Turn a vague idea into requirements
@@ -47,7 +42,6 @@ description: Turn a vague idea into requirements
 ` + '```\n\nAsk questions until the requirement is concrete.\n'
 
 // ---------------------------------------------------------------------------
-// 115 — framework attribution
 // ---------------------------------------------------------------------------
 
 test('a command installed under commands/sc/ is attributed to SuperClaude with high confidence', () => {
@@ -58,8 +52,6 @@ test('a command installed under commands/sc/ is attributed to SuperClaude with h
 })
 
 test('an agent carrying the Context Framework Note banner is attributed from its body alone', () => {
-  // The banner is stamped into every SuperClaude agent; agents install flat into ~/.claude/agents,
-  // so the path carries no signal and the body is the only attributing evidence there is.
   const body = 'You are an architect.\n\n> **Context Framework Note**: this agent is part of SuperClaude.\n'
   const got = detectFramework('/home/u/.claude/agents/system-architect.md', {}, body, { kind: 'agents' })
   assert.equal(got.framework, 'superclaude')
@@ -68,14 +60,10 @@ test('an agent carrying the Context Framework Note banner is attributed from its
 })
 
 test("a hand-written command outside any framework directory is attributed to nobody", () => {
-  // The regression this guards: an "attribute to the closest match" detector labels a user's own
-  // command as vendor-installed, and the ledger then bills their work to SuperClaude's ROI row.
   assert.equal(detectFramework('/home/u/.claude/commands/deploy.md', { description: 'ship it' }, 'Deploy.', { kind: 'commands' }), null)
 })
 
 test('a skill whose name merely collides with a framework skill is not attributed on that alone', () => {
-  // `pm` and `brainstorm` are names a human picks unprompted. A single weak signal is not an
-  // attribution — this is the case where guessing would be actively harmful.
   const got = detectFramework('/home/u/.claude/skills/brainstorm/SKILL.md', { name: 'brainstorm', description: 'ideas' }, 'Ask questions.', { kind: 'skills' })
   assert.equal(got, null)
 })
@@ -93,8 +81,6 @@ test('a colliding skill name plus an installed-framework signal yields a low-con
 })
 
 test('an installed framework on its own never attributes a file to that framework', () => {
-  // Corroborating evidence says the framework exists on the machine, which is not a reason to
-  // believe any particular file came from it.
   const got = detectFramework('/home/u/.claude/commands/deploy.md', {}, 'Deploy.', {
     kind: 'commands',
     settings: { enabledPlugins: { 'superclaude@superclaude': true } },
@@ -108,7 +94,7 @@ test('two independent weak signals reach medium confidence without any strong on
     '/home/u/.claude/skills/troubleshoot/SKILL.md',
     { name: 'troubleshoot', description: 'd', category: 'utility' },
     'body',
-    { kind: 'commands' }, // frontmatter-shape rule applies to flat kinds
+    { kind: 'commands' },
   )
   assert.equal(got.confidence, 'medium')
   assert.equal(got.basis.length, 2)
@@ -123,8 +109,6 @@ test('a disabled plugin entry is not corroborating evidence', () => {
 })
 
 test('a file inside a marketplace plugin directory is attributed to that plugin by name', () => {
-  // Path-derived rather than table-driven, so a plugin this module has never heard of still
-  // attributes correctly instead of falling through to "unknown".
   const got = detectFramework('/home/u/.claude/plugins/acme-tools@acme-market/commands/lint.md', {}, '', { kind: 'commands' })
   assert.equal(got.framework, 'plugin:acme-tools@acme-market')
   assert.equal(got.name, 'acme-tools')
@@ -146,14 +130,12 @@ test('windows-style paths attribute identically to posix ones', () => {
 })
 
 test('detection never throws on junk input', () => {
-  // Attribution must not be able to take down a ledger row.
   for (const args of [[null, null, null], [undefined, undefined, undefined], [42, [], {}], ['', { a: 1 }, '']])
     assert.doesNotThrow(() => detectFramework(...args))
   assert.equal(detectFramework(null, null, null), null)
 })
 
 // ---------------------------------------------------------------------------
-// 116 — frontmatter linting
 // ---------------------------------------------------------------------------
 
 test('a well-formed capability file produces no findings', () => {
@@ -164,9 +146,6 @@ test('a well-formed capability file produces no findings', () => {
 })
 
 test('a file missing its opening --- is reported as an error, not as "no frontmatter"', () => {
-  // The real failure: the author typed the closing `---` only. Claude Code finds no block, loads
-  // the file as prompt text, and the `description` never reaches the selector — so the capability
-  // is invisibly inert. Reporting this as a benign "no frontmatter" would bury it.
   const r = lintFrontmatter(MISSING_OPEN_DELIMITER, { file: '/home/u/.claude/commands/troubleshoot.md', kind: 'commands' })
   assert.equal(r.ok, false)
   const f = r.findings.find(x => x.code === 'FM_MISSING_OPEN_DELIMITER')
@@ -177,7 +156,6 @@ test('a file missing its opening --- is reported as an error, not as "no frontma
 })
 
 test('frontmatter trapped inside a code fence is reported with the fence line number', () => {
-  // The other real failure: a `\`\`\`yaml` fence above the block. Every key is documentation.
   const r = lintFrontmatter(FM_INSIDE_CODE_FENCE, { file: '/home/u/.claude/skills/brainstorm/SKILL.md', kind: 'skills' })
   assert.equal(r.ok, false)
   const f = r.findings.find(x => x.code === 'FM_IN_CODE_FENCE')
@@ -199,10 +177,6 @@ test('blank lines above the opening --- break the block and are reported as such
 })
 
 test('the block delimiter is accepted exactly where server/index.mjs accepts it', () => {
-  // The regression this guards: a lint stricter or looser than parseFM either invents failures
-  // or passes files the reader is told are fine. `--- ` with a trailing space is accepted by
-  // parseFM's `\\r?\\n?` tail, so it must be accepted here too — parity is the contract, and any
-  // divergence belongs in parseFM first.
   const raw = '---\nname: x\ndescription: d\n--- \n\nBody.\n'
   assert.equal(parseFrontmatter(raw).delimited, true)
   assert.equal(lintFrontmatter(raw, { file: '/a/x.md', kind: 'commands' }).ok, true)
@@ -228,8 +202,6 @@ test('frontmatter that parses to something other than a mapping is an error', ()
 })
 
 test('a file with no frontmatter at all is a warning, not an error', () => {
-  // It still runs — it just has nothing to be selected on. Ranking it alongside the inert files
-  // would drown the two failures that actually silently break a capability.
   const r = lintFrontmatter('# Notes\n\nJust prose.\n', { file: '/a/x.md', kind: 'commands' })
   assert.equal(r.findings[0].code, 'FM_ABSENT')
   assert.equal(r.findings[0].severity, 'warn')
@@ -245,9 +217,6 @@ test("a skill's name: disagreeing with its directory is reported against the dir
 })
 
 test('a prose-cased name that slugs to the directory name is info, not a mismatch', () => {
-  // The real file: SuperClaude's confidence-check skill declares `name: Confidence Check`. It is
-  // not the same class of problem as a genuinely different name, and grading it the same way
-  // would train the reader to ignore the column.
   const r = lintFrontmatter('---\nname: Confidence Check\ndescription: d\n---\n', { file: '/home/u/.claude/skills/confidence-check/SKILL.md', kind: 'skills' })
   const f = r.findings.find(x => x.code === 'FM_NAME_NOT_SLUG')
   assert.equal(f.severity, 'info')
@@ -271,16 +240,12 @@ test('an empty frontmatter block warns rather than passing as valid', () => {
 })
 
 test('two consecutive --- lines are reported as no block at all, matching the loader', () => {
-  // parseFM (server/index.mjs) needs a line between the delimiters, so `---`/`---` matches
-  // nothing. Calling that an "empty frontmatter block" would imply the loader saw a block.
   const r = lintFrontmatter('---\n---\n\nBody.\n', { file: '/a/x.md', kind: 'commands' })
   assert.equal(r.findings[0].code, 'FM_EMPTY_BLOCK')
   assert.equal(r.findings[0].severity, 'error')
 })
 
 test('non-string content is a finding, never a thrown error', () => {
-  // The regression this guards: a lint pass over a directory dies on one unreadable file and the
-  // whole ledger comes back empty.
   for (const bad of [null, undefined, 42, {}, [], Buffer.from('---')]) {
     const r = lintFrontmatter(bad, { file: '/a/x.md', kind: 'commands' })
     assert.equal(r.ok, false)
@@ -310,7 +275,6 @@ test('every finding carries a severity, a code, a message and a fix', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 117 — declared dependencies
 // ---------------------------------------------------------------------------
 
 test('mcp-servers and personas are read off the frontmatter', () => {
@@ -330,8 +294,6 @@ test('the alternate agents: spelling is read as agent dependencies', () => {
 })
 
 test('declaring an empty list is distinguishable from declaring nothing', () => {
-  // "This command needs no MCP server" and "this command never said" are different facts, and
-  // MCP-level ROI arithmetic is wrong if they collapse into the same empty array.
   assert.equal(declaredDependencies({ 'mcp-servers': [] }).declared, true)
   assert.equal(declaredDependencies({ description: 'd' }).declared, false)
 })
@@ -383,8 +345,6 @@ test('an installed inventory of objects is accepted alongside plain names', () =
 })
 
 test('with no installed inventory supplied, missing is null and ok is null — never "all satisfied"', () => {
-  // The regression this guards: an omitted inventory renders as an empty missing-list, which the
-  // UI shows as a green tick for a check that was never performed.
   const c = checkDependencies({ mcpServers: ['serena'], agents: ['architect'] }, {})
   assert.equal(c.missing.mcpServers, null)
   assert.equal(c.missing.agents, null)
@@ -405,7 +365,6 @@ test('checking dependencies never throws on junk arguments', () => {
 })
 
 // ---------------------------------------------------------------------------
-// path/name helpers shared by all three
 // ---------------------------------------------------------------------------
 
 test('names are derived per kind: skills from the directory, flat kinds from the filename', () => {
@@ -421,7 +380,6 @@ test('a path that names nothing yields null rather than an invented name', () =>
 })
 
 test('a namespaced command resolves to its colon address relative to the scope directory', () => {
-  // Matches how Claude Code addresses it and how the fire-matcher keys it: sc/implement.md → sc:implement.
   assert.equal(namespacedName('/home/u/.claude/commands/sc/implement.md', 'commands', '/home/u/.claude/commands'), 'sc:implement')
   assert.equal(namespacedName('/home/u/.claude/commands/deploy.md', 'commands', '/home/u/.claude/commands'), 'deploy')
 })
@@ -431,7 +389,6 @@ test('without a scope directory only the leaf name is claimed, not a guessed nam
 })
 
 // ---------------------------------------------------------------------------
-// one pass over one file
 // ---------------------------------------------------------------------------
 
 test('a single pass yields the framework, the lint findings and the dependency check together', () => {
@@ -452,8 +409,6 @@ test('a single pass yields the framework, the lint findings and the dependency c
 })
 
 test('an inert file still produces a full row: lint failure, no frontmatter, no dependencies', () => {
-  // The regression this guards: the file whose frontmatter Claude Code cannot see is exactly the
-  // file a ledger must still show — dropping it hides the problem it exists to report.
   const row = analyzeCapability({
     file: '/home/u/.claude/commands/troubleshoot.md',
     kind: 'commands',

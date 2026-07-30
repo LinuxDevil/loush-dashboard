@@ -1,9 +1,6 @@
 import React from 'react'
 import { BODY, MONO, DIM, sel, inp } from './ui.jsx'
 
-// §3 — ONE time window. Every panel reads it. This is a TIME FILTER, not a persona/lens/role switcher:
-// it never changes WHAT is on screen, only WHEN. The OKR tab's private Q3/Q4 toggle is deleted — it swapped
-// objective definitions while the measures still came from the month-filtered set, mislabelling every %.
 const DAY = 86400000
 const startOfMonth = d => new Date(d.getFullYear(), d.getMonth(), 1).getTime()
 const startOfQuarter = d => new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1).getTime()
@@ -11,7 +8,6 @@ const startOfQuarter = d => new Date(d.getFullYear(), Math.floor(d.getMonth() / 
 export const WINDOWS = ['sprint', '14d', '30d', 'month', 'quarter', 'custom']
 const LABELS = { sprint: 'Active sprint', '14d': 'Last 14d', '30d': 'Last 30d', month: 'This month', quarter: 'This quarter', custom: 'Custom' }
 
-// resolve {id,label,from,to} — `sprints` is the server's sprint list (used only to find the active one)
 export function resolveWindow(id, sprints, from, to) {
   const now = Date.now(), d = new Date(now)
   if (id === 'custom' && from && to) return { id, label: `${from} → ${to}`, from: Date.parse(from), to: Date.parse(to) + DAY - 1, custom: true }
@@ -25,10 +21,8 @@ export function resolveWindow(id, sprints, from, to) {
   if (id === 'quarter') return { id, label: `Q${Math.floor(d.getMonth() / 3) + 1} ${d.getFullYear()}`, from: startOfQuarter(d), to: now }
   return { id: '30d', label: LABELS['30d'], from: now - 30 * DAY, to: now }
 }
-// the previous window of the same length — every delta on this dashboard is against this, not "last month"
 export const prevWindow = w => ({ from: w.from - (w.to - w.from), to: w.from })
 
-// a ticket lands in the window when it went live in it; an unshipped ticket is "now" and never filtered out
 export const shippedIn = (w, i) => {
   const t = Date.parse(i.liveAt || i.closedAt || 0)
   return !!t && t >= w.from && t <= w.to

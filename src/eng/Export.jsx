@@ -3,9 +3,6 @@ import { marked } from 'marked'
 import { HEAD, BODY, MONO, BB, GREEN, DIM, HI, PANEL, Card, H1, miniBtn, primaryBtn, inp, useCopy } from './ui.jsx'
 import { PRESETS, report, toSlack } from './reports.js'
 
-// §6 — preview → hand-edit → copy / download. Nothing is uploaded anywhere; "Copy as Slack" hands you the
-// text and a human sends it. (There is no server route that posts arbitrary text to the webhook — the only
-// Slack endpoint on the box sends a fixed test string — so this stays a copy, which is the safer default.)
 export default function Export({ snap, win, me }) {
   const [preset, setPreset] = useState('standup')
   const [md, setMd] = useState('')

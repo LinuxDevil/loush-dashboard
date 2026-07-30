@@ -3,30 +3,11 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { CountUp, Draw } from '../ui/anim.jsx'
 
-// A number that counts up on mount — but ONLY when it is a real number. This app renders honest nulls
-// (a suppressed / not-configured / stale value is '—', never a fake 0), so anything non-numeric is passed
-// straight through to its null state and never animated toward zero.
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-// Overview — the landing page answers ONE question: what needs a human today?
-//
-// DELETED (all four personas asked for this, independently):
-//   · the gamification layer — Pilot Level, XP bar, 🔥 streak, the 10 achievement badges. XP was
-//     literally all-time assistant MESSAGE COUNT: the fastest way to level up was a long, thrashing,
-//     unproductive conversation. It rewarded exactly the behaviour the tool exists to reduce.
-// DEMOTED (moved, not deleted):
-//   · Setup-health ring / Level / Specificity / Quality distribution → Capabilities, as an authoring
-//     aid. All three rendered the same static frontmatter heuristic: a linter cosplaying as a metric.
-//     The metric that replaced it is fires × always-on cost (Capabilities → ROI ledger).
-//   · "cache saved $" → Harness → Sessions. An estimate × an estimate against a counterfactual that
-//     never happened, that only ever goes up. No decision hangs on it.
-//   · Inventory table → Capabilities. Tool-usage bars / model bars / the 18-week output-token heatmap
-//     → Harness → Usage (the heatmap is a green-squares clone measuring "was he typing").
-// RERANKED: Top projects sorted by SESSIONS, not by output tokens (which rewarded whichever project
-//   made Claude write the most text).
 const A = 'var(--accent)'
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)'
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -42,14 +23,15 @@ const sparkPts = (arr, h = 26) => {
 }
 const Spark = ({ data, color, h = 26, className = 'spark' }) => (
   <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" className={className} style={{ height: h }}>
-    <Draw><polyline points={sparkPts(data, h)} fill="none" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
+    <Draw><polyline points={sparkPts(data, h)} fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.9"  style={{ stroke: (color) }} /></Draw>
   </svg>
 )
 
-function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint }) {
+function Kpi({ label, tag, value, sub, accent, data, delay, onClick, hint, risk }) {
   return (
-    <div className={`kpi${onClick ? ' press' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
-      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: tag.color + '22' } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
+    <div className={`kpi${onClick ? ' press' : ''}${risk ? ' risk' : ''}`} style={{ animationDelay: delay, cursor: onClick ? 'pointer' : undefined }} onClick={onClick} title={hint}>
+      {}
+      <div className="kpi-label"><span>{label}</span>{tag && <span className="kpi-tag" style={tag.color ? { color: tag.color, background: 'transparent', padding: 0 } : tag.dim ? { color: 'var(--text-secondary)', background: 'var(--bg-surface-hover)' } : null}>{tag.text}</span>}</div>
       <div className="kpi-value"><Num value={value} /></div>
       <div className="kpi-sub">{sub}</div>
       {data && data.length > 1 && <Spark data={data} color={accent} />}
@@ -69,7 +51,6 @@ function DeliveryTiles({ snap, onNav }) {
     const atRisk = active.filter(i => i.rec?.atRisk)
     const closedIn = (from, to) => issues.filter(i => i.live && i.closedAt && Date.parse(i.closedAt) >= from && Date.parse(i.closedAt) < to)
     const shipped30 = closedIn(D(30), now)
-    // 12-week shipped sparkline
     const wks = {}
     for (let w = 11; w >= 0; w--) wks[weekKey(D(w * 7))] = 0
     for (const i of closedIn(D(84), now)) { const k = weekKey(Date.parse(i.closedAt)); if (k in wks) wks[k]++ }
@@ -109,10 +90,10 @@ function DeliveryTiles({ snap, onNav }) {
         tag={t.delta == null ? { text: 'n<1', dim: true } : { text: `${t.delta > 0 ? '+' : ''}${d1(t.delta)}d`, color: t.delta > 0 ? RED : GREEN }}
         sub={t.p50 == null ? 'nothing shipped in 30d' : `p90 ${d1(t.p90)}d · n=${t.n}`} />
       <Kpi label="at-risk commitments" delay=".14s" accent={GOLD} onClick={go} hint="tickets past the budget for the stage they are sitting in"
-        value={t.atRisk} tag={{ text: `of ${t.inFlight}`, dim: true }}
+        value={t.atRisk} tag={{ text: `of ${t.inFlight}`, dim: true }} risk={t.atRisk > 0}
         sub={t.atRisk ? 'each one has a nudge line in the Inbox' : '✓ nothing over budget'} />
       <Kpi label="review queue" delay=".18s" accent={t.noReview ? RED : GREEN} onClick={go} hint="open PRs · oldest wait in working days"
-        value={t.openPrs} tag={t.noReview ? { text: `${t.noReview} unreviewed`, color: RED } : { text: 'all seen', color: GREEN }}
+        value={t.openPrs} tag={t.noReview ? { text: `${t.noReview} unreviewed`, color: RED } : { text: 'all seen', color: GREEN }} risk={t.noReview > 0}
         sub={t.openPrs ? `oldest has waited ${d1(t.oldestPr)} working days` : 'no open PRs'} />
     </div>
   )
@@ -125,26 +106,26 @@ function CiStrip({ onNav }) {
   if (!ci || !ci.repos?.length) return null
   const red = ci.repos.filter(r => r.mainRed)
   return (
-    <div className="panel" style={{ animationDelay: '.22s', borderColor: red.length ? 'var(--red-bg)' : undefined, background: red.length ? 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))' : undefined }}>
-      <div className="panel-head" style={{ marginBottom: 10 }}>
+    <div className={`panel${red.length ? ' callout danger' : ''}`} style={{ animationDelay: '.22s' }}>
+      <div className="panel-head">
         <h3>CI health <span className="muted">default branch · {ci.days}d · {ci.repos.length} repo{ci.repos.length === 1 ? '' : 's'}</span></h3>
-        {red.length > 0 && <span style={{ font: `700 10px ${MONO}`, letterSpacing: '0.08em', padding: '4px 9px', borderRadius: 6, color: '#fff', background: RED }}>MAIN IS RED</span>}
+        {red.length > 0 && <span className="alert-chip">MAIN IS RED</span>}
         <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('delivery')}>open CI</button>
       </div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         {ci.repos.map(r => (
-          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="lift"
-            style={{ flex: '1 1 260px', minWidth: 0, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderRadius: 6, border: `1px solid ${r.mainRed ? RED + '66' : 'var(--bg-surface-hover)'}`, background: 'var(--bg-surface)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 4, flexShrink: 0, background: r.error ? 'var(--text-tertiary)' : r.mainRed ? RED : GREEN, boxShadow: `0 0 0 1px ${r.mainRed ? RED : GREEN}` }} />
+          <a key={r.repo} href={`https://github.com/${r.repo}/actions`} target="_blank" rel="noreferrer" className="callout-tile lift"
+            style={{ flex: '1 1 260px', minWidth: 0 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: r.error ? 'var(--text-tertiary)' : r.mainRed ? RED : GREEN }} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ font: `500 13px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
-              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>
+              <div style={{ font: `600 14px ${MONO}`, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.repo}</div>
+              <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-secondary)', marginTop: 2 }}>
                 {r.error ? r.error.slice(0, 40)
                   : r.failureRate == null ? `no completed runs on ${r.branch} in ${ci.days}d`
                     : <><CountUp value={Math.round(r.failureRate * 100)} />% fail · {r.flaky.length} flaky · {r.medianDurationMin ?? '—'}m median</>}
               </div>
             </div>
-            {r.mainRed && <span style={{ font: `700 9px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
+            {r.mainRed && <span style={{ font: `700 11px ${MONO}`, color: RED, flexShrink: 0 }}>RED</span>}
           </a>
         ))}
       </div>
@@ -162,7 +143,7 @@ export default function Overview({ onNav }) {
   const [memory, setMemory] = useState(null)
   const [openMem, setOpenMem] = useState(null)
   const [cap, setCap] = useState(null)
-  const [pq, setPq] = useState(null)   // prompt-quality rating (from main); showAch went with the deleted achievement wall
+  const [pq, setPq] = useState(null)
 
   useEffect(() => {
     api.get('/api/usage').then(setUsage).catch(e => setUsageErr(e.message))
@@ -180,26 +161,31 @@ export default function Overview({ onNav }) {
   const ab = usage?.activeBlock
   const d = usage?.daily || []
   const last10 = key => d.slice(-10).map(x => x[key])
-  // RERANKED: sessions, not output tokens. Ranking by tokens rewarded whichever project made Claude type most.
   const top = useMemo(() => [...projects.filter(p => p.usage)].sort((a, b) => (b.sessions || 0) - (a.sessions || 0) || (b.commits || 0) - (a.commits || 0)).slice(0, 4), [projects])
 
   if (!usage && !usageErr && !snap) return <Skeleton tiles={5} rows={6} />
 
   return (
     <div className="overview">
+      {}
+      <div className="sect-label danger"><span className="live-dot" />Attention</div>
       <DeliveryTiles snap={snap} onNav={onNav} />
       <CiStrip onNav={onNav} />
 
+      <div className="sect-label accent" style={{ marginTop: 26 }}>Usage &amp; spend</div>
+
       {cap?.headline?.deadCount > 0 && (
-        <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 6, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'var(--amber-bg)', color: GOLD, font: `600 14px ${HEAD}` }}>✦</span>
+        <div className="panel" style={{ animationDelay: '.24s', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <span style={{ width: 38, height: 38, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'var(--accent-bg)', color: A, fontSize: 17 }}>✦</span>
           <div style={{ flex: 1, minWidth: 220 }}>
-            <div style={{ font: `600 14px ${HEAD}`, color: 'var(--text-primary)' }}>You pay <CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok every session for {cap.items.length} capabilities.</div>
-            <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-secondary)', marginTop: 3 }}>
-              <b style={{ color: RED }}><CountUp value={cap.headline.deadCount} /> have never fired</b> ({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot
+            <div style={{ font: `500 14.5px ${HEAD}`, color: 'var(--text-primary)' }}>You pay <span className="mono"><CountUp value={cap.headline.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</span> every session for <span className="mono">{cap.items.length} capabilities</span>.</div>
+            <div style={{ font: `400 13px ${HEAD}`, color: 'var(--text-secondary)', marginTop: 4 }}>
+              <b style={{ color: RED, fontWeight: 600 }}><CountUp value={cap.headline.deadCount} /> have never fired</b>{' '}
+              <span className="mono" style={{ fontSize: 12 }}>({cap.headline.deadTokens.toLocaleString()} tok/session) · {cap.headline.coldCount} cold · {cap.headline.hotCount} hot</span>
             </div>
           </div>
-          <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
+          {}
+          <button className="primary" onClick={() => onNav?.('capabilities')}>open the ROI ledger →</button>
         </div>
       )}
 
@@ -221,12 +207,12 @@ export default function Overview({ onNav }) {
           <div className="mini-list">
             {top.map((p, i) => (
               <div className="mini-row" key={p.path}>
-                <span className="mini-sq" style={{ background: PROJ_COLORS[i % 6] }} />
+                <span className="mini-sq" style={{ background: PROJ_COLORS[i % PROJ_COLORS.length] }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="mini-name">{p.name}</div>
                   <div className="mini-meta">{p.sessions} sessions{p.commits ? ` · ${p.commits} commits` : ''}</div>
                 </div>
-                <Spark data={p.usage.spark} color={PROJ_COLORS[i % 6]} h={24} className="" />
+                <Spark data={p.usage.spark} color={PROJ_COLORS[i % PROJ_COLORS.length]} h={24} className="" />
                 <span className="mini-val">{p.sessions}</span>
               </div>
             ))}
@@ -249,7 +235,7 @@ export default function Overview({ onNav }) {
           ))}
           {(usage?.recentSessions || []).filter(s => !pins.some(p => p.sessionId === s.sessionId)).map((s, i) => (
             <div className="sess-row" key={s.sessionId || i}>
-              <span className="sess-dot" style={{ background: PROJ_COLORS[i % 6] }} />
+              <span className="sess-dot" style={{ background: PROJ_COLORS[i % PROJ_COLORS.length] }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="mini-name">{s.proj}</div>
                 <div className="mini-meta">{fmtTok(s.out)} tok · {s.msgs} msgs · {s.toolCalls} tools</div>
@@ -290,29 +276,26 @@ export default function Overview({ onNav }) {
         return (
           <div className="panel" style={{ animationDelay: '.52s' }}>
             <div className="panel-head">
-              <h3>✍ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
+              <h3>✍︎ Prompt quality <span className="muted">how you prompt Claude Code{pq.available ? '' : ' · baseline — refresh in Authoring'}</span></h3>
               <button className="mini" style={{ marginTop: 0 }} onClick={() => onNav?.('authoring')}>open →</button>
             </div>
+            {}
             <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ font: `700 20px ${MONO}`, color: c }}>{pq.avg}<span style={{ color: 'var(--text-tertiary)', fontWeight: 400, fontSize: 12 }}>/10</span></div>
-              <div style={{ display: 'flex', gap: 5, flex: 1, minWidth: 200 }}>
+              <div className="seg-score" style={{ color: c }}>{pq.avg}<span>/10</span></div>
+              <div className="seg-bar">
                 {pq.dimensions.map((dm, i) => (
-                  <div key={i} title={`${dm.name}: ${dm.score}/10`} style={{ flex: 1, height: 28, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                    <div style={{ height: `${dm.score * 10}%`, borderRadius: 3, background: dm.score >= 8 ? GREEN : dm.score >= 6 ? GOLD : RED, opacity: 0.85 }} />
-                  </div>
+                  <i key={i} title={`${dm.name}: ${dm.score}/10`} style={{ background: dm.score >= 8 ? GREEN : dm.score >= 6 ? GOLD : RED }} />
                 ))}
               </div>
-              <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', minWidth: 180 }}>
-                weakest: <span style={{ color: RED }}>{weakest.name}</span> ({weakest.score}/10)
+              <div style={{ font: `400 12.5px ${HEAD}`, color: 'var(--text-secondary)', minWidth: 180 }}>
+                weakest: <span style={{ color: RED }}>{weakest.name}</span> <span className="mono" style={{ fontSize: 11.5 }}>({weakest.score}/10)</span>
               </div>
             </div>
           </div>
         )
       })()}
 
-      {/* The reward, deliberately at the foot of the page — after the work that needs a human, not above it.
-          Your own body of work over your own past: level, XP, streak, closest badge. Self-only, no leaderboard.
-          The full wall lives one click away so it never competes with the delivery tiles for the fold. */}
+      {}
     </div>
   )
 }

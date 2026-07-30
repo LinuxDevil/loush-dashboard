@@ -1,9 +1,6 @@
 import { of, pos, pctl, fx, MIN_N } from './stats.js'
 import { shippedIn, prevWindow } from './TimeLens.jsx'
 
-// §6 — ONE markdown generator, five presets. Four personas each asked for their own document; this is the
-// only place any of them is written. Everything is deterministic — no model call, no upload. Caveats are
-// PRINTED ON the artifact (window, working-time model, n) because these get pasted into decks unedited.
 const CAVEAT = w => `\n---\n*Window: ${w.label} (${new Date(w.from).toISOString().slice(0, 10)} → ${new Date(w.to).toISOString().slice(0, 10)}). Durations are WORKING days (10:00–18:00 Sun–Thu, Asia/Riyadh). Percentiles, not means. n<${MIN_N} is not a trend.*`
 const d = v => (v == null ? '—' : fx(v) + 'd')
 const p = (v, dec = 0) => (v == null ? '—' : fx(v, dec) + '%')
@@ -98,8 +95,6 @@ export function report(preset, { snap, win, me }) {
       CAVEAT(win)].join('\n')
   }
 
-  // §6 — the impact export is what makes the privacy contract honest: nothing exists about a person that
-  // they cannot pull about themselves. It includes REVIEWS GIVEN, which nobody else credits.
   if (preset === 'impact') {
     if (!me) return '_Set your identity (GitHub handle in the header) to build an impact export._'
     const mineIssues = shipped.filter(i => i.assignee?.id === me.accountId || (me.name && i.assignee?.name === me.name))
@@ -120,7 +115,6 @@ export function report(preset, { snap, win, me }) {
   return ''
 }
 
-// Slack mrkdwn is not markdown: ** is *, ## is *bold*, tables do not exist.
 export const toSlack = md => md
   .replace(/^#{1,6}\s*(.+)$/gm, (_, t) => `*${t}*`)
   .replace(/\*\*(.+?)\*\*/g, '*$1*')

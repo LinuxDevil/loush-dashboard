@@ -1,9 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { HEAD, BODY, MONO, BB, GOLD, DIM, HI, PANEL, useCopy } from './ui.jsx'
 
-// §13 — ⌘K: type a JIRA key or a PR number and land on it. Also the raw-data escape hatches, because an
-// engineer who can reproduce a number in a terminal in ten seconds argues with the data instead of
-// dismissing the dashboard.
 export default function CmdK({ snap, routes, onRoute, onOpenTicket, open, setOpen }) {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)

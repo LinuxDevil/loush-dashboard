@@ -3,15 +3,8 @@ import { api } from '../lib/api.js'
 
 const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
-// lib/design-map.mjs has had no endpoint and no UI since it was added in PR #4 — it could not be
-// called at all. It walks a design-system checkout, enumerates its components, harvests the Figma
-// node ids its story files claim, and flags collisions where two stories point at the same node.
-//
-// It sits beside Figma Capture because that is where the design-system config already lives, and
-// because the two answer adjacent questions: Capture asks "what does this frame look like", this
-// asks "which component in code is that frame supposed to be".
 export default function DesignMapSection() {
   const [repo, setRepo] = useState('')
   const [d, setD] = useState(null)
@@ -19,7 +12,6 @@ export default function DesignMapSection() {
   const [err, setErr] = useState('')
   const [only, setOnly] = useState('all')
 
-  // Default to whatever the design-system package resolves to, so the common case needs no typing.
   useEffect(() => { api.get('/api/setup').then(s => { const p = s?.designSystem?.repo || s?.designSystem?.path; if (p) setRepo(p) }).catch(() => {}) }, [])
 
   const run = () => {
@@ -50,13 +42,11 @@ export default function DesignMapSection() {
           <div style={{ display: 'flex', gap: 16, font: `400 11px ${MONO}`, marginBottom: 8, flexWrap: 'wrap' }}>
             <span>{d.summary.total} components</span>
             <span style={{ color: 'var(--green)' }}>{d.summary.mapped} mapped</span>
-            {/* Unmapped is a state, not a fault: the component exists and no story claims a node
-                for it. Naming it that way keeps it from reading as a failure count. */}
+            {}
             <span style={{ color: 'var(--text-tertiary)' }}>{d.summary.unmapped} unmapped</span>
             {d.summary.collisions > 0 && <span style={{ color: 'var(--red)' }}>{d.summary.collisions} collisions</span>}
             <span style={{ color: 'var(--text-tertiary)' }}>
-              {/* buildMap deliberately has no fallback package name — a hardcoded default would be
-                  one company's package and silently wrong everywhere else. */}
+              {}
               import from: {d.importFrom || <em>package unnamed in package.json</em>}
             </span>
             <select value={only} onChange={e => setOnly(e.target.value)} style={{ marginLeft: 'auto' }}>

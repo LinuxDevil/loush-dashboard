@@ -1,6 +1,3 @@
-// Tests for harness-metrics.mjs — the capability ROI verdict and the context-pressure table.
-// These live outside server.mjs precisely so they can be tested: server.mjs opens a listener on
-// import, which is why this arithmetic had no coverage at all.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -12,8 +9,6 @@ import {
 // ---------------------------------------------------------------- capabilityVerdict
 
 test('a capability installed this morning is NEW, not DEAD', () => {
-  // The audit's case: the ledger labelled a skill installed yesterday DEAD — the same label as one
-  // abandoned a year ago — and the headline invited you to archive it.
   assert.equal(capabilityVerdict({ firesAll: 0, fires30: 0, ageDays: 0 }), 'NEW')
   assert.equal(capabilityVerdict({ firesAll: 0, fires30: 0, ageDays: NEW_CAPABILITY_DAYS - 1 }), 'NEW')
 })
@@ -35,8 +30,6 @@ test('unknown age falls back to the old behaviour rather than inventing a NEW ve
 // ---------------------------------------------------------------- tokPerFire
 
 test('tokPerFire charges only the sessions that could have loaded the capability', () => {
-  // Install yesterday, fire once, with 3 sessions since install out of 500 in the window.
-  // Old formula charged all 500 sessions' worth of always-on tax to that one fire.
   const scoped = tokPerFire({ descTokens: 100, fires: 1, sessionsSinceInstall: 3 })
   const unscoped = 100 * 500 / 1
   assert.equal(scoped, 300)
@@ -105,9 +98,6 @@ test('the hog flag fires on a genuinely large median and its percentiles are rig
   const read = r.tools[0]
   assert.equal(read.hog, true)
   assert.equal(read.medianChars, 25000)
-  // p90 uses the repo's one correct percentile convention — index floor((n-1) * p), no
-  // interpolation — so for n=5 that is a[3]. Pinned here so a future edit cannot quietly switch
-  // conventions again; the audit found six mutually-inconsistent implementations.
   assert.equal(read.p90Chars, 30000)
   assert.equal(read.results, 5)
 })

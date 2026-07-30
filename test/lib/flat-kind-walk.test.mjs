@@ -4,9 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-// Mirrors walkFlatKind()/itemFile() in server/index.mjs. That module boots an HTTP server on
-// import, so the traversal rule is re-stated here rather than imported; these tests exist to
-// pin the naming contract, which is what a future flat readdir would silently break.
 const OFF = '.off'
 function walkFlatKind(dir) {
   const out = []
@@ -42,8 +39,6 @@ const withTree = (files, fn) => {
 }
 
 test('commands installed into a namespace directory are discovered', () => {
-  // The regression this guards: a single-level readdir returned only top-level .md files, so a
-  // framework installing into ~/.claude/commands/sc/ was entirely invisible to the dashboard.
   withTree({ 'plain.md': 'a', 'sc/implement.md': 'b', 'sc/analyze.md': 'c' }, root => {
     const names = walkFlatKind(root).map(i => i.name).sort()
     assert.deepEqual(names, ['plain', 'sc:analyze', 'sc:implement'])

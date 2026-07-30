@@ -1,6 +1,3 @@
-// Tests for eng-config.mjs — the work-week engine that every duration in the Engineering dashboard
-// is measured against. It was previously hardcoded to Sun–Thu 10:00–18:00 Asia/Riyadh, so these pin
-// the two things that were impossible before: a different work week, and a negative UTC offset.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -15,7 +12,6 @@ const KSA = normalizeWork({ tzOffsetHours: 3, startHour: 10, endHour: 18, weeken
 const US = normalizeWork({ tzOffsetHours: -8, startHour: 9, endHour: 17, weekend: [0, 6], weekStartDay: 1 })
 const UTC = normalizeWork({})
 
-// 2026-03-02 is a Monday. 2026-03-06 Friday, 2026-03-07 Saturday, 2026-03-08 Sunday.
 const at = (iso) => Date.parse(iso)
 
 test('normalizeWork fills defaults and derives dayMs', () => {
@@ -27,7 +23,6 @@ test('normalizeWork fills defaults and derives dayMs', () => {
 })
 
 test('normalizeWork refuses a zero-length working day rather than propagating Infinity', () => {
-  // workDays() divides by dayMs. A 0 would make every duration in the app Infinity.
   const w = normalizeWork({ startHour: 14, endHour: 14 })
   assert.ok(w.dayMs > 0)
   assert.equal(w.startHour, DEFAULT_WORK.startHour)
@@ -45,31 +40,24 @@ test('dowOf maps 0=Sunday .. 6=Saturday', () => {
 })
 
 test('workMsWith counts only configured hours within one day', () => {
-  // Mon 09:00 -> 17:00 UTC is the whole working day.
   assert.equal(workMsWith(UTC, at('2026-03-02T09:00:00Z'), at('2026-03-02T17:00:00Z')), 8 * H)
-  // 08:00 -> 10:00 spans one hour before opening: only 09:00-10:00 counts.
   assert.equal(workMsWith(UTC, at('2026-03-02T08:00:00Z'), at('2026-03-02T10:00:00Z')), 1 * H)
-  // Entirely outside hours.
   assert.equal(workMsWith(UTC, at('2026-03-02T20:00:00Z'), at('2026-03-02T23:00:00Z')), 0)
 })
 
 test('workMsWith skips the configured weekend — and the two work weeks disagree, as they should', () => {
-  // UTC is Mon–Fri 09–17 at offset 0; KSA is Sun–Thu 10–18 at +3. Both are mid-workday at these
-  // instants, so the only thing that differs is which days count as the weekend.
   const friAM = at('2026-03-06T12:00:00Z'), friPM = at('2026-03-06T16:00:00Z')
   assert.equal(workMsWith(UTC, friAM, friPM) > 0, true, 'Friday is a working day in a Mon–Fri week')
   assert.equal(workMsWith(KSA, friAM, friPM), 0, 'Friday is the weekend in a Sun–Thu week')
 
-  // Sunday is the mirror image.
   const sunAM = at('2026-03-08T12:00:00Z'), sunPM = at('2026-03-08T16:00:00Z')
   assert.equal(workMsWith(UTC, sunAM, sunPM), 0, 'Sunday is the weekend in a Mon–Fri week')
   assert.equal(workMsWith(KSA, sunAM, sunPM) > 0, true, 'Sunday is a working day in a Sun–Thu week')
 })
 
 test('workMsWith is correct across a negative UTC offset', () => {
-  // US-Pacific 09:00 local on Monday = 17:00 UTC Monday.
   const start = at('2026-03-02T17:00:00Z')
-  const end = at('2026-03-03T01:00:00Z') // 17:00 local Monday
+  const end = at('2026-03-03T01:00:00Z')
   assert.equal(workMsWith(US, start, end), 8 * H, 'a full local working day that crosses UTC midnight')
 })
 
@@ -79,7 +67,7 @@ test('workMsWith returns 0 for a reversed or zero-length interval', () => {
 })
 
 test('workDaysWith divides by the configured day length, not a fixed 8h', () => {
-  const short = normalizeWork({ startHour: 9, endHour: 13 }) // 4h day
+  const short = normalizeWork({ startHour: 9, endHour: 13 })
   assert.equal(workDaysWith(short, at('2026-03-02T09:00:00Z'), at('2026-03-02T13:00:00Z')), 1)
   assert.equal(workDaysWith(UTC, at('2026-03-02T09:00:00Z'), at('2026-03-02T13:00:00Z')), 0.5)
 })
@@ -93,7 +81,6 @@ test('addWorkTimeWith is the inverse of workMsWith', () => {
 })
 
 test('addWorkTimeWith skips the weekend when the budget spans it', () => {
-  // Friday 15:00 UTC + 4 working hours, Mon–Fri 09-17 → 2h Friday, 2h Monday.
   const to = addWorkTimeWith(UTC, at('2026-03-06T15:00:00Z'), 4 * H)
   assert.equal(new Date(to).toISOString(), '2026-03-09T11:00:00.000Z', 'lands Monday morning, not Saturday')
 })

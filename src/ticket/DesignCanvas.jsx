@@ -1,27 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { select, zoom, zoomIdentity, drag } from 'd3'
 
-// Editable design canvas — hand-rolled on the d3 that is ALREADY in this app's bundle.
-//
-// WHY NOT REACT FLOW
-// It is MIT and genuinely good, and its own d3 deps (d3-zoom/d3-drag/d3-selection) are already
-// vendored inside the `d3` package this repo imports wholesale — so the weight argument is weak.
-// The blocking reason is theming: it ships a stylesheet carrying its own colour values, and
-// src/styles.css:7 says outright "if you add a raw hex anywhere, you have broken the light theme".
-// The persisted schema uses React Flow's field names (id/position/data, source/target) so adopting
-// it later is an adapter, not a migration. See docs/ticket-tab/references.md §5.
-//
-// Colour is NEVER the only channel: every node carries a shape, a glyph and its type printed as
-// text, because seven hues are not distinguishable under deuteranopia.
-//
-// KEYBOARD IS A FIRST-CLASS PATH, not a fallback. There is no ARIA pattern for a node graph, and
-// role="application" would suppress browse mode entirely — so this is a listbox of options with a
-// roving tabindex, arrow keys that follow EDGES (announcing the edge, not just the destination),
-// and a geometric mode for when spatial movement is what you actually want.
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)'
-// Node geometry is owned by tidy.js — the auto-layout cannot avoid overlaps without it, and two
-// copies of these numbers would drift the first time a card grew a line.
 export { W, H } from './tidy.js'
 import { W, H, LABEL_MAX_W, LABEL_H, placeEdgeLabels } from './tidy.js'
 const GRID = 8
@@ -37,13 +18,9 @@ export const TYPES = {
 }
 const ORIGIN = { generated: '◇', user: '✎', assistant: '✦' }
 
-// Shape is an SVG layer beneath the HTML card, so labels stay real text (selectable, translatable,
-// readable by a screen reader) while the silhouette still differs per type.
 function Shape({ type, selected, primary }) {
   const stroke = primary ? 'var(--text-primary)' : selected ? 'var(--accent)' : 'var(--border-default)'
   // --bg-elevated, not --bg-surface: in LIGHT both --bg-surface and --bg-inset are #f6f8fa, so a
-  // node on the canvas would be 1.00:1 and the cylinder/diamond silhouettes — the colourblind-safe
-  // shape channel — would collapse to line art.
   const common = { fill: 'var(--bg-elevated)', stroke, strokeWidth: 1.5 }
   const box = { position: 'absolute', inset: 0, pointerEvents: 'none' }
   if (type === 'store') return (
@@ -75,11 +52,11 @@ export default function DesignCanvas({
   const wrapRef = useRef(null)
   const gRef = useRef(null)
   const [tf, setTf] = useState(() => zoomIdentity)
-  const [dragPos, setDragPos] = useState(null)     // {id: {x,y}} while dragging
-  const [marquee, setMarquee] = useState(null)     // {x0,y0,x1,y1} in graph coords
-  const [wire, setWire] = useState(null)           // {from, x, y} while dragging a connection
-  const [geo, setGeo] = useState(false)            // geometric arrow navigation
-  const [focusNode, setFocusNode] = useState(null) // roving tabindex owner
+  const [dragPos, setDragPos] = useState(null)
+  const [marquee, setMarquee] = useState(null)
+  const [wire, setWire] = useState(null)
+  const [geo, setGeo] = useState(false)
+  const [focusNode, setFocusNode] = useState(null)
   const zoomRef = useRef(null)
 
   const nodes = graph?.nodes || []
@@ -88,15 +65,11 @@ export default function DesignCanvas({
   const byId = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const posOf = useCallback(n => (dragPos && dragPos[n.id]) || n.position || { x: 0, y: 0 }, [dragPos])
 
-  // Every label's spot, resolved together so they avoid the cards AND each other. Recomputed while
-  // dragging, so labels get out of the way as you move a node under them, not after you drop it.
   const labelSpots = useMemo(() => placeEdgeLabels(
     edges.map(e => {
       const s = byId.get(e.source), t = byId.get(e.target)
       if (!s || !t || !e.label) return null
       const sp = posOf(s), tp = posOf(t)
-      // Anchor to the SAME endpoints the path is drawn between. The old formula assumed
-      // left-to-right, so any right-to-left edge had its label floating off the line.
       const dx = tp.x - sp.x
       return {
         id: e.id, label: e.label,
@@ -109,8 +82,6 @@ export default function DesignCanvas({
 
   useEffect(() => { if (!focusNode && nodes.length) setFocusNode(nodes[0].id) }, [nodes, focusNode])
 
-  // Focus mode: dim rather than hide, so the user never loses their bearings. This is the
-  // substitute for the minimap we deliberately did not build.
   const near = useMemo(() => {
     if (!focusId) return null
     const keep = new Set([focusId])
@@ -126,7 +97,6 @@ export default function DesignCanvas({
     const el = wrapRef.current
     if (!el) return
     const z = zoom().scaleExtent([0.25, 2.5])
-      // Skip d3's own pan when a marquee or a wire is in progress, or the two gestures fight.
       .filter(ev => !ev.button && !ev.shiftKey && (ev.type !== 'wheel' || ev.ctrlKey || ev.metaKey))
       .on('zoom', ev => setTf(ev.transform))
     zoomRef.current = z
@@ -161,7 +131,6 @@ export default function DesignCanvas({
     applyTf(zoomIdentity.translate(cx - ((cx - tf.x) / tf.k) * k, cy - ((cy - tf.y) / tf.k) * k).scale(k))
   }, [tf, applyTf])
 
-  /** Bring a node into view — otherwise Tab/arrow focus can land off-screen with no way back. */
   const reveal = useCallback(id => {
     const el = wrapRef.current, n = byId.get(id)
     if (!el || !n?.position) return
@@ -184,7 +153,6 @@ export default function DesignCanvas({
       .on('start', function () { select(this).raise() })
       .on('drag', function (ev) {
         const id = this.getAttribute('data-node')
-        // Dragging a node that is part of a multi-selection moves the whole group.
         const group = sel.has(id) && sel.size > 1 ? [...sel] : [id]
         setDragPos(p => {
           const next = { ...(p || {}) }
@@ -261,7 +229,6 @@ export default function DesignCanvas({
 
   const step = (id, dir) => {
     if (geo) {
-      // Geometric: nearest node in that screen direction. Right for "move me over there".
       const from = posOf(byId.get(id))
       const cand = nodes.filter(n => n.id !== id).map(n => ({ n, p: posOf(n) })).filter(({ p }) => (
         dir === 'right' ? p.x > from.x : dir === 'left' ? p.x < from.x : dir === 'down' ? p.y > from.y : p.y < from.y
@@ -270,10 +237,8 @@ export default function DesignCanvas({
       cand.sort((a, b) => (Math.hypot(a.p.x - from.x, a.p.y - from.y) - Math.hypot(b.p.x - from.x, b.p.y - from.y)))
       return { id: cand[0].n.id, say: cand[0].n.data.label }
     }
-    // Traverse: follow the graph, and announce the EDGE — the relationship is the information.
     if (dir === 'right') { const e = outOf(id)[0]; return e ? { id: e.target, say: `${byId.get(e.target)?.data.label}. Followed outgoing connection ${e.label || 'unlabelled'}. 1 of ${outOf(id).length}.` } : null }
     if (dir === 'left') { const e = inOf(id)[0]; return e ? { id: e.source, say: `${byId.get(e.source)?.data.label}. Followed incoming connection ${e.label || 'unlabelled'}.` } : null }
-    // up/down cycle siblings among the current node's outgoing targets
     const outs = outOf(id)
     if (outs.length > 1) { const e = outs[dir === 'down' ? 1 : outs.length - 1]; return { id: e.target, say: `${byId.get(e.target)?.data.label}. ${e.label || 'unlabelled'}.` } }
     const idx = nodes.findIndex(n => n.id === id)
@@ -288,7 +253,7 @@ export default function DesignCanvas({
     const DIR = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down' }
     if (DIR[k]) {
       ev.preventDefault()
-      if (ev.altKey && !readOnly) {                       // Alt+arrow moves the selection
+      if (ev.altKey && !readOnly) {
         const d = ev.shiftKey ? GRID * 6 : GRID
         const group = sel.has(id) && sel.size > 1 ? [...sel] : [id]
         const out = {}
@@ -317,7 +282,7 @@ export default function DesignCanvas({
     else if (k === '-') { ev.preventDefault(); zoomBy(1 / 1.2) }
     else if (k === 'a' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); onSelection?.(new Set(nodes.map(n => n.id))); announce?.(`all ${nodes.length} selected`) }
     else if (k === 'Escape') { onSelection?.(new Set()); onSelect?.(null) }
-    else if (k === 'h' || k === 'j' || k === 'l' || k === 'i') {   // pan without moving focus
+    else if (k === 'h' || k === 'j' || k === 'l' || k === 'i') {
       ev.preventDefault()
       panBy(k === 'l' ? -60 : k === 'h' ? 60 : 0, k === 'j' ? -60 : k === 'i' ? 60 : 0)
     }
@@ -328,8 +293,7 @@ export default function DesignCanvas({
   return (
     <div ref={wrapRef} onPointerDown={onCanvasDown} onKeyDown={onKey}
       style={{ position: 'relative', overflow: 'hidden', background: 'var(--bg-inset)', border: '1px solid var(--border-default)', borderRadius: 8, height: 'min(62vh, 640px)', cursor: marquee ? 'crosshair' : 'grab' }}>
-      {/* role="listbox" is REQUIRED for the role="option" nodes to be valid ARIA — an option with
-          no listbox ancestor is ignored, leaving the canvas unannounced. */}
+      {}
       <div ref={gRef} role="listbox" aria-multiselectable="true"
         aria-label={`Design graph — ${nodes.length} components, ${edges.length} connections. Arrow keys follow connections, g toggles spatial movement, shift-drag selects an area.`}
         style={{ position: 'absolute', transformOrigin: '0 0', transform: `translate(${tf.x}px,${tf.y}px) scale(${tf.k})`, width: extent.w, height: extent.h }}>
@@ -355,7 +319,6 @@ export default function DesignCanvas({
                 fill="none" markerEnd="url(#dc-arrow)" strokeWidth={lit ? 2 : 1.3}
                 strokeDasharray={e.data?.kind === 'publishes' ? '5 3' : undefined}
                 // --bg-surface-active on --bg-inset is 1.10:1 in light: invisible lines with
-                // visible arrowheads, in the one view whose deliverable IS the connections.
                 style={{ stroke: lit ? 'var(--text-primary)' : inferred ? 'var(--text-tertiary)' : 'var(--text-secondary)' }} />
             )
           })}
@@ -370,8 +333,7 @@ export default function DesignCanvas({
           )}
         </svg>
 
-        {/* edge labels: real text, aria-hidden because the accessible edge list lives in the
-            inspector — a labelled list of buttons beats focusable SVG paths */}
+        {}
         {edges.map(e => {
           const s = byId.get(e.source), t = byId.get(e.target)
           if (!s || !t || !e.label) return null
@@ -379,15 +341,9 @@ export default function DesignCanvas({
           const spot = labelSpots.get(e.id)
           if (!spot) return null
           return (
-            // Centred by transform, NOT by a fixed-width box: the label is the deliverable of this
-            // view, so it sizes to its text. It was previously in a 100px-wide div, which silently
-            // ellipsised every label past ~13 characters ("buffer minutes" -> "buffer minu…") no
-            // matter how much empty canvas sat either side of it.
             <div key={e.id + ':l'} aria-hidden="true"
               style={{ position: 'absolute', left: spot.x, top: spot.y - LABEL_H / 2, transform: 'translateX(-50%)', textAlign: 'center', pointerEvents: 'none', opacity: dim ? 0.25 : 1 }}>
-              {/* An inferred edge is already drawn in a lighter stroke above; italic echoes that on
-                  the label. It used to be prefixed with a literal "? ", which read as "this label is
-                  unknown" rather than "this connection is asserted, not backed by an import". */}
+              {}
               <span style={{ font: `400 10px ${MONO}`, fontStyle: e.data?.isStatic === false ? 'italic' : 'normal', color: 'var(--text-secondary)', background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: LABEL_MAX_W }}>
                 {e.label}
               </span>
@@ -406,7 +362,6 @@ export default function DesignCanvas({
           const outbound = edges.filter(e => e.source === n.id).length
           return (
             <button key={n.id} data-node={n.id} role="option" aria-selected={isSel}
-              // roving tabindex: exactly one stop into the canvas and one out, instead of N stops
               tabIndex={focusNode === n.id ? 0 : -1}
               onFocus={() => setFocusNode(n.id)}
               aria-label={`${n.data?.label}. ${n.type}. ${inbound} incoming, ${outbound} outgoing connections. ${files} files. ${n.data?.origin === 'user' ? 'Added by you' : n.data?.origin === 'assistant' ? 'Proposed by the assistant' : 'Generated'}.`}
@@ -428,12 +383,12 @@ export default function DesignCanvas({
                   <span style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}>{n.data?.label}</span>
                   <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)' }} aria-hidden="true">{ORIGIN[n.data?.origin] || ''}</span>
                 </span>
-                {/* the type is PRINTED — the real answer for anyone who cannot separate seven hues */}
+                {}
                 <span style={{ font: `600 9px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
                   {n.type}{files ? ` · ${files} file${files > 1 ? 's' : ''}` : ''}
                 </span>
               </span>
-              {/* connect handle — mouse affordance only; the keyboard path is the inspector picker */}
+              {}
               {!readOnly && (
                 <span data-handle="1" onPointerDown={ev => startWire(ev, n.id)} aria-hidden="true"
                   title="drag to connect"

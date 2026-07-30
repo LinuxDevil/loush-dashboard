@@ -1,17 +1,13 @@
-// Derive display metrics from a loush run's events.jsonl stream (contract §13).
 // ponytail: timing/status/counts only — token cost isn't in the stream (agents never estimate
-// it, contract §13). Wire cost here if we ever reliably join a run to its session transcript.
 export function deriveRunMetrics(events) {
-  // `outputs` must be present here too: the normal return always includes it, so a consumer doing
-  // metrics.outputs.length crashed ONLY on the empty path — the one hardest to notice in testing.
   if (!events?.length) return { status: 'unknown', startedAt: null, endedAt: null, durationMs: null, steps: [], toolCalls: 0, outputs: [] }
   const at = e => Date.parse(e.t)
   const term = [...events].reverse().find(e => e.type === 'run.completed' || e.type === 'run.failed')
   const t0 = at(events[0])
   const tEnd = term ? at(term) : at(events[events.length - 1])
-  const openByLabel = {} // label -> queue of open step.started (handles repeated labels without orphaning)
+  const openByLabel = {}
   const steps = []
-  const outputs = [] // human-readable progress/notes the flow emitted (contract §13 `output` events)
+  const outputs = []
   let toolCalls = 0
   for (const e of events) {
     if (e.type === 'tool.call') toolCalls++

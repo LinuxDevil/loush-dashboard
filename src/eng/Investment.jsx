@@ -2,16 +2,13 @@ import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, STEEL, DIM, HI, Card, CardHead, Empty, H1, DataTable, TicketLink, Kpi, miniBtn, useCopy, fx } from './ui.jsx'
 import { StackedCols } from './charts.jsx'
 
-// §7 — where the engineering days actually went. This is where the demoted "Story points" KPI goes to
-// live a useful life: with a denominator. Headline the VP reacts to: "Bug tax: 23% of delivered points
-// this quarter (was 15%)". Bucket rules come from projects.json `effortBuckets` (server-side).
 const LABEL = { feature: 'Feature', 'bug-escaped': 'Bug (escaped)', 'bug-qa': 'Bug (QA-caught)', toil: 'Tech-debt / toil', ai: 'AI experimentation' }
 const COLOR = { feature: BB, 'bug-escaped': RED, 'bug-qa': GOLD, toil: STEEL, ai: PURPLE }
 
 export default function Investment({ snap, issues, onOpenTicket }) {
   const [copy, copied] = useCopy()
-  const [unit, setUnit] = useState('pts')   // points, or summed activeDays — both are in the payload
-  const [pick, setPick] = useState(null)    // {month, bucket}
+  const [unit, setUnit] = useState('pts')
+  const [pick, setPick] = useState(null)
   const I = snap.investment || { months: [], buckets: [] }
   const months = I.months || []
   const keys = I.buckets || []

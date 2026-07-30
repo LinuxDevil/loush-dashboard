@@ -4,22 +4,6 @@ import Skeleton from '../ui/Skeleton.jsx'
 import { usePager } from '../ui/Pager.jsx'
 
 // ---------- The Working Set — what the agent did to YOUR CODE, and what to do about it ----------
-//
-// Every other screen in this app is scoped to the harness (tokens, sessions, messages) or to JIRA.
-// This one is scoped to the codebase. It is the only panel here that a frontend engineer opens in the
-// middle of a ticket rather than at the end of a quarter.
-//
-// The spine is the Rework Radar: one row per file an agent EDITED, ranked by how many times you had to
-// come back to it. A component the agent rewrote six times across four sessions is a component whose
-// prop API nobody can guess — and that signal is invisible to git, which only kept the attempt that
-// survived. It is also invisible to GitHub, Linear, Sentry and your IDE, none of which can see your
-// local transcripts. That join is the entire reason this screen exists.
-//
-// HONESTY RULES enforced here (the audits found all three broken elsewhere in this app):
-//   1. null renders as "—", never as 0 and never as a green tick. "No data" is a distinct state.
-//   2. The rank shows its own arithmetic on hover. No black-box score.
-//   3. No panel claims coverage it does not have — the walk cap and unresolved-import count are
-//      printed on screen, because a graph that silently truncates is a poster, not an instrument.
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -30,7 +14,6 @@ const ago = t => {
   const d = Math.round((Date.now() - t) / 86400_000)
   return d < 1 ? 'today' : d === 1 ? 'yesterday' : d + 'd ago'
 }
-// null-safe cell: undefined/null is "unknown", which is NOT zero.
 const N = (v, render = x => x) => (v == null ? <span style={{ color: DIM }}>—</span> : render(v))
 
 const FILTERS = [
@@ -50,7 +33,7 @@ export default function WorkingSet({ onNav }) {
   const [days, setDays] = useState(30)
   const [filter, setFilter] = useState('rework')
   const [q, setQ] = useState('')
-  const [open, setOpen] = useState(null)      // dossier: {rel} while loading, then the payload
+  const [open, setOpen] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const load = (r = root, dd = days) => {
@@ -85,7 +68,6 @@ export default function WorkingSet({ onNav }) {
   if (err) return <div style={card}><b style={{ color: RED }}>Could not build the working set</b><div style={{ color: DIM, marginTop: 8 }}>{err}</div></div>
   if (!d) return <Skeleton tiles={4} rows={12} />
 
-  // The honest empty state. Not a green all-clear — a statement about what is missing and why.
   if (d.available === false) return (
     <div style={card}>
       <div style={{ fontFamily: HEAD, fontSize: 16, marginBottom: 10 }}>No agent history yet</div>
@@ -228,10 +210,6 @@ export default function WorkingSet({ onNav }) {
 function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
   if (d.loading) return <Modal onClose={onClose}><Skeleton tiles={1} rows={8} /></Modal>
 
-  // Real loop closure: resume the actual session that last edited this file, in-app. Chat owns the
-  // session lifecycle, so hand it the id rather than spawning a chat this component cannot attach to.
-  // Three other panels in this app still hand you a `claude --resume <id>` string to paste into a
-  // terminal — the endpoint to do it properly has existed the whole time.
   const resume = s => {
     setBusy(true)
     window.dispatchEvent(new CustomEvent('chat-open', { detail: { sessionId: s.sessionId, cwd: s.cwd || root } }))
@@ -239,8 +217,6 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
     onNav?.('chat')
     onClose()
   }
-  // Start a NEW session already holding the blast radius, the recent diffs and the errors to avoid,
-  // pre-filled in the composer so you can edit the ask before spending anything.
   const startWithContext = () => {
     setBusy(true)
     window.dispatchEvent(new CustomEvent('chat-open', { detail: { cwd: root, prefill: d.bundle + '\n\n' } }))
@@ -274,7 +250,7 @@ function Dossier({ d, root, onClose, onNav, busy, setBusy }) {
         </>}
       </div>
 
-      {/* actions — every one changes something, none are clipboard-only */}
+      {}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0 16px' }}>
         {d.sessions[0] && (
           <button disabled={busy} onClick={() => resume(d.sessions[0])} style={primaryBtn}

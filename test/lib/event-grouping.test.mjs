@@ -9,7 +9,6 @@ import {
   shortPath,
 } from '../../lib/event-grouping.mjs'
 
-// Transcript-shaped builders, matching what the real JSONL files carry.
 const use = (id, name, input = {}) => ({ type: 'tool_use', id, name, input })
 const assistant = (blocks, over = {}) => ({
   type: 'assistant',
@@ -30,11 +29,8 @@ const result = (id, over = {}) => ({
 })
 
 // ---------------------------------------------------------------------------------------------
-// summarizeToolCall
 
 test('a Read call names the file rather than saying only "Read"', () => {
-  // The regression this guards: timeline rows rendered the bare tool name, so a session of
-  // twenty reads was twenty identical rows carrying no information.
   const s = summarizeToolCall(use('t1', 'Read', { file_path: '/home/user/proj/src/App.jsx' }))
   assert.equal(s.title, 'Read src/App.jsx')
   assert.equal(s.kind, 'read')
@@ -42,8 +38,6 @@ test('a Read call names the file rather than saying only "Read"', () => {
 })
 
 test('an Edit reports the size of the change without reproducing the edited text', () => {
-  // The regression this guards: an early renderer put old_string/new_string in the summary, which
-  // meant editing a .env line printed the credential into the timeline.
   const s = summarizeToolCall(use('t2', 'Edit', {
     file_path: '/home/user/proj/src/App.jsx',
     old_string: 'const KEY = "sk-live-secret-value"',
@@ -57,8 +51,6 @@ test('an Edit reports the size of the change without reproducing the edited text
 })
 
 test('a Bash call titles the binary and subcommand but withholds the arguments', () => {
-  // The regression this guards: `Bash curl -H "Authorization: Bearer sk-..."` was rendered
-  // verbatim as a row title, leaking a token into the UI and into any exported view.
   const s = summarizeToolCall(use('t3', 'Bash', {
     command: 'AWS_SECRET_ACCESS_KEY=zzz npm test -- --grep "Bearer sk-live-abc" | tee out.log',
   }))
@@ -72,22 +64,17 @@ test('a Bash call titles the binary and subcommand but withholds the arguments',
 })
 
 test('a single-word command keeps just the binary', () => {
-  // The regression this guards: the subcommand lookup ran for every binary, so `ls -la` became
-  // "ls -la" and long argument lists crept back into titles.
   assert.equal(summarizeToolCall(use('t', 'Bash', { command: 'ls -la /etc' })).title, 'Bash ls')
   assert.equal(parseShellHeadline('/usr/bin/git   -C /repo   commit -m x').headline, 'git commit')
 })
 
 test('a Grep row shows the needle and where it was searched', () => {
-  // The regression this guards: search rows were indistinguishable from one another.
   const s = summarizeToolCall(use('t4', 'Grep', { pattern: 'useState', path: 'src/' }))
   assert.equal(s.title, 'Grep "useState" in src/')
   assert.equal(s.kind, 'search')
 })
 
 test('Glob, Task, WebFetch, WebSearch, TodoWrite and NotebookEdit each get a specific title', () => {
-  // The regression this guards: only file tools had renderers, so everything else fell through to
-  // the generic branch and read as "no renderer exists" even though one was expected.
   assert.equal(summarizeToolCall(use('a', 'Glob', { pattern: '**/*.mjs' })).title, 'Glob **/*.mjs')
   assert.equal(summarizeToolCall(use('b', 'Task', { subagent_type: 'code-reviewer', prompt: 'secret plan' })).title, 'Task code-reviewer')
   assert.equal(summarizeToolCall(use('c', 'WebFetch', { url: 'https://docs.example.com/x?token=abc' })).title, 'WebFetch docs.example.com')
@@ -98,8 +85,6 @@ test('Glob, Task, WebFetch, WebSearch, TodoWrite and NotebookEdit each get a spe
 })
 
 test('a WebFetch never carries the URL path or query into the output', () => {
-  // The regression this guards: signed URLs (`?X-Amz-Signature=...`) are credentials, and the
-  // full URL was previously used as the row title.
   const s = summarizeToolCall(use('t5', 'WebFetch', {
     url: 'https://user:pw@files.example.com/private?X-Amz-Signature=deadbeef',
     prompt: 'summarise',
@@ -112,8 +97,6 @@ test('a WebFetch never carries the URL path or query into the output', () => {
 })
 
 test('a TodoWrite reports counts and withholds the item text', () => {
-  // The regression this guards: todo bodies are free-form prose an agent may have pasted from
-  // anywhere, so they are counted, not quoted.
   const s = summarizeToolCall(use('t6', 'TodoWrite', {
     todos: [
       { status: 'completed', content: 'rotate the leaked key sk-live-xyz' },
@@ -127,8 +110,6 @@ test('a TodoWrite reports counts and withholds the item text', () => {
 })
 
 test('an unrecognised tool is named truthfully instead of getting an invented description', () => {
-  // The regression this guards: a table-driven renderer fell through to a generic
-  // "performed an operation on a file" string, which was a fabrication for MCP tools.
   const s = summarizeToolCall(use('t7', 'mcp__linear__create_issue', { title: 'x', apiKey: 'lin_api_secret' }))
   assert.equal(s.title, 'mcp__linear__create_issue')
   assert.equal(s.kind, 'unknown')
@@ -141,7 +122,6 @@ test('an unrecognised tool is named truthfully instead of getting an invented de
 })
 
 test('malformed records return an honest unknown instead of throwing', () => {
-  // The regression this guards: one corrupt JSONL line must not blank a whole timeline.
   for (const bad of [null, undefined, 42, 'nope', {}, { message: { content: 'text only' } }, { type: 'tool_use' }]) {
     const s = summarizeToolCall(bad)
     assert.equal(typeof s.title, 'string')
@@ -151,39 +131,30 @@ test('malformed records return an honest unknown instead of throwing', () => {
 })
 
 test('a tool call nested in a full transcript record is found', () => {
-  // The regression this guards: callers pass whole records, not bare blocks.
   const rec = assistant([{ type: 'text', text: 'ok' }, use('t8', 'Read', { file_path: '/a/b/c.py' })])
   assert.equal(summarizeToolCall(rec).title, 'Read b/c.py')
 })
 
 test('a long search pattern is truncated and says so', () => {
-  // The regression this guards: silent caps. A cut string that does not report the cut makes a
-  // reader think they saw the whole pattern.
   const s = summarizeToolCall(use('t9', 'Grep', { pattern: 'x'.repeat(200) }))
   assert.equal(s.detail.patternTruncated, true)
   assert.ok(s.detail.pattern.length < 200)
 })
 
 test('shortPath keeps two trailing segments so sibling files stay distinguishable', () => {
-  // The regression this guards: basename-only titles made lib/App.jsx and ui/App.jsx identical.
   assert.equal(shortPath('/home/u/p/src/App.jsx'), 'src/App.jsx')
   assert.equal(shortPath('App.jsx'), 'App.jsx')
   assert.equal(shortPath(null), null)
 })
 
 // ---------------------------------------------------------------------------------------------
-// firstEnclosingContext
 
 test('the enclosing function comes from the diff hunk header when git supplied one', () => {
-  // The regression this guards: the header's post-@@ text was ignored, so the cheapest and most
-  // reliable source of the enclosing name went unused.
   const hunk = ['@@ -10,7 +10,9 @@ export function useSessionList(opts) {', ' const a = 1', '+const b = 2'].join('\n')
   assert.equal(firstEnclosingContext(hunk), 'useSessionList')
 })
 
 test('with no usable header the hunk lines are scanned backwards for a declaration', () => {
-  // The regression this guards: structuredPatch hunks carry no header text at all, so a
-  // header-only implementation returned null for every real Claude Code edit.
   const hunk = {
     oldStart: 40,
     lines: ['   return x', ' }', ' ', ' function computeTotals(rows) {', '-  let t = 0', '+  let t = 1'],
@@ -192,8 +163,6 @@ test('with no usable header the hunk lines are scanned backwards for a declarati
 })
 
 test('declarations are recognised across JS, Python, Go, Rust and Java', () => {
-  // The regression this guards: a JS-only regex silently returned null for every other language,
-  // which looked like "no context" rather than "unsupported language".
   const one = line => firstEnclosingContext({ lines: [line] })
   assert.equal(one(' const useThing = (a) => {'), 'useThing')
   assert.equal(one(' export async function loadAll() {'), 'loadAll')
@@ -211,10 +180,6 @@ test('declarations are recognised across JS, Python, Go, Rust and Java', () => {
 })
 
 test('firstEnclosingContext returns null when nothing is identifiable', () => {
-  // The regression this guards: THE core honesty rule of this module. A reader believes a
-  // function name printed next to a diff, so a guessed one is worse than none. Earlier drafts
-  // fell back to "nearest identifier on the line", which happily reported `if`, `console`, or
-  // the name of a function being CALLED as the function being edited.
   const nothing = [
     '@@ -1,3 +1,4 @@',
     '   total += row.value',
@@ -231,15 +196,12 @@ test('firstEnclosingContext returns null when nothing is identifiable', () => {
   assert.equal(firstEnclosingContext({ lines: ['   store.reload(force);'] }), null)
   assert.equal(firstEnclosingContext('@@ -1,1 +1,1 @@ }'), null, 'a junk header falls through to the scan, which finds nothing')
 
-  // And it never throws on junk input.
   for (const bad of [null, undefined, 42, {}, [], '', { lines: 'not-an-array' }, { lines: [null, 7] }]) {
     assert.equal(firstEnclosingContext(bad), null)
   }
 })
 
 test('countHunks separates malformed hunks from counted ones instead of dropping them', () => {
-  // The regression this guards: a hunk with no lines array was skipped silently, so "3 hunks"
-  // could be reported off a patch where only one was actually readable.
   const c = countHunks([
     { lines: ['+a', '-b', ' c'] },
     { oldStart: 5 },
@@ -250,11 +212,8 @@ test('countHunks separates malformed hunks from counted ones instead of dropping
 })
 
 // ---------------------------------------------------------------------------------------------
-// groupEvents
 
 test('consecutive same-tool calls on the same file collapse into one counted group', () => {
-  // The regression this guards: a loop of three edits to one file produced three identical rows,
-  // burying the rest of the session.
   const records = [
     assistant([use('e1', 'Edit', { file_path: '/p/src/App.jsx', old_string: 'a', new_string: 'b' })]),
     result('e1'),
@@ -274,8 +233,6 @@ test('consecutive same-tool calls on the same file collapse into one counted gro
 })
 
 test('collapse can be turned off without changing anything else', () => {
-  // The regression this guards: the forensics view needs one row per call; collapsing there hid
-  // the ordering of individual operations.
   const records = [
     assistant([use('e1', 'Read', { file_path: '/p/a.mjs' })]), result('e1'),
     assistant([use('e2', 'Read', { file_path: '/p/a.mjs' })]), result('e2'),
@@ -285,8 +242,6 @@ test('collapse can be turned off without changing anything else', () => {
 })
 
 test('a tool_use is paired with its tool_result by tool_use_id, and errors are marked', () => {
-  // The regression this guards: results were matched positionally, so an interleaved parallel
-  // tool call attributed the failure to the wrong row.
   const records = [
     assistant([use('x1', 'Bash', { command: 'npm test' }), use('x2', 'Read', { file_path: '/p/a.mjs' })]),
     result('x2'),
@@ -301,8 +256,6 @@ test('a tool_use is paired with its tool_result by tool_use_id, and errors are m
 })
 
 test('an unpaired tool_use is reported as still running rather than silently dropped', () => {
-  // The regression this guards: a session read while a tool was mid-flight, or a truncated
-  // transcript tail, dropped the last tool call entirely — the timeline just ended.
   const records = [
     assistant([use('ok1', 'Read', { file_path: '/p/a.mjs' })]),
     result('ok1'),
@@ -319,8 +272,6 @@ test('an unpaired tool_use is reported as still running rather than silently dro
 })
 
 test('a tool_use with no id is reported as unpairable, distinct from still running', () => {
-  // The regression this guards: "we are waiting for a result" and "this record can never be
-  // matched" are different facts, and collapsing them hid real transcript corruption.
   const { unpaired } = groupEvents([assistant([{ type: 'tool_use', name: 'Read', input: { file_path: '/p/a.mjs' } }])])
   assert.equal(unpaired.length, 1)
   assert.equal(unpaired[0].reason, 'missing-tool-use-id')
@@ -328,8 +279,6 @@ test('a tool_use with no id is reported as unpairable, distinct from still runni
 })
 
 test('subagent events nest under the Task that spawned them', () => {
-  // The regression this guards: sidechain records were rendered inline in the main thread, so a
-  // subagent's twenty greps looked like the main agent's own work.
   const records = [
     assistant([use('task1', 'Task', { subagent_type: 'explorer', prompt: 'go look' })]),
     assistant([use('sub1', 'Grep', { pattern: 'useState', path: 'src/' })], {
@@ -348,8 +297,6 @@ test('subagent events nest under the Task that spawned them', () => {
 })
 
 test('a subagent event whose parent is missing stays visible and is flagged as an orphan', () => {
-  // The regression this guards: nesting-by-parent silently swallowed events when the parent
-  // tool_use fell outside the slice of transcript being rendered.
   const records = [assistant([use('sub9', 'Grep', { pattern: 'x' })], { isSidechain: true, parentToolUseId: 'gone' })]
   const { groups, orphans } = groupEvents(records)
   assert.equal(groups.length, 1)
@@ -359,8 +306,6 @@ test('a subagent event whose parent is missing stays visible and is flagged as a
 })
 
 test('an Edit group folds in hunk counts and the enclosing function from its result patch', () => {
-  // The regression this guards: the structuredPatch on toolUseResult was thrown away, losing the
-  // one thing that says what actually changed.
   const records = [
     assistant([use('p1', 'Edit', { file_path: '/p/src/store.mjs', old_string: 'a', new_string: 'b' })]),
     result('p1', {
@@ -375,8 +320,6 @@ test('an Edit group folds in hunk counts and the enclosing function from its res
 })
 
 test('text, thinking and system records become their own groups without leaking full bodies', () => {
-  // The regression this guards: a timeline made only of tool calls lost the narrative between
-  // them; and an early version pasted entire assistant messages into row summaries.
   const long = 'y'.repeat(500)
   const { groups } = groupEvents([
     assistant([{ type: 'text', text: long }]),
@@ -392,8 +335,6 @@ test('text, thinking and system records become their own groups without leaking 
 })
 
 test('maxGroups reports what it left out instead of silently cutting the list', () => {
-  // The regression this guards: no silent caps. A truncated timeline that does not say it is
-  // truncated reads as a complete session.
   const records = []
   for (const f of ['a', 'b', 'c', 'd']) {
     records.push(assistant([use(f, 'Read', { file_path: `/p/${f}.mjs` })]), result(f))
@@ -407,7 +348,6 @@ test('maxGroups reports what it left out instead of silently cutting the list', 
 })
 
 test('groupEvents never throws on malformed input and counts what it could not read', () => {
-  // The regression this guards: one bad JSONL line taking down the whole timeline render.
   const out = groupEvents([null, 7, 'str', {}, { message: { content: null } }, { type: 'user', message: { content: [{ type: 'tool_result' }] } }])
   assert.ok(Array.isArray(out.groups))
   assert.ok(out.counts.malformed >= 1, 'unreadable records are counted, not ignored')
@@ -419,9 +359,6 @@ test('groupEvents never throws on malformed input and counts what it could not r
 })
 
 test('subagent nesting also works off sourceToolUseID, the field real transcripts use', () => {
-  // The regression this guards: the spec names `parentToolUseId`, but the subagent JSONL files
-  // Claude Code actually writes carry `sourceToolUseID`. Reading only the documented name meant
-  // nesting worked in tests and never once in production.
   const records = [
     assistant([use('task2', 'Task', { subagent_type: 'explorer' })]),
     assistant([use('sub2', 'Read', { file_path: '/p/a.mjs' })], { isSidechain: true, sourceToolUseID: 'task2' }),
@@ -435,8 +372,6 @@ test('subagent nesting also works off sourceToolUseID, the field real transcript
 })
 
 test('sidechain events with no parent link at all are counted as unlinked, not quietly flattened', () => {
-  // The regression this guards: most real subagent records carry only `agentId`, so they cannot be
-  // attributed to a parent from the record alone. That fact has to be visible to the caller.
   const { counts } = groupEvents([
     assistant([use('s1', 'Grep', { pattern: 'x' })], { isSidechain: true, agentId: 'agent-a1', agentType: 'explorer' }),
   ])
@@ -445,8 +380,6 @@ test('sidechain events with no parent link at all are counted as unlinked, not q
 })
 
 test('record types this build does not model are counted by type rather than vanishing', () => {
-  // The regression this guards: real transcripts contain `attachment` records; dropping them with
-  // no trace made a partial timeline indistinguishable from a complete one.
   const { groups, counts } = groupEvents([
     { type: 'attachment', uuid: 'x1' },
     { type: 'attachment', uuid: 'x2' },
@@ -457,8 +390,6 @@ test('record types this build does not model are counted by type rather than van
 })
 
 test('an unknown tool still groups and pairs like any other call', () => {
-  // The regression this guards: the grouping pass keyed off a known-tool table, so MCP calls
-  // vanished from the timeline entirely rather than showing as unrecognised.
   const records = [
     assistant([use('m1', 'mcp__notion__notion-search', { query: 'x' })]),
     result('m1'),

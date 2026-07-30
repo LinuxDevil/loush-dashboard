@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const STAGE_C = { backlog: 'var(--text-secondary)', 'in-progress': 'var(--blue)', 'code-review': 'var(--amber)', fixing: 'var(--accent-light)', 'ready-for-qa': 'var(--violet)', 'qa-running': 'var(--blue)', 'bug-reported': 'var(--red)', 'ready-for-release': 'var(--green)', released: 'var(--text-tertiary)' }
 const TYPE_C = { feature: 'var(--blue)', sub: 'var(--text-secondary)', bug: 'var(--red)' }
 const MODELS = ['haiku', 'sonnet', 'opus']
@@ -280,7 +280,7 @@ function Setup({ project, board, onRefresh }) {
   const [pipe, setPipe] = useState(null)
   useEffect(() => setCfg(board.config || {}), [board.config])
   const saveCfg = () => api.post('/api/board/config', { project, ...cfg, previewIdleMin: Number(cfg.previewIdleMin) || 240 }).then(onRefresh).catch(e => alert(e.message))
-  const F = ({ label, k, w, ph }) => ( // plain function, not <Component> — keeps input focus across re-renders
+  const F = ({ label, k, w, ph }) => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 3, width: w || 160 }}>
       <Meta>{label}</Meta>
       <input value={cfg[k] ?? ''} onChange={e => setCfg({ ...cfg, [k]: e.target.value })} placeholder={ph} />
@@ -381,13 +381,13 @@ export default function BoardSection() {
   const [dragOver, setDragOver] = useState(null)
   const load = () => project && api.get('/api/board?project=' + encodeURIComponent(project)).then(setBoard).catch(() => {})
   const move = (id, stage) => { const t = board?.tickets.find(x => x.id === id); if (t && t.stage !== stage) api.patch('/api/board/tickets/' + id, { stage }).then(load).catch(e => toast(e.message, 'error')) }
-  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project]) // pause while tab hidden
+  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project])
   useEffect(() => { if (!project && projects.length) setProject(projects[0].id) }, [projects])
 
   const stages = useMemo(() => {
     if (!board) return []
     const pipe = board.pipelines.find(p => p.id === (board.config?.pipeline || 'default')) || board.pipelines[0]
-    const extra = [...new Set(board.tickets.map(t => t.stage))].filter(s => !pipe.stages.includes(s)) // in-flight tickets on an older template still show
+    const extra = [...new Set(board.tickets.map(t => t.stage))].filter(s => !pipe.stages.includes(s))
     return [...pipe.stages, ...extra]
   }, [board])
 
