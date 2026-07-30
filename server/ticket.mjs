@@ -12,6 +12,7 @@ import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMe
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
 import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile, workspaceId } from '../lib/paths.mjs'
 import { parseTasks, validateTasks } from '../lib/decomposition.mjs'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 
 const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/
 const DASH_PORT = Number(process.env.DASH_PORT) || 5178
@@ -970,6 +971,6 @@ function indexRepo(root) {
 }
 
 function isIgnored(root, rel) {
-  try { return spawnSync('git', ['-C', root, 'check-ignore', '-q', rel], { timeout: 3000 }).status === 0 }
+  try { return gitSafe(root, ['check-ignore', '-q', rel], { timeout: 3000 }).ok }
   catch { return false }
 }

@@ -3,6 +3,7 @@ import { exec, spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { runAgent } from '../lib/agent.mjs'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 
 const BOARD_FILE = path.join(CLAUDE, 'taskboard.json')
 
@@ -69,7 +70,13 @@ function recordRun(t, kind, model, r, handoff) {
 
 const teamStage = (board, t, stageKind) => { const team = board.teams.find(x => x.id === t.team); const s = team?.stages?.[stageKind] || {}; return { model: t.model || s.model || projCfg(board, t.project).defaultModel || undefined, instructions: s.instructions || '' } }
 
-const gitB = (project, args, timeout = 60_000) => spawnSync('git', ['-C', project, ...args], { timeout, maxBuffer: 8 * 1024 * 1024 })
+// Routed through git-safe so reads take no optional lock: the board rebases worktrees while a
+// dashboard poll may be running a diff against the same repo, which is exactly the collision.
+// spawnSync's shape is preserved (.status/.stdout) so callers are unchanged.
+const gitB = (project, args, timeout = 60_000) => {
+  const r = gitSafe(project, args, { timeout, maxBuffer: 8 * 1024 * 1024 })
+  return { status: r.ok ? 0 : (r.status ?? 1), stdout: r.stdout, stderr: r.stderr, locked: r.locked, reason: r.reason }
+}
 
 const changedFiles = (project, base, ref) => { const r = gitB(project, ['diff', '--name-only', `${base}...${ref}`]); return r.status === 0 ? r.stdout.toString().trim().split('\n').filter(Boolean) : [] }
 
@@ -396,10 +403,10 @@ app.post('/api/board/tickets/:id/release', (req, res) => {
     const dirty = gitB(t2.project, ['status', '--porcelain']).stdout.toString().trim()
     if (dirty) { blockT(t2, 'merge', 'merge-conflict', 'main working tree is dirty — commit or stash before releasing'); writeBoard(b2); return }
     gitB(t2.project, ['checkout', cfg.base])
-    const reb = spawnSync('git', ['-C', t2.worktree, 'rebase', cfg.base], { timeout: 120_000 })
+    const reb = gitSafe(t2.worktree, ['rebase', cfg.base], { timeout: 120_000 })
     if (reb.status !== 0) {
-      const hunks = spawnSync('git', ['-C', t2.worktree, 'diff'], { timeout: 30_000 }).stdout.toString().slice(0, 3000)
-      spawnSync('git', ['-C', t2.worktree, 'rebase', '--abort'], { timeout: 30_000 })
+      const hunks = gitSafe(t2.worktree, ['diff'], { timeout: 30_000 }).stdout.slice(0, 3000)
+      gitSafe(t2.worktree, ['rebase', '--abort'], { timeout: 30_000 })
       blockT(t2, 'merge', 'merge-conflict', 'rebase onto ' + cfg.base + ' conflicts:\n' + (reb.stderr.toString().slice(0, 500) || '') + '\n' + hunks)
       writeBoard(b2); return
     }

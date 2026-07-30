@@ -59,6 +59,7 @@ import mountBoard, { boardRuns, projCfg, readBoard, tkt, writeBoard } from './bo
 import mountDrift, { designDrift, reviewData } from './drift.mjs'
 import mountAgentTeams from './agent-teams.mjs'
 import mountInventory, { KINDS, OFF, SETTINGS_FILES, itemFile, itemRoot, listItemNames, scopeDir } from './inventory.mjs'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 import {
   HOME, CLAUDE, CLAUDE_JSON, PROJECT, WIN, BACKUPS, PORT,
   safe, backup, parseFM, readClaudeJson,
@@ -525,7 +526,7 @@ function repoInfo(dir) {
   const c = gitCache.get(dir)
   if (c && Date.now() - c.t < 10 * 60_000) return c
   let commits = null
-  try { commits = parseInt(spawnSync('git', ['-C', dir, 'rev-list', '--count', 'HEAD'], { timeout: 3000 }).stdout.toString().trim()) || null } catch {}
+  try { commits = parseInt(gitSafe(dir, ['rev-list', '--count', 'HEAD'], { timeout: 3000 }).stdout.trim()) || null } catch {}
   const counts = {}
   const walk2 = (d, depth) => {
     if (depth > 2) return
@@ -738,7 +739,7 @@ app.get('/api/chat/complete', (req, res) => {
   const q = String(req.query.q || '').toLowerCase()
   if (req.query.kind === 'files') {
     const qRaw = String(req.query.q || '')
-    const r = spawnSync('git', ['-C', cwd, 'ls-files', '-co', '--exclude-standard'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 })
+    const r = gitSafe(cwd, ['ls-files', '-co', '--exclude-standard'], { timeout: 5000, maxBuffer: 16 * 1024 * 1024 })
     if (r.status === 0 && r.stdout.toString().trim()) {
       const files = r.stdout.toString().split('\n').filter(Boolean)
       const dirs = new Set()
@@ -1318,7 +1319,7 @@ app.get('/api/digest', async (req, res) => {
   const commits = []
   try {
     for (const dir of Object.keys(readClaudeJson().projects || {}).filter(d => d !== HOME && fs.existsSync(d))) {
-      const r = spawnSync('git', ['-C', dir, 'log', '--since=' + new Date(since).toISOString(), '--oneline'], { timeout: 3000 })
+      const r = gitSafe(dir, ['log', '--since=' + new Date(since).toISOString(), '--oneline'], { timeout: 3000 })
       const list = r.stdout ? r.stdout.toString().split('\n').filter(Boolean) : []
       if (list.length) commits.push({ project: path.basename(dir), count: list.length, latest: list[0].slice(0, 90) })
     }

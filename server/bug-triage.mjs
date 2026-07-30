@@ -3,6 +3,7 @@ import { exec, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { projCfg, readBoard, writeBoard } from './board.mjs'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 
 const BUGS_FILE = path.join(CLAUDE, 'bugs.json')
 
@@ -91,7 +92,9 @@ app.post('/api/bugs/:id/bisect', (req, res) => {
   bisects.set(bug.id, { status: 'running', startedAt: Date.now() })
   res.json({ ok: true })
   ;(async () => {
-    const g = args => spawnSync('git', ['-C', bug.project, ...args], { timeout: 600_000, maxBuffer: 8 * 1024 * 1024 })
+    // bisect checks out old commits, so its reads and writes race with anything else touching
+    // this repo. git-safe keeps the reads off the index lock and names a collision as one.
+    const g = args => gitSafe(bug.project, args, { timeout: 600_000, maxBuffer: 8 * 1024 * 1024 })
     try {
       const dirty = g(['status', '--porcelain']).stdout.toString().trim()
       if (dirty) return bisects.set(bug.id, { status: 'error', log: 'working tree is dirty — commit or stash first (bisect checks out old commits)' })
@@ -121,7 +124,7 @@ app.get('/api/bugs/:id/context', (req, res) => {
       if (!fr.line) continue
       const rel = fr.file.startsWith('/') ? path.relative(bug.project, fr.file) : fr.file
       if (rel.startsWith('..')) continue
-      const r = spawnSync('git', ['-C', bug.project, 'blame', '-L', `${Math.max(1, fr.line - 2)},${fr.line + 2}`, '--date=short', '--', rel], { timeout: 5000 })
+      const r = gitSafe(bug.project, ['blame', '-L', `${Math.max(1, fr.line - 2)},${fr.line + 2}`, '--date=short', '--', rel], { timeout: 5000 })
       if (r.status === 0) blames.push({ file: rel, line: fr.line, blame: r.stdout.toString().slice(0, 800) })
     }
   }

@@ -4,6 +4,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { CATALOG_FILE } from '../lib/paths.mjs'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 
 const capturesDir = repo => path.join(repo, '.claude', 'figma-captures')
 const captureDir = (repo, slug) => path.join(capturesDir(repo), slug)
@@ -21,7 +22,7 @@ function contextMarkdown(capture, annotations) {
 }
 
 function currentBranch(repo) {
-  const r = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' })
+  const r = gitSafe(repo, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000 })
   return r.status === 0 ? r.stdout.trim() : null
 }
 

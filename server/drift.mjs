@@ -2,6 +2,7 @@ import { exec, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import { mangle, readJson, track } from './dashboard-core.mjs'
 import path from 'node:path'
+import { git as gitSafe } from '../lib/git-safe.mjs'
 
 let projectDirs, scanTranscripts
 
@@ -171,7 +172,7 @@ app.post('/api/analytics/taxonomy', (req, res) => {
 app.get('/api/analytics/drift', (req, res) => {
   const project = req.query.project
   if (!project || !fs.existsSync(project)) return res.status(400).json({ error: 'unknown project' })
-  const r = spawnSync('git', ['-C', project, 'diff', 'HEAD', '--unified=0'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 })
+  const r = gitSafe(project, ['diff', 'HEAD', '--unified=0'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 })
   const tax = readJson(taxonomyPath(project), null)
   const known = new Set((tax?.events || []).map(e => e.name))
   const added = []
