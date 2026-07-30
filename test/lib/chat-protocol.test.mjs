@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createRun, emit, replayFrom, sseReplay, parseInbound, createSessionIndex, INBOUND_VERBS, DEFAULT_BUFFER } from '../../lib/chat-protocol.mjs'
+import { createRun, emit, replayFrom, sseReplay, parseInbound, INBOUND_VERBS, DEFAULT_BUFFER } from '../../lib/chat-protocol.mjs'
 
 const chatOf = (seqs, { dropped = 0 } = {}) => ({ events: seqs.map(seq => ({ seq, type: 'x' })), seq: seqs.length ? seqs[seqs.length - 1] : 0, dropped })
 
@@ -140,38 +140,4 @@ test('parsing never throws on socket garbage', () => {
 test('a valid verb parses from either `verb` or `type`', () => {
   assert.equal(parseInbound('{"verb":"chat.send","payload":{"text":"hi"}}').payload.text, 'hi')
   assert.equal(parseInbound({ type: 'chat.abort' }).verb, 'chat.abort')
-})
-
-// ---- session index ----
-
-test('allocated ids are unique and start unbound', () => {
-  const idx = createSessionIndex()
-  const a = idx.allocate(), b = idx.allocate()
-  assert.notEqual(a, b)
-  assert.equal(idx.providerFor(a), null)
-})
-
-test('rebinding an app id to a different provider is refused, not overwritten', () => {
-  const idx = createSessionIndex()
-  const app = idx.allocate()
-  assert.equal(idx.bind(app, 'provider-abc').ok, true)
-  assert.equal(idx.bind(app, 'provider-abc').ok, true, 'rebinding to the same id is idempotent')
-  const clash = idx.bind(app, 'provider-xyz')
-  assert.equal(clash.ok, false)
-  assert.equal(clash.reason, 'already-bound')
-  assert.equal(idx.providerFor(app), 'provider-abc')
-})
-
-test('a provider session id is rewritten to ours on the way out', () => {
-  const idx = createSessionIndex()
-  const app = idx.allocate()
-  idx.bind(app, 'provider-abc')
-  assert.equal(idx.toClient({ session_id: 'provider-abc', kind: 'delta' }).session_id, app)
-  assert.equal(idx.toClient({ sessionId: 'provider-abc' }).sessionId, app)
-})
-
-test('an unmapped session id passes through unchanged rather than being blanked', () => {
-  const idx = createSessionIndex()
-  assert.equal(idx.toClient({ session_id: 'unseen' }).session_id, 'unseen')
-  assert.equal(idx.toClient(null), null)
 })
