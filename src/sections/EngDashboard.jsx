@@ -21,6 +21,7 @@ import Compare from '../eng/Compare.jsx'
 import Epics from '../eng/Epics.jsx'
 import CIHealth from '../eng/CI.jsx'
 import Load from '../eng/Load.jsx'
+import ReadyBlocked from '../eng/ReadyBlocked.jsx'
 import Export from '../eng/Export.jsx'
 import CmdK from '../eng/CmdK.jsx'
 import { metricsFor, buildRadars, MemberCard, MemberDetail } from '../eng/MemberInsights.jsx'
@@ -93,7 +94,7 @@ export default function EngDashboard({ onExit }) {
   const win = useMemo(() => resolveWindow(url.win, S?.sprints, url.from, url.to), [url.win, url.from, url.to, S?.sprints])
 
   const NAV = [
-    ['queue', 'Queue', '⚑'], ['overview', 'Overview', '▦'], ['review', 'Review', '⟨⟩'], ['quality', 'Quality', '◈'],
+    ['queue', 'Queue', '⚑'], ['ready', 'Ready / Blocked', '⇉'], ['overview', 'Overview', '▦'], ['review', 'Review', '⟨⟩'], ['quality', 'Quality', '◈'],
     ['investment', 'Investment', '◑'], ['sprints', 'Predictability', '◔'], ['epics', 'Epics', '⬡'], ['ci', 'CI', '⚙'],
     ['projects', 'Projects', '⊞'], ['load', 'Load', '☰'], ['sprint', 'Board', '▤'], ['members', 'Members', '◍'],
     ['okrs', 'OKRs', '◎'], ['export', 'Export', '↧'],
@@ -128,6 +129,7 @@ export default function EngDashboard({ onExit }) {
 
   return shell(
     route === 'queue' ? <AttentionQueue snap={S} me={me} mine={url.mine === '1'} setMine={v => setUrl({ mine: v ? '1' : '' })} project={project} onOpenTicket={openTicket} reload={() => load(true)} />
+      : route === 'ready' ? <ReadyBlocked project={project} onOpenTicket={openTicket} />
       : route === 'overview' ? <Overview {...common} />
       : route === 'review' ? <ReviewFlow snap={S} project={project} />
       : route === 'quality' ? <Quality snap={S} issues={issues} members={members} patch={patchIssue} reload={() => load(false)} />

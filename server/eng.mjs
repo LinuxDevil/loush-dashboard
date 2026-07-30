@@ -10,6 +10,7 @@ import {
 } from '../lib/eng-config.mjs'
 import { estAccuracy, escapeRateSeries, busFactor } from '../lib/eng-metrics.mjs'
 import { adfToText, isAdf, markdownToAdf } from '../lib/adf.mjs'
+import { partitionByReadiness, unblockImpact } from '../lib/task-graph.mjs'
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, ENG_STATE } from '../lib/paths.mjs'
 
 const DAY = 864e5
@@ -1038,7 +1039,18 @@ async function snapFor(key, opts = {}) {
   if (key === 'all') return snapshotAll(opts)
   const projs = loadProjects()
   const k = String(key ?? '').toUpperCase()
-  return snapshot(projs.find(p => p.key === k) || projs[0], opts)
+  const cfg = projs.find(p => p.key === k) || projs[0]
+  // With no project configured this used to hand `undefined` to snapshot(), which then read
+  // `cfg.key` and surfaced "Cannot read properties of undefined" to the client on every eng
+  // route. That is a stack trace where an answer belongs — it names nothing the user can act on.
+  if (!cfg) {
+    const e = new Error(k
+      ? `no project "${k}" is configured — add it in Setup, or pick one of: ${projs.map(p => p.key).join(', ') || '(none configured yet)'}`
+      : 'no JIRA/GitHub project is configured yet — add one in Setup')
+    e.status = 400
+    throw e
+  }
+  return snapshot(cfg, opts)
 }
 
 // ---------- OKRs (§4) — every measure is AUTO, computed by the UI from live aggregates ----------
@@ -1285,6 +1297,23 @@ export default function mountEng(app) {
   app.get('/api/eng/load', async (req, res) => {
     try { const s = await snapFor(req.query.project); res.json(s.load) }
     catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // ---- dependency-aware ready / blocked queue ----
+  // A derived view over the snapshot's existing issue links — no new fetch, no new convention.
+  app.get('/api/eng/queue', async (req, res) => {
+    try {
+      const s = await snapFor(req.query.project)
+      const p = partitionByReadiness(s.issues)
+      res.json({
+        ...p,
+        impact: unblockImpact(s.issues),
+        // The snapshot's own staleness travels with the answer: a queue computed from a day-old
+        // cache can name a blocker that has since been closed.
+        generatedAt: s.generatedAt, stale: s.stale ?? false, team: s.team ?? null,
+        source: 'jira issue links (fields.issuelinks) on the current snapshot',
+      })
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
   })
 
   // ---- §10 epic target-date overrides ----
