@@ -58,6 +58,89 @@ function SessionEvents({ sessionId }) {
   )
 }
 
+// Search across EVERY transcript, not just the rows currently listed. Tool inputs are searched
+// because "which session ran that command" is the real question, but the server returns the tool
+// name and field path only — never the value, which could be a token.
+function TranscriptSearch() {
+  const [q, setQ] = useState('')
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const run = () => {
+    if (!q.trim()) return
+    setBusy(true); setErr(''); setD(null)
+    api.get(`/api/search/sessions?q=${encodeURIComponent(q.trim())}&days=90`)
+      .then(setD).catch(e => setErr(e.message)).finally(() => setBusy(false))
+  }
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <b style={{ font: '600 13px var(--head)' }}>Search all sessions</b>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="a phrase, a filename, a command…"
+          onKeyDown={e => { if (e.key === 'Enter') run() }} style={{ flex: 1, font: '400 12px var(--mono)' }} />
+        <button className="mini" style={{ marginTop: 0 }} onClick={run} disabled={busy || !q.trim()}>{busy ? 'searching…' : 'search'}</button>
+      </div>
+      {err && <p className="small" style={{ color: 'var(--red)' }}>{err}</p>}
+      {d && (
+        <>
+          <p className="small" style={{ margin: '8px 0 4px' }}>
+            {d.total} hit{d.total === 1 ? '' : 's'} across {d.sessionsScanned} session{d.sessionsScanned === 1 ? '' : 's'} in {d.days} days
+            {/* A capped list presented as complete is the failure mode this avoids. */}
+            {d.truncated && ` · showing the first ${d.cap}`}
+            {d.unparsableLines > 0 && ` · ${d.unparsableLines} unparsable line(s) skipped`}
+          </p>
+          <div style={{ maxHeight: 300, overflowY: 'auto', font: '400 11px var(--mono)' }}>
+            {d.hits.map((h, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                <span style={{ color: 'var(--text-tertiary)', width: 68, flexShrink: 0 }}>{h.role}</span>
+                <span style={{ color: 'var(--accent-light)', width: 74, flexShrink: 0, overflow: 'hidden' }} title={h.sessionId}>{String(h.sessionId).slice(0, 8)}</span>
+                <span style={{ color: 'var(--text-secondary)', flex: 1 }}>{h.snippet || h.text}</span>
+              </div>
+            ))}
+            {d.hits.length === 0 && <div style={{ color: 'var(--text-tertiary)' }}>no matches</div>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Which sessions stopped mid-turn. `unknown` dominates here and that is correct: subagent
+// transcripts frequently record no terminal stop reason, and calling those crashed would be a
+// confident wrong answer about every one of them.
+function SessionHealth() {
+  const [d, setD] = useState(null)
+  useEffect(() => { api.get('/api/sessions/health?days=30').then(setD).catch(() => {}) }, [])
+  if (!d) return null
+  const abnormal = (d.sessions || []).filter(s => s.ended === 'abnormal')
+  const compactions = (d.sessions || []).reduce((n, s) => n + (s.compactions?.length || 0), 0)
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <h3>Session health <span className="muted">last {d.days} days</span></h3>
+      <p className="small" style={{ margin: '4px 0' }}>
+        {Object.entries(d.counts || {}).map(([k, v]) => `${v} ${k}`).join(' · ') || 'nothing recorded'}
+        {compactions > 0 && ` · ${compactions} compaction(s)`}
+      </p>
+      {abnormal.length > 0 && (
+        <div style={{ font: '400 11px var(--mono)' }}>
+          {abnormal.slice(0, 8).map(s => (
+            <div key={s.sessionId} style={{ display: 'flex', gap: 8, padding: '2px 0' }}>
+              <span style={{ color: 'var(--red)', width: 74 }}>{String(s.sessionId).slice(0, 8)}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>{s.reason}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Only said when it is true, so it does not read as boilerplate. */}
+      {compactions === 0 && d.compactionFieldsVerified === false && (
+        <p className="small" style={{ color: 'var(--text-tertiary)' }}>
+          No compactions found. The field names for compaction records could not be verified against real data on this machine, so zero here means "none matched", not "none happened".
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function SessionsSection() {
   const [days, setDays] = useState(7)
   const [d, setD] = useState(null)
@@ -122,6 +205,8 @@ export default function SessionsSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TranscriptSearch />
+      <SessionHealth />
       <div className="kpi-grid" style={{ marginBottom: 0 }}>
         <div className="kpi"><div className="kpi-label"><span>spend</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>{days}d</span></div>
           <div className="kpi-value"><CountUp value={t.cost} prefix="$" decimals={2} /></div>

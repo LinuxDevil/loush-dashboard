@@ -24,6 +24,69 @@ function Bars({ data, unit }) {
 
 const fmtCost = n => '$' + n.toLocaleString(undefined, { maximumFractionDigits: 0 })
 
+// Cost by project AND branch, cache hit rate, and which subagent type costs the most — all from
+// /api/usage/report. The branch rollup has always been computed and never displayed.
+function UsageReport() {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/usage/report').then(setD).catch(e => setErr(e.message)) }, [])
+  if (err) return <div className="panel"><p className="small" style={{ color: 'var(--red)' }}>{err}</p></div>
+  if (!d) return null
+  const projects = d.byProjectBranch?.projects || []
+  const cache = d.cache?.session
+  const types = d.subagents?.types || []
+  const dl = anon => { window.location = `/api/usage/report?format=csv${anon ? '&anonymised=1' : ''}` }
+  return (
+    <div className="panel">
+      <h3>Cost by project &amp; branch
+        <span className="muted">
+          {/* null, not 0%: a session with no input has no hit rate, and 0% would read as
+              "the cache never helped". */}
+          {cache?.rate != null ? ` · ${(cache.rate * 100).toFixed(1)}% cache hit rate` : ' · cache hit rate unknown'}
+        </span>
+      </h3>
+      <table className="data" style={{ width: '100%', font: '400 11px var(--mono)' }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>project</th><th style={{ textAlign: 'left' }}>branch</th><th>cost</th><th>messages</th><th>output</th></tr></thead>
+        <tbody>
+          {projects.flatMap(p => (p.branches || []).map(b => (
+            <tr key={p.proj + '|' + b.label}>
+              <td>{p.label ?? p.proj}</td>
+              {/* branchKnown false means the collector recorded no branch at all, which is a
+                  different fact from an empty branch name on a detached HEAD. */}
+              <td style={{ color: b.branchKnown ? 'var(--violet)' : 'var(--text-tertiary)' }}>{b.label}</td>
+              <td className="num">${(b.cost ?? 0).toFixed(2)}</td>
+              <td className="num">{b.msgs ?? '—'}</td>
+              <td className="num" title={b.tokensComplete === false ? 'the collector stores only output tokens per branch, so this is not a full token count' : ''}>
+                {b.tokens?.out != null ? b.tokens.out.toLocaleString() : '—'}{b.tokensComplete === false ? '*' : ''}
+              </td>
+            </tr>
+          )))}
+        </tbody>
+      </table>
+      {projects.some(p => (p.branches || []).some(b => b.tokensComplete === false)) && (
+        <p className="small">* output tokens only — the per-branch rollup does not carry input or cache counts, so this is not a total.</p>
+      )}
+      {types.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 14 }}>Subagent cost by type <span className="muted">auto-compaction excluded</span></h3>
+          <table className="data" style={{ width: '100%', font: '400 11px var(--mono)' }}>
+            <thead><tr><th style={{ textAlign: 'left' }}>type</th><th>cost</th><th>runs</th></tr></thead>
+            <tbody>{types.map(t => (
+              <tr key={t.type}><td>{t.type}</td><td className="num">${(t.cost ?? 0).toFixed(2)}</td><td className="num">{t.runs ?? t.count ?? '—'}</td></tr>
+            ))}</tbody>
+          </table>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="mini" onClick={() => dl(false)}>download CSV</button>
+        {/* Anonymised swaps project and branch names for per-export labels and emits no hash, so
+            there is nothing to match back against a candidate repo list. */}
+        <button className="mini" onClick={() => dl(true)}>download anonymised</button>
+      </div>
+    </div>
+  )
+}
+
 export default function UsagePanel() {
   const [usage, setUsage] = useState(null)
   const [err, setErr] = useState(null)
@@ -38,6 +101,7 @@ export default function UsagePanel() {
   const reg = usage.regression
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <UsageReport />
       {usage.health && (
         <div className="panel" style={{ marginBottom: 0 }}>
           <div className="panel-head"><h3>Harness health <span className="muted">usage efficiency, not config completeness — see Harness ▸ Config for that</span></h3></div>
