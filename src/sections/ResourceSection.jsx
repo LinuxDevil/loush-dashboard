@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { marked } from 'marked'
@@ -42,7 +43,7 @@ function Preview({ kind, detail }) {
           <div className="chips">{String(fm.tools).split(',').map(t => <span className="chip" key={t}>{t.trim()}</span>)}</div></>
       )}
       <h3>Rendered body</h3>
-      <div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(body || '') }} />
+      <Markdown source={body || ''} />
       {detail.assets?.length > 0 && (
         <><h3>Supporting assets</h3>
           <ul>{detail.assets.map(a => <li key={a}><code>{a}</code></li>)}</ul></>

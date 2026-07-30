@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import { marked } from 'marked'
 import { api, toast } from '../lib/api.js'
 
@@ -85,7 +86,7 @@ export default function DesignChat({ tKey, workspace, graph, selected, rev, onAp
           if (e.role === 'error') return <div key={i} className="chat-line err">{e.text}</div>
           if (e.role === 'assistant') return (
             <div key={i}>
-              <div className="chat-msg assistant" style={{ maxWidth: '100%' }} dangerouslySetInnerHTML={{ __html: marked.parse(e.text || '') }} />
+              <Markdown source={e.text || ''} className="chat-msg assistant" style={{ maxWidth: '100%' }} />
               {e.cost != null && <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', paddingLeft: 6 }}>${Number(e.cost).toFixed(3)}</div>}
             </div>
           )

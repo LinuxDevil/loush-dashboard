@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import Markdown from './Markdown.jsx'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { json as jsonLang } from '@codemirror/lang-json'
@@ -124,7 +125,7 @@ export function Viewer({ item, raw }) {
   if (content === null) return <p className="muted center">loading…</p>
   if (raw) return <CodeView content={content} ext={ext === 'svg' || ext === 'html' ? 'html' : ext} />
 
-  if (ext === 'md') return <div className="md pad" dangerouslySetInnerHTML={{ __html: marked.parse(content) }} />
+  if (ext === 'md') return <Markdown source={content} className="md pad" />
   if (ext === 'html' || ext === 'htm') return <iframe className="frame" sandbox="allow-scripts" src={url} title={item.name} />
   if (ext === 'svg') return <div className="img-wrap"><img src={url} alt={item.name} /></div>
   if (ext === 'csv') { const rows = parseCSV(content); return rows.length ? <DataTable header={rows[0]} rows={rows.slice(1)} /> : <p className="muted">empty csv</p> }

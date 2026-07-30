@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import { marked } from 'marked'
 import { api, fmtDate } from '../lib/api.js'
 import { extractPlan, blocksToPlan, diagnoseSession } from '../lib/plan.js'
@@ -64,7 +65,7 @@ function ReviewButtons({ text, chatId, cwd }) {
 export function Block({ b }) {
   if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
   if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
-  if (b.kind === 'text') return <div className="chat-msg assistant" dangerouslySetInnerHTML={{ __html: marked.parse(b.text) }} />
+  if (b.kind === 'text') return <Markdown source={b.text} className="chat-msg assistant" />
   if (b.kind === 'stderr') return <div className="chat-line err">{b.text}</div>
   if (b.kind === 'closed') return <div className="chat-line err">session ended{b.error ? ` — ${b.error}` : b.code ? ` (exit ${b.code})` : ''}</div>
   if (b.kind === 'turn-end') return <div className="chat-line dim">◦ turn done {b.ms ? `· ${(b.ms / 1000).toFixed(1)}s` : ''} {b.cost ? `· $${b.cost.toFixed(3)}` : ''}</div>
