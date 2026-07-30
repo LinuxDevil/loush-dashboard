@@ -588,10 +588,44 @@ const chats = new Map()
 const PLAN_SCHEMA_RULE = `When asked to create an execution plan, you MUST output a JSON array inside a \`\`\`json code block — not a markdown list. Every element uses exactly this schema:
 {"step_id": 1, "description": "short action", "dependencies": [], "expected_skill": [], "active_rules": [], "mcp_server": null, "tool_to_call": "Edit", "expected_params": {"name": "value or 'TBD based on step N'"}}
 dependencies is an array of step_ids that must finish first. Use null/[] where a field does not apply. This rule applies only when an execution plan is requested; answer normally otherwise.`
+// Retained events are replayed to every new SSE listener, so an unbounded array is both a
+// memory leak on a long run and a growing replay cost per reconnect. Bounded, and the drop is
+// counted rather than silent: a client that reconnects into a trimmed history must be able to
+// tell that it is not seeing the whole run.
+const CHAT_EVENT_CAP = 2000
 function chatBroadcast(chat, ev) {
   chat.events.push(ev)
+  if (chat.events.length > CHAT_EVENT_CAP) {
+    chat.dropped = (chat.dropped || 0) + (chat.events.length - CHAT_EVENT_CAP)
+    chat.events.splice(0, chat.events.length - CHAT_EVENT_CAP)
+  }
   const line = `data: ${JSON.stringify(ev)}\n\n`
-  for (const l of chat.listeners) l.write(line)
+  // A listener whose socket closed between the delete and this write would throw and take the
+  // whole broadcast with it, silencing every other listener on the run.
+  for (const l of chat.listeners) { if (!l.writableEnded) { try { l.write(line) } catch { chat.listeners.delete(l) } } }
+}
+
+// Attachments are forwarded into the model payload, so they are untrusted input that must be
+// shaped before it goes anywhere. media_type reaches the provider API verbatim, and `data` is
+// decoded by it — neither was checked. Rejections are returned with a reason rather than
+// dropped, because an image that silently vanishes looks like the model ignoring it.
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024   // per image, decoded
+const MAX_IMAGES = 20
+function validateAttachments(raw) {
+  const list = Array.isArray(raw) ? raw : []
+  const ok = [], rejected = []
+  for (const [i, img] of list.entries()) {
+    if (ok.length >= MAX_IMAGES) { rejected.push({ index: i, reason: `more than ${MAX_IMAGES} images` }); continue }
+    if (!img || typeof img !== 'object') { rejected.push({ index: i, reason: 'not an object' }); continue }
+    if (!IMAGE_MEDIA_TYPES.has(img.media_type)) { rejected.push({ index: i, reason: `media_type ${JSON.stringify(img.media_type)} is not an allowed image type` }); continue }
+    if (typeof img.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(img.data)) { rejected.push({ index: i, reason: 'data is not base64' }); continue }
+    // 4 base64 chars per 3 bytes; checked before decoding so an oversized payload is never materialised.
+    const bytes = Math.floor(img.data.length * 3 / 4)
+    if (bytes > MAX_IMAGE_BYTES) { rejected.push({ index: i, reason: `${Math.round(bytes / 1024)}KB exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024}MB per-image limit` }); continue }
+    ok.push({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })
+  }
+  return { ok, rejected }
 }
 const readTranscript = (file, parentId) => {
   const out = []
@@ -671,7 +705,7 @@ app.post('/api/chat/:id/message', (req, res) => {
   const chat = chats.get(req.params.id)
   if (!chat) return res.status(404).json({ error: 'no such chat' })
   if (!chat.alive) return res.status(410).json({ error: 'session ended' })
-  const content = (req.body.images || []).slice(0, 20).map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }))
+  const { ok: content, rejected } = validateAttachments(req.body.images)
   content.push({ type: 'text', text: req.body.text })
   chatBroadcast(chat, { type: 'user', message: { role: 'user', content } })
   let modelContent = content
@@ -684,7 +718,8 @@ app.post('/api/chat/:id/message', (req, res) => {
     }
   } catch {}
   chat.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: modelContent } }) + '\n')
-  res.json({ ok: true })
+  // Say which attachments did not go, so the sender is not left thinking the model saw them.
+  res.json({ ok: true, ...(rejected.length ? { rejectedAttachments: rejected } : {}) })
 })
 app.get('/api/chat/complete', (req, res) => {
   const cwd = req.query.cwd && fs.existsSync(req.query.cwd) ? req.query.cwd : HOME
