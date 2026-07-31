@@ -4,11 +4,22 @@
 // it: the chat section, QuickActions (one-shot `claude -p` runs), and Deep Research, which reuses
 // the tool-call feed. Anything that changes how a turn LOOKS belongs here; anything about session
 // lifecycle, launching, or transport stays in ChatSection.
+//
+// The message-rendering VOCABULARY here — a `View thinking process` disclosure, a per-message
+// `who · time` header, an asymmetric user/assistant width, expandable tool results, a pending
+// bar, a running session cost — is modelled on Odysseus (AGPL-3.0). It was written from Odysseus's
+// bundled demo recording (`docs/chat.webm`, frames pulled with ffmpeg) and from the capability
+// description in `docs/plan-odysseus-features.md`; no Odysseus source was read. Per the `NOTICE`
+// file that means clause 1 does not attach to this file — the wording follows the precedent set in
+// `lib/chat-protocol.mjs`. This file is AGPL-3.0 regardless, as the whole program is.
+//
+// Modified 2026-07-31: added thinking/redacted-thinking blocks, message headers, tool-result
+// disclosures, the pending bar, and SessionCostPill.
 
 import React, { useState } from 'react'
 import Markdown from './Markdown.jsx'
 import { extractTokenBudget, renderToolCall } from '../../lib/chat-render.mjs'
-import { api } from '../lib/api.js'
+import { api, fmtDate } from '../lib/api.js'
 
 const short = (v, n = 200) => {
   const s = typeof v === 'string' ? v : JSON.stringify(v)
@@ -35,6 +46,12 @@ export function buildBlocks(events) {
       let usageLeft = ev.message?.usage || null
       for (const c of ev.message.content) {
         if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })
+        // Extended thinking. Both shapes used to fall through this loop and vanish, so a turn that
+        // reasoned and then called one tool rendered as the tool call alone. `redacted_thinking`
+        // carries no readable text — only an encrypted `data` blob — and is kept as an explicit
+        // block so the transcript shows that thinking HAPPENED rather than showing nothing.
+        else if (c.type === 'thinking' && String(c.thinking ?? '').trim()) target(ev).push({ kind: 'thinking', text: c.thinking, ts: ev.timestamp || null, model: ev.message?.model || null })
+        else if (c.type === 'redacted_thinking') target(ev).push({ kind: 'thinking', text: '', redacted: true, ts: ev.timestamp || null, model: ev.message?.model || null })
         else if (c.type === 'tool_use') {
           const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, ts: ev.timestamp || null, usage: usageLeft, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
           usageLeft = null
@@ -65,10 +82,40 @@ function ReviewButtons({ text, chatId, cwd }) {
   )
 }
 
+/**
+ * `You · 09:26 PM` / `<model> · 09:26 PM` above a message body.
+ *
+ * Returns null when the timestamp is missing or unparseable. An event with no `timestamp` is
+ * normal — replayed frames and synthesised user turns have none — and a header reading
+ * "You · Invalid Date" is worse than no header at all. The full date lives in the tooltip, so a
+ * transcript spanning midnight is still readable without spending a line on the date.
+ */
+function MessageHead({ who, ts }) {
+  const at = ts == null ? NaN : new Date(ts).getTime()
+  if (!Number.isFinite(at)) return null
+  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return <div className="chat-msghead" title={fmtDate(at)}>{who} · {time}</div>
+}
+
 export function Block({ b }) {
-  if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
+  if (b.kind === 'user') return <div className="chat-msg user"><MessageHead who="You" ts={b.ts} />{b.text}</div>
   if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
-  if (b.kind === 'text') return <Markdown source={b.text} className="chat-msg assistant" />
+  if (b.kind === 'text') return (
+    <div className="chat-msg assistant">
+      <MessageHead who={b.model || 'assistant'} ts={b.ts} />
+      <Markdown source={b.text} />
+    </div>
+  )
+  if (b.kind === 'thinking') return (
+    <details className="chat-thinking">
+      <summary>{b.redacted ? 'Thinking — redacted by the provider' : 'View thinking process'}</summary>
+      <div className="chat-thinking-body">
+        {b.redacted
+          ? 'The model reasoned here, but the provider returned this block encrypted. There is no text to show — this is not an empty turn.'
+          : b.text}
+      </div>
+    </details>
+  )
   if (b.kind === 'stderr') return <div className="chat-line err">{b.text}</div>
   if (b.kind === 'closed') return <div className="chat-line err">session ended{b.error ? ` — ${b.error}` : b.code ? ` (exit ${b.code})` : ''}</div>
   if (b.kind === 'turn-end') return <div className="chat-line dim">◦ turn done {b.ms ? `· ${(b.ms / 1000).toFixed(1)}s` : ''} {b.cost ? `· $${b.cost.toFixed(3)}` : ''}</div>
@@ -92,11 +139,17 @@ export function Block({ b }) {
     const headline = r?.summary && r.kind !== 'unknown'
       ? r.summary
       : short(b.input?.command || b.input?.file_path || b.input?.pattern || b.input?.prompt || b.input, 120)
+    const cls = 'chat-line tool' + (b.isError ? ' err' : '')
+    const label = <>▸ <b>{b.name}</b> <span className="dim">{short(headline, 160)}</span></>
+    // With a result it becomes a disclosure. The old markup clipped the result to 80px of
+    // overflow:hidden, which made everything past the first few lines unreachable — the one thing
+    // you open a tool call to read.
+    if (b.result == null) return <div className={cls} title={r?.title || b.name}>{label}</div>
     return (
-      <div className={'chat-line tool' + (b.isError ? ' err' : '')} title={r?.title || b.name}>
-        ▸ <b>{b.name}</b> <span className="dim">{short(headline, 160)}</span>
-        {b.result != null && <div className="chat-tool-result">{b.result}</div>}
-      </div>
+      <details className={cls + ' chat-tool'} title={r?.title || b.name}>
+        <summary>{label}</summary>
+        <div className="chat-tool-result">{b.result}</div>
+      </details>
     )
   }
   return null
@@ -130,6 +183,21 @@ export function ContextPill({ events }) {
       ctx {k(budget.used)} / {k(budget.window)} · {pct.toFixed(pct < 10 ? 1 : 0)}%{budget.over ? ' ⚠' : ''}
     </span>
   )
+}
+
+/**
+ * Cumulative cost of the session, summed from `turn-end` blocks.
+ *
+ * The per-turn figure is already on each `turn-end` line; what you actually want to know mid-session
+ * is the total, and adding up a scrolled-away column of numbers is not something a reader should be
+ * asked to do. Renders nothing until at least one turn has reported a cost, so a session on a plan
+ * that reports no cost shows no misleading `$0.000`.
+ */
+export function SessionCostPill({ blocks }) {
+  let total = 0, turns = 0
+  for (const b of blocks || []) if (b.kind === 'turn-end' && typeof b.cost === 'number') { total += b.cost; turns++ }
+  if (!turns) return null
+  return <span className="pill" title={`cumulative cost of ${turns} turn${turns === 1 ? '' : 's'} in this session`}>${total.toFixed(3)}</span>
 }
 
 function capture(text) {
@@ -177,7 +245,12 @@ export function MessageLog({ blocks, gap, busy, chatId, cwd }) {
       {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
         ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
         : <Block key={i} b={b} />)}
-      {busy && <div className="chat-line dim">✦ working…</div>}
+      {busy && (
+        <div className="chat-pending" role="status" aria-live="polite">
+          <span className="chat-pending-label">Working</span>
+          <span className="chat-pending-bar" aria-hidden="true" />
+        </div>
+      )}
     </>
   )
 }
