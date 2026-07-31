@@ -6,7 +6,7 @@ import PlanGraph from './PlanGraph.jsx'
 import { ContextTimeline } from './ContextExplorerSection.jsx'
 import ActivityTimeline from './ActivityTimeline.jsx'
 // Transcript rendering lives in ui/chatBlocks.jsx — see the header there for the split.
-import { buildBlocks, ContextPill, MessageLog } from '../ui/chatBlocks.jsx'
+import { buildBlocks, ContextPill, MessageLog, SessionCostPill } from '../ui/chatBlocks.jsx'
 
 const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = err; r.readAsDataURL(f) })
 
@@ -342,6 +342,7 @@ export default function ChatSection() {
           {liveModel && <span className="dim" style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
           {permMode !== 'skip' && <span className="pill" title="tool permissions are restricted for this session">{permMode}</span>}
           <ContextPill events={events} />
+          <SessionCostPill blocks={blocks} />
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
           <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? 'var(--accent)' : undefined }} disabled={!plan}
