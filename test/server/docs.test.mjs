@@ -61,6 +61,36 @@ test('rejects a symlink that leaves the root, file or directory', { skip: !symli
   assert.equal(reason('evildir/secret.md'), 'symlink-escapes-root')
 })
 
+// The escape that shipped past the guard and past the test above.
+//
+// `realpathSync` throws ENOENT on a symlink whose target does not exist, so the ancestor walk in
+// `realOrNearest` skipped over the link and returned the LEXICAL path — textually inside the root,
+// so `isInside` passed and PUT wrote through the link with O_CREAT. The test above only ever built
+// links with existing targets, which are correctly refused, so it could not see this.
+//
+// Creation alone is the whole exploit: `note.md → ~/.zshenv`, where no .zshenv exists, is code
+// execution on the next shell.
+test('rejects a DANGLING symlink — the target need not exist to escape', { skip: !symlinks && 'symlinks unavailable' }, () => {
+  const outside = path.join(TMP, 'outside-dangling')
+  fs.mkdirSync(outside, { recursive: true })
+  const absent = path.join(outside, 'never-created.md')
+  assert.equal(fs.existsSync(absent), false, 'fixture precondition: the target must NOT exist')
+
+  fs.symlinkSync(absent, path.join(ROOT, 'dangling.md'))
+  assert.equal(reason('dangling.md'), 'symlink-escapes-root')
+
+  // …and via a dangling DIRECTORY link, which escapes by the same route.
+  fs.symlinkSync(path.join(outside, 'no-such-dir'), path.join(ROOT, 'danglingdir'))
+  assert.equal(reason('danglingdir/x.md'), 'symlink-escapes-root')
+
+  // The guard refused, so nothing was created outside. This is the assertion that would have failed.
+  assert.equal(fs.existsSync(absent), false, 'a write escaped the root')
+
+  fs.unlinkSync(path.join(ROOT, 'dangling.md'))
+  fs.unlinkSync(path.join(ROOT, 'danglingdir'))
+  fs.rmSync(outside, { recursive: true, force: true })
+})
+
 test('rejects control characters, over-long paths and unsupported types', () => {
   assert.equal(reason('note\u0000.png.md'), 'bad-characters')
   assert.equal(reason('a'.repeat(1100) + '.md'), 'path-too-long')
@@ -146,15 +176,18 @@ test('PUT /api/docs/file writes inside the root and nowhere else', async () => {
 // --dangerously-skip-permissions, so a model handed Write could edit the file itself and the
 // accept/reject diff would be reviewing a change that had already landed. The tools have to be
 // refused at the spawn, not merely discouraged in the prompt.
-test('ai-edit refuses the agent every tool that could write', async () => {
+// An allowlist, not a denylist. A list of write-tool NAMES cannot be complete: `mcp__*` tools come
+// from whatever servers the user configured, and SlashCommand can write too. Naming what is
+// permitted means anything added later is refused by default.
+test('ai-edit grants the agent no tools at all', async () => {
   agentCalls.length = 0
   const call = harness()
   const r = await call('post', '/api/docs/ai-edit', { body: { path: 'note.md', instruction: 'tighten it' } })
   assert.equal(r.status, 200)
   assert.equal(agentCalls.length, 1)
-  const refused = agentCalls[0].disallowedTools || []
-  for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task'])
-    assert.ok(refused.includes(tool), `${tool} must be refused to the ai-edit agent`)
+  const allowed = agentCalls[0].allowedTools
+  assert.ok(Array.isArray(allowed), 'allowedTools must be an ARRAY — an absent value means no restriction')
+  assert.deepEqual(allowed, [], 'this job needs no tools: the document is already in the prompt')
 })
 
 // The rule this endpoint exists to obey. If it ever writes, the accept/reject diff is theatre.

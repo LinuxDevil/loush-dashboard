@@ -45,9 +45,16 @@ export const MAX_INSTRUCTION_CHARS = 2000
 export const MAX_SELECTION_CHARS = 20_000
 export const AI_TIMEOUT_MS = 120_000
 
-// Refused to the ai-edit agent. Everything that can mutate a file or run a command, plus Task,
-// which would otherwise spawn a subagent that has none of these restrictions.
-export const EDIT_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task']
+// The ai-edit agent gets an ALLOWLIST, not a denylist.
+//
+// A denylist of write tools was the first attempt and it is not closed: `mcp__<server>__<tool>` from
+// whatever MCP servers the user has configured, and SlashCommand, are not in any fixed list of names
+// and can both write. Naming what is permitted means a tool added tomorrow is refused by default
+// instead of allowed by omission.
+//
+// This job needs no tools at all — the whole document is already in the prompt and the answer comes
+// back as text — so the allowlist is empty.
+export const AI_EDIT_TOOLS = []
 
 // Text formats we are willing to open AND write back. A deliberately small allowlist, matching
 // src/ui/viewers.jsx's `editableExts`: an editor offered on a format we cannot round-trip
@@ -70,6 +77,35 @@ export function docsRoot(env = process.env) {
 export function isInside(root, target) {
   const rel = path.relative(root, target)
   return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)
+}
+
+/**
+ * Refuse a path any of whose components inside the root is a symlink — checked by `lstat`, which
+ * does not follow, so it sees links whose targets do not exist.
+ *
+ * This is what `realOrNearest` cannot do. `fs.realpathSync` throws ENOENT on a DANGLING symlink, so
+ * the ancestor walk below skipped past it and handed back the lexical path; `isInside` then saw a
+ * path textually under the root and passed it. `fs.writeFileSync` opens with O_CREAT and FOLLOWS the
+ * link, creating the file wherever it points. A live symlink out of the root was always caught — a
+ * dangling one was not, which is why the test that only builds live links passed.
+ *
+ * Creation alone is enough to matter: a `note.md → ~/.zshenv` link, where no `.zshenv` exists, is
+ * arbitrary code execution on the next shell.
+ *
+ * Every component is checked, not just the leaf: a dangling DIRECTORY symlink (`root/d → /outside/d`)
+ * escapes the same way. Non-existent tails are fine — that is a normal create.
+ */
+function hasSymlinkComponent(root, abs) {
+  const rel = path.relative(root, abs)
+  if (!rel || rel.startsWith('..')) return false
+  let cur = root
+  for (const seg of rel.split(path.sep)) {
+    cur = path.join(cur, seg)
+    let st
+    try { st = fs.lstatSync(cur) } catch { return false }  // does not exist yet: nothing to follow
+    if (st.isSymbolicLink()) return true
+  }
+  return false
 }
 
 /** realpath of `p`, or of its deepest existing ancestor when `p` does not exist yet (PUT-create). */
@@ -111,6 +147,9 @@ export function resolveDocPath(root, raw) {
   if (!isInside(rootReal, abs)) return { ok: false, reason: 'escapes-root' }
   // The lexical path is contained; the real one may not be, if a component is a symlink pointing out.
   if (!isInside(rootReal, realOrNearest(abs))) return { ok: false, reason: 'symlink-escapes-root' }
+  // Catches the dangling case realpath cannot see. listDocs already skips symlinks entirely, so no
+  // path this app would ever offer the user is refused by this.
+  if (hasSymlinkComponent(rootReal, abs)) return { ok: false, reason: 'symlink-escapes-root' }
 
   const ext = path.extname(abs).slice(1).toLowerCase()
   if (!DOC_EXTS.has(ext)) return { ok: false, reason: 'unsupported-type' }
@@ -220,10 +259,22 @@ export default function mount(app, deps = {}) {
       // The parent is created only because the guard above already proved it contained; without
       // that proof this line would be the traversal.
       fs.mkdirSync(path.dirname(t.abs), { recursive: true })
-      fs.writeFileSync(t.abs, text, 'utf8')
+      // O_NOFOLLOW so the KERNEL refuses to open a symlink, whatever the guard concluded a moment
+      // ago. The guard is a check on a name; this is a property of the open. It closes the window
+      // between the two — a link swapped in after the check cannot be followed — and makes the
+      // symlink defence independent of the guard being exhaustive.
+      let fd
+      try {
+        fd = fs.openSync(t.abs, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o644)
+        fs.writeFileSync(fd, text, 'utf8')
+      } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} }
       const st = fs.statSync(t.abs)
       res.json({ ok: true, path: t.rel, bytes: st.size, mtime: st.mtimeMs })
-    } catch (e) { bad(res, 500, e.message, { path: t.rel }) }
+    } catch (e) {
+      // ELOOP is the kernel refusing a symlink — report it as the containment failure it is, not 500.
+      if (e.code === 'ELOOP') return bad(res, 400, 'symlink-escapes-root', { path: t.rel })
+      bad(res, 500, e.message, { path: t.rel })
+    }
   })
 
   // Proposes. Does not write. The client diffs {text} against its buffer and PUTs on accept.
@@ -253,8 +304,8 @@ export default function mount(app, deps = {}) {
       // "This endpoint never writes" was only true of the endpoint. lib/agent.mjs spawns the CLI
       // with --dangerously-skip-permissions, so the MODEL could pick up Write and edit the file
       // itself — the accept/reject diff would then be reviewing a change already on disk. The
-      // whole document is in the prompt, so no tool is needed to do this job.
-      disallowedTools: EDIT_TOOLS,
+      // whole document is in the prompt, so no tool is needed to do this job at all.
+      allowedTools: AI_EDIT_TOOLS,
     })
     if (out?.error) return bad(res, 502, out.error, { path: t.rel })
     if (out?.blocked) return bad(res, 409, 'agent-blocked', { path: t.rel, detail: out.blocked })

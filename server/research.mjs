@@ -164,12 +164,13 @@ function finish(r, { error }) {
   r.status = r.cancelled ? 'cancelled' : error ? 'error' : 'done'
   r.error = r.cancelled ? null : error || null
   r.ms = Date.now() - Date.parse(r.at) || null
-  if (p && !r.cancelled && !fs.existsSync(p.report) && r.text.trim()) {
+  if (p && !r.cancelled && !r.deleted && !fs.existsSync(p.report) && r.text.trim()) {
     try { fs.mkdirSync(p.dir, { recursive: true }); fs.writeFileSync(p.report, r.text) } catch {}
   }
   r.reportBytes = readReportBytes(r.id)
   if (r.status === 'done' && !r.reportBytes) { r.status = 'error'; r.error = 'the run finished without producing a report' }
-  writeMeta(r)
+  // A deleted run writes nothing back. writeMeta mkdirs its directory, which would undo the delete.
+  if (!r.deleted) writeMeta(r)
   push(r, 'complete', researchView(r))
   for (const l of r.listeners) { try { l.end() } catch {} }
   r.listeners.clear()
@@ -224,7 +225,11 @@ export default function mount(app) {
         if (ev.type === 'result' && typeof ev.total_cost_usd === 'number') r.cost = ev.total_cost_usd
         push(r, 'event', ev)
       },
-      onExit: ({ error }) => finish(r, { error }),
+      // The exit CODE matters as much as the error. A child killed by a signal, or exiting non-zero
+      // without having written to stderr, arrives here with error:null — and a run that also left a
+      // partial report.md behind would then be published as `done`. A report from a process that
+      // died is a report a user would trust without knowing it was cut short.
+      onExit: ({ error, code }) => finish(r, { error: error || (code ? `the research process exited with code ${code}` : null) }),
     })
     res.json({ id })
   })
@@ -290,7 +295,15 @@ export default function mount(app) {
     const p = runPaths(req.params.id)
     if (!p) return res.status(400).json({ error: 'invalid research id' })
     const r = runs.get(req.params.id)
-    if (r?.status === 'running') { r.cancelled = true; r.child?.kill() }
+    if (r?.status === 'running') {
+      // Deleting a RUNNING run is a race with its own child. Killing it makes `finish` fire, and
+      // `finish` calls writeMeta, which mkdirs the directory back — so the run reappeared in the
+      // library seconds after being deleted. `deleted` makes finish skip every disk write, so the
+      // rm below is the last word.
+      r.cancelled = true
+      r.deleted = true
+      r.child?.kill()
+    }
     runs.delete(req.params.id)
     try { fs.rmSync(p.dir, { recursive: true, force: true }) }
     catch (e) { return res.status(500).json({ error: `could not delete the report: ${e.message}` }) }

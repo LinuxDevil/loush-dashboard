@@ -26,7 +26,7 @@
 // and .docx/PDF pipelines. The first three need a second editing surface to be worth anything, and
 // the document formats need a conversion pipeline that does not exist in this repo.
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { ViewerModeToggle, DiffPane } from '../ui/ViewerModes.jsx'
@@ -75,13 +75,18 @@ export default function DocsSection() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
+  // The load is async and the user can click again before it lands. Without this guard a slow
+  // response for A could arrive after B was selected, putting A's text in the buffer while `sel`
+  // says B — and the next save would write A's content over B. Only the newest request may commit.
+  const loadSeq = useRef(0)
   const open = path => {
     if (path === sel) return
     if (dirty && !window.confirm(`${sel} has unsaved changes. Discard them and open ${path}?`)) return
+    const seq = ++loadSeq.current
     setSel(path); setSaved(null); setBuf(''); setSelText(''); setProposal(null); setMode('source')
     api.get('/api/docs/file?path=' + encodeURIComponent(path))
-      .then(d => { setSaved(d.text); setBuf(d.text) })
-      .catch(e => { flash(`could not open ${path}: ${e.message}`); setSel(null) })
+      .then(d => { if (seq !== loadSeq.current) return; setSaved(d.text); setBuf(d.text) })
+      .catch(e => { if (seq !== loadSeq.current) return; flash(`could not open ${path}: ${e.message}`); setSel(null) })
   }
 
   const save = () => api.put('/api/docs/file?path=' + encodeURIComponent(sel), { text: buf })
