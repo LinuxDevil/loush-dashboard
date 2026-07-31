@@ -122,6 +122,26 @@ test('staging emits git:status-changed', async () => {
   w.dispose()
 })
 
+test('watching SURVIVES the lock-and-rename — a second stage is seen, not just the first', async () => {
+  // The regression this guards is not "no events" but "one event, then silence forever". git writes
+  // index.lock and renames it over .git/index, which detaches a file watch from the live inode; on
+  // darwin the .git/index watch delivers exactly one event and the .git/HEAD watch delivers none.
+  // A watcher that reports ok:true and has been deaf since its first notification is the worst
+  // possible state, because every surface downstream reads it as "nothing has changed".
+  const dir = tmpRepo('watch-survives')
+  write(dir, 'a.txt', 'x\n'); commitAll(dir, 'base')
+  const w = start(dir)
+  assert.equal(w.ok, true, w.reason)
+
+  for (const round of ['y', 'z', 'w']) {
+    const p = waitFor(w, EVENTS.STATUS_CHANGED)
+    write(dir, 'a.txt', `${round}\n`)
+    sh(dir, ['add', '-A'])
+    await p // rejects with a named bound if this round went unseen
+  }
+  w.dispose()
+})
+
 test('a BRANCH SWITCH is detected, not just a commit', async () => {
   const dir = tmpRepo('watch-branch')
   write(dir, 'a.txt', 'x\n'); commitAll(dir, 'base')
@@ -221,8 +241,12 @@ test('dispose() is idempotent and safe from inside a handler', async () => {
   write(dir, 'a.txt', 'x\n'); commitAll(dir, 'base')
   const w = start(dir, { debounceMs: 20 })
 
-  await new Promise(resolve => {
-    w.emitter.once(EVENTS.STATUS_CHANGED, () => { w.dispose(); resolve() })
+  // Bounded like every other wait in this file. Unbounded, this was the one place a missed event
+  // became an unkillable hang instead of a failure: `node --test` runs with no per-test timeout, so
+  // the whole suite stopped here forever rather than reporting which assertion did not hold.
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`waited ${WAIT_MS}ms for ${EVENTS.STATUS_CHANGED} and it never fired`)), WAIT_MS)
+    w.emitter.once(EVENTS.STATUS_CHANGED, () => { clearTimeout(t); w.dispose(); resolve() })
     write(dir, 'a.txt', 'y\n'); sh(dir, ['add', '-A'])
   })
   assert.doesNotThrow(() => { w.dispose(); w.dispose() })

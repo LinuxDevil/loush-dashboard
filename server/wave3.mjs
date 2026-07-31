@@ -201,14 +201,19 @@ export default function mountWave3(app, deps = {}) {
   // the response carries which ones were actually reachable so an empty result stays honest.
   const lintTargets = () => {
     const projects = rootList()
+    // $HOME is itself a configured project root here, so `$HOME/.claude/skills` and
+    // `$HOME/.claude/settings*.json` are reached twice — once as the user-level path and once via
+    // that root. Linting a file twice emits every diagnostic in it twice, which inflates the
+    // headline count (27 shown for 21 real findings) and reads as more config rot than there is.
+    const uniq = a => [...new Set(a)]
     return {
-      claudeMd: [path.join(CLAUDE, 'CLAUDE.md'), ...projects.map(d => path.join(d, 'CLAUDE.md'))],
-      projectDirs: projects,
-      skillsDirs: [path.join(CLAUDE, 'skills'), ...projects.map(d => path.join(d, '.claude', 'skills'))],
-      settings: [path.join(CLAUDE, 'settings.json'), path.join(CLAUDE, 'settings.local.json'),
+      claudeMd: uniq([path.join(CLAUDE, 'CLAUDE.md'), ...projects.map(d => path.join(d, 'CLAUDE.md'))]),
+      projectDirs: uniq(projects),
+      skillsDirs: uniq([path.join(CLAUDE, 'skills'), ...projects.map(d => path.join(d, '.claude', 'skills'))]),
+      settings: uniq([path.join(CLAUDE, 'settings.json'), path.join(CLAUDE, 'settings.local.json'),
         ...projects.map(d => path.join(d, '.claude', 'settings.json')),
-        ...projects.map(d => path.join(d, '.claude', 'settings.local.json'))],
-      mcp: [path.join(CLAUDE, '.mcp.json'), ...projects.map(d => path.join(d, '.mcp.json'))],
+        ...projects.map(d => path.join(d, '.claude', 'settings.local.json'))]),
+      mcp: uniq([path.join(CLAUDE, '.mcp.json'), ...projects.map(d => path.join(d, '.mcp.json'))]),
     }
   }
   app.get('/api/config/lint', (req, res) => {

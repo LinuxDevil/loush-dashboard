@@ -15,7 +15,12 @@ const MONO = 'var(--mono)'
 const RED = 'var(--red)', AMBER = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-tertiary)'
 const usd = n => (n == null ? '—' : '$' + n.toFixed(2))
 const pct = n => (n == null ? '—' : (n * 100).toFixed(1) + '%')
-const tok = n => (n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
+const tok = n => (typeof n !== 'number' || !Number.isFinite(n) ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
+// /api/usage/buckets reports tokens as a per-class breakdown; every other table here reports a
+// scalar. Collapse the former without silently coercing a stray object into "[object Object]".
+const tokenTotal = t => (typeof t === 'number' ? t
+  : t && typeof t === 'object' ? (t.input || 0) + (t.output || 0) + (t.cacheWrite || 0) + (t.cacheRead || 0)
+    : null)
 
 function useEndpoint(url) {
   const [d, setD] = useState(null); const [err, setErr] = useState(null); const [busy, setBusy] = useState(true)
@@ -112,7 +117,15 @@ function Buckets() {
             <tr key={i} style={{ textAlign: 'right' }}>
               <td style={{ textAlign: 'left', color: 'var(--text-primary)' }}>{b.model || '—'}</td>
               <td className="muted">{b.speed}</td><td className="muted">{b.inference_geo}</td><td className="muted">{b.service_tier}</td>
-              <td>{b.entries}</td><td>{tok(b.tokens)}</td>
+              {/* `tokens` here is a per-class breakdown object, not a scalar like the subagent
+                  table's — passing it straight to tok() rendered "[object Object]" in every row.
+                  Cache reads dominate the sum by ~400x, so the split has to stay reachable. */}
+              <td>{b.entries}</td>
+              <td title={b.tokens && typeof b.tokens === 'object'
+                ? `in ${tok(b.tokens.input || 0)} · out ${tok(b.tokens.output || 0)} · cache write ${tok(b.tokens.cacheWrite || 0)} · cache read ${tok(b.tokens.cacheRead || 0)}`
+                : undefined}>
+                {tok(tokenTotal(b.tokens))}
+              </td>
               {/* cost is null unless EVERY entry in the bucket priced; a partial sum is exposed
                   under partialCost so it cannot be mistaken for the whole. */}
               <td style={{ color: b.cost == null ? AMBER : 'var(--text-primary)' }}
