@@ -45,6 +45,10 @@ export const MAX_INSTRUCTION_CHARS = 2000
 export const MAX_SELECTION_CHARS = 20_000
 export const AI_TIMEOUT_MS = 120_000
 
+// Refused to the ai-edit agent. Everything that can mutate a file or run a command, plus Task,
+// which would otherwise spawn a subagent that has none of these restrictions.
+export const EDIT_TOOLS = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task']
+
 // Text formats we are willing to open AND write back. A deliberately small allowlist, matching
 // src/ui/viewers.jsx's `editableExts`: an editor offered on a format we cannot round-trip
 // losslessly is a data-loss button.
@@ -246,6 +250,11 @@ export default function mount(app, deps = {}) {
     const out = await runAgent({
       cwd: rootOf(), timeoutMs: AI_TIMEOUT_MS, model: req.body?.model,
       prompt: aiEditPrompt({ rel: t.rel, ext: t.ext, instruction, selection, whole }),
+      // "This endpoint never writes" was only true of the endpoint. lib/agent.mjs spawns the CLI
+      // with --dangerously-skip-permissions, so the MODEL could pick up Write and edit the file
+      // itself — the accept/reject diff would then be reviewing a change already on disk. The
+      // whole document is in the prompt, so no tool is needed to do this job.
+      disallowedTools: EDIT_TOOLS,
     })
     if (out?.error) return bad(res, 502, out.error, { path: t.rel })
     if (out?.blocked) return bad(res, 409, 'agent-blocked', { path: t.rel, detail: out.blocked })

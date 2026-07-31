@@ -142,6 +142,21 @@ test('PUT /api/docs/file writes inside the root and nowhere else', async () => {
   assert.equal(fs.existsSync(path.join(ROOT, 'big.md')), false)
 })
 
+// The endpoint not writing is only half the promise. lib/agent.mjs spawns the CLI with
+// --dangerously-skip-permissions, so a model handed Write could edit the file itself and the
+// accept/reject diff would be reviewing a change that had already landed. The tools have to be
+// refused at the spawn, not merely discouraged in the prompt.
+test('ai-edit refuses the agent every tool that could write', async () => {
+  agentCalls.length = 0
+  const call = harness()
+  const r = await call('post', '/api/docs/ai-edit', { body: { path: 'note.md', instruction: 'tighten it' } })
+  assert.equal(r.status, 200)
+  assert.equal(agentCalls.length, 1)
+  const refused = agentCalls[0].disallowedTools || []
+  for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash', 'Task'])
+    assert.ok(refused.includes(tool), `${tool} must be refused to the ai-edit agent`)
+})
+
 // The rule this endpoint exists to obey. If it ever writes, the accept/reject diff is theatre.
 test('POST /api/docs/ai-edit proposes text and leaves the file on disk untouched', async () => {
   const file = path.join(ROOT, 'note.md')
