@@ -59,6 +59,12 @@ export function assignLabels(models, rand = Math.random) {
  * the obvious leak; the numbers are the subtle one — Opus and Haiku are told apart by price and
  * latency alone, so serving those before the vote would de-anonymise the panes just as thoroughly.
  * The keys stay in the payload as nulls so the client renders one shape throughout.
+ *
+ * The error TEXT is withheld on the same grounds, and it is the leak that nearly shipped. It is
+ * `runAgent`'s raw CLI stderr from a process invoked as `--model <name>`, so an unavailable,
+ * misspelled or unentitled model prints its own name into it. That made the one case where
+ * blindness matters most — you can see a contender crashed — also the case that told you which
+ * contender it was. `failed` carries the fact; the text waits for the vote.
  */
 function view(rec) {
   const voted = !!rec.vote
@@ -73,7 +79,8 @@ function view(rec) {
     panes: rec.panes.map(p => ({
       label: p.label,
       text: p.text,
-      error: p.error || null,
+      failed: !!p.error,
+      error: voted ? (p.error || null) : null,
       model: voted ? p.model : null,
       cost: voted ? p.cost : null,
       ms: voted ? p.ms : null,
@@ -146,6 +153,9 @@ export default function mountCompare(app, deps = {}) {
     try {
       const files = fs.existsSync(DIR()) ? fs.readdirSync(DIR()).filter(f => f.endsWith('.json')) : []
       const out = files
+        // This path is built outside fileFor(), which is safe ONLY because `f` comes from readdirSync
+        // and never from a request. Any new route that takes an id from the caller must go through
+        // fileFor() — the id validation lives there, not here.
         .map(f => { try { return JSON.parse(fs.readFileSync(path.join(DIR(), f), 'utf8')) } catch { return null } })
         .filter(rec => rec && ID_RE.test(String(rec.id || '')))
         .map(rec => ({ id: rec.id, prompt: rec.prompt, at: rec.at, models: (rec.panes || []).length, voted: !!rec.vote }))

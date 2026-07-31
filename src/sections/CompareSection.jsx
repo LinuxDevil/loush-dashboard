@@ -146,7 +146,12 @@ export default function CompareSection() {
                   </div>
                 )}
                 <div className="cmp-body">
-                  {p.error ? <div className="cmp-err">this model failed: {p.error}</div> : <Markdown source={p.text} />}
+                  {/* Pre-vote the server sends `failed` without the text, because the CLI's stderr
+                      names the model it was invoked with. The fact of the failure is safe to show;
+                      the reason has to wait, or a crashed pane identifies itself. */}
+                  {p.failed
+                    ? <div className="cmp-err">{p.error ? `this model failed: ${p.error}` : 'this model failed — the reason is hidden until you vote, because it can name the model'}</div>
+                    : <Markdown source={p.text} />}
                 </div>
               </div>
             ))}

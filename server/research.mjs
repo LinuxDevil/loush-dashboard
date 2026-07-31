@@ -11,8 +11,12 @@
 // orchestration. Odysseus runs its own planner, query generator, per-round synthesiser and
 // LLM stop-check. The `claude` CLI already is a multi-step research orchestrator with WebSearch and
 // WebFetch, so re-implementing those loops here would be a second planner fighting the first. What
-// remains is a lifecycle and streaming layer around ONE agent run. Also dropped: image extraction,
-// thumbnails, endpoint resolution, ownership/auth (single-user tool).
+// remains is a lifecycle and streaming layer around ONE agent run.
+//
+// ponytail: skipped deliberately — the per-step planner UI, image extraction, thumbnails, and
+// endpoint resolution. Also Odysseus's own planner, query generator, per-round synthesiser and LLM
+// stop-check, for the reason above: a second orchestrator would fight the CLI's. And ownership/auth,
+// which has no meaning in a single-user local tool.
 //
 // Run state lives HERE, in server memory keyed by id, and the report lives on disk. src/App.jsx
 // remounts sections on every refresh — see the note on `spawnAgent` in lib/agent.mjs — so a
@@ -182,7 +186,18 @@ export default function mount(app) {
     const live = [...runs.values()].filter(r => r.status === 'running')
     if (live.length >= MAX_LIVE)
       return res.status(429).json({ error: `${live.length} research runs are already in flight`, detail: 'wait for one to finish, or cancel it' })
-    const cwd = req.body?.cwd && fs.existsSync(req.body.cwd) ? req.body.cwd : os.homedir()
+    // Becomes a child process's working directory, so it gets the same check the sibling module
+    // applies (server/compare.mjs). A relative path would resolve against the SERVER's cwd rather
+    // than anything the caller meant, and a path to a file fails the spawn with a confusing error.
+    const wanted = req.body?.cwd
+    if (wanted != null && !(typeof wanted === 'string' && path.isAbsolute(wanted)))
+      return res.status(400).json({ error: 'cwd must be an absolute path' })
+    let cwd = os.homedir()
+    if (wanted) {
+      try { if (!fs.statSync(wanted).isDirectory()) return res.status(400).json({ error: 'cwd is not a directory' }) }
+      catch { return res.status(400).json({ error: 'cwd does not exist', path: wanted }) }
+      cwd = wanted
+    }
 
     const id = newId()
     const p = runPaths(id)

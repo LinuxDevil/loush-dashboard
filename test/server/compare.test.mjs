@@ -82,6 +82,33 @@ test('a fresh comparison hides the mapping, the model names AND the per-pane num
   for (const m of MODELS) assert.equal(wire.includes(m), false, `"${m}" leaked into the pre-vote payload`)
 })
 
+// The leak that nearly shipped. `runAgent`'s error is raw CLI stderr from a process invoked as
+// `--model <name>`, so a model that is unavailable, misspelled or unentitled prints its own name
+// into it. Serving that pre-vote made the one case where blindness matters most — you can see a
+// contender crashed — also the case that told you which contender it was.
+test('a failed pane says it failed but not why, until the vote', async () => {
+  reset()
+  // stderr shaped like the real thing: the CLI echoes back the --model it was given.
+  const leaky = async ({ model }) => model === 'sonnet'
+    ? { error: `error: model "sonnet" is not available on this account` }
+    : { result: `answer from ${model}`, cost: COSTS[model] ?? 0.1, ms: 1000, turns: 2 }
+  const c = harness({ runAgent: leaky })
+  const id = (await c('post', '/api/compare', { body: { cwd: REPO, prompt: 'anything', models: MODELS } })).body.id
+
+  const blind = (await c('get', '/api/compare/:id', { params: { id } })).body
+  const failed = blind.panes.filter(p => p.failed)
+  assert.equal(failed.length, 1, 'the failure is still visible as a fact')
+  for (const p of blind.panes) assert.equal(p.error, null, 'the error TEXT must be withheld pre-vote')
+  const wire = JSON.stringify({ ...blind, panes: blind.panes.map(p => ({ ...p, text: '' })) })
+  assert.equal(wire.includes('sonnet'), false, 'the failing model named itself through its error string')
+
+  // And after the vote the reason is available, because there is nothing left to protect.
+  await c('post', `/api/compare/:id/vote`, { params: { id }, body: { label: 'A' } })
+  const after = (await c('get', '/api/compare/:id', { params: { id } })).body
+  const shown = after.panes.find(p => p.failed)
+  assert.match(shown.error, /not available on this account/, 'post-vote the reason is served')
+})
+
 test('voting reveals the mapping, and the panes gain their model and numbers', async () => {
   reset()
   const id = await start()
@@ -146,8 +173,12 @@ test('a model that errors still gets a pane', async () => {
   const id = await start(['sonnet', 'broken'])
   const body = (await call('get', '/api/compare/:id', { params: { id } })).body
   assert.equal(body.panes.length, 2, 'the failure is shown, not dropped — two contenders ran')
-  const failed = body.panes.find(p => p.error)
-  assert.equal(failed.error, 'model exploded')
+  // `failed`, not `error`: pre-vote the fact of the failure is served and the reason is not, since
+  // the reason is CLI stderr that can name the model. The reason is asserted post-vote by
+  // 'a failed pane says it failed but not why, until the vote'.
+  const failed = body.panes.find(p => p.failed)
+  assert.ok(failed, 'the failing pane is marked as failed')
+  assert.equal(failed.error, null, 'the reason is withheld until the vote')
   assert.equal(failed.model, null, 'even the failing pane keeps its anonymity')
 })
 

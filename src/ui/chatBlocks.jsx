@@ -34,7 +34,12 @@ export function buildBlocks(events) {
       for (const c of ev.message.content)
         if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
           const b = byToolId[c.tool_use_id]
-          b.result = short(c.content, 400)
+          // 400 made the disclosure pointless: the CSS clip was removed so the whole result could be
+          // reached, but the block never held more than 400 chars of it, so "expand" revealed nothing
+          // further for any Read or Bash output — the exact defect the expander was meant to fix.
+          // Still capped, because a transcript keeps every block in memory and some results are
+          // megabytes; 8k is enough for the results people actually want to read to the end.
+          b.result = short(c.content, 8000)
           b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
           if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult
         }
