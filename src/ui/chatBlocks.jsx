@@ -21,8 +21,11 @@ import Markdown from './Markdown.jsx'
 import { extractTokenBudget, renderToolCall } from '../../lib/chat-render.mjs'
 import { api, fmtDate } from '../lib/api.js'
 
+// `?? ''` for the non-string case: JSON.stringify(undefined) returns undefined, not a string, so
+// `short(someAbsentField)` threw on `.length`. Every caller here reads a field off a stream event
+// that may not be there, and this runs during render.
 const short = (v, n = 200) => {
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
+  const s = typeof v === 'string' ? v : JSON.stringify(v) ?? ''
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
@@ -34,23 +37,34 @@ export function buildBlocks(events) {
       for (const c of ev.message.content)
         if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
           const b = byToolId[c.tool_use_id]
-          // 400 made the disclosure pointless: the CSS clip was removed so the whole result could be
-          // reached, but the block never held more than 400 chars of it, so "expand" revealed nothing
-          // further for any Read or Bash output — the exact defect the expander was meant to fix.
-          // Still capped, because a transcript keeps every block in memory and some results are
-          // megabytes; 8k is enough for the results people actually want to read to the end.
-          b.result = short(c.content, 8000)
+          // Two lengths, because the collapsed line and the opened body want different things.
+          // `summary` is the one-line peek beside the tool name, short by design — the row ellipsises
+          // whatever does not fit. `result` is the <details> body, and 400 made that pointless: the
+          // CSS clip was removed so the whole result could be reached, but the block never held more
+          // than 400 chars of it, so "expand" revealed nothing further for any Read or Bash output —
+          // the exact defect the expander was meant to fix.
+          //
+          // 20k is the ceiling on the body: ~250 lines of output, past anything a reader scrolls
+          // through in a pane capped at 340px, so the CSS scroll is the only limit reached in
+          // practice. It stays capped at all because every block is retained for the life of the
+          // transcript and some tool results are megabytes — uncapped, a few hundred of them pin
+          // hundreds of MB, while 20k bounds even a long session to single-digit MB.
+          b.summary = short(c.content, 400)
+          b.result = short(c.content, 20_000)
           b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
           if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult
         }
-        else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text, ts: ev.timestamp || null })
+        else if (c.type === 'text') target(ev).push({ kind: 'user', text: String(c.text ?? ''), ts: ev.timestamp || null })
         else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}`, ts: ev.timestamp || null })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? ''), ts: ev.timestamp || null })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
       let usageLeft = ev.message?.usage || null
       for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })
+        // `String(c.text ?? '')`, not `c.text.trim()`: a partial or malformed stream event is a text
+        // block with no `text`, and buildBlocks runs during render in three sections, so one such
+        // event blanked the whole transcript. Matches the thinking branch below.
+        if (c.type === 'text' && String(c.text ?? '').trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })
         // Extended thinking. Both shapes used to fall through this loop and vanish, so a turn that
         // reasoned and then called one tool rendered as the tool call alone. `redacted_thinking`
         // carries no readable text — only an encrypted `data` blob — and is kept as an explicit
@@ -102,6 +116,11 @@ function MessageHead({ who, ts }) {
   return <div className="chat-msghead" title={fmtDate(at)}>{who} · {time}</div>
 }
 
+// The collapsed peek is one line, ellipsised at whatever the row is wide. Inline rather than a
+// styles.css class because it is layout for this one element and carries no colour of its own —
+// `dim` supplies that, so the light theme still resolves through the tokens.
+const PEEK = { display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }
+
 export function Block({ b }) {
   if (b.kind === 'user') return <div className="chat-msg user"><MessageHead who="You" ts={b.ts} />{b.text}</div>
   if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
@@ -131,7 +150,7 @@ export function Block({ b }) {
         <summary>◆ {agent} — {b.input?.description || b.input?.prompt?.slice(0, 80) || 'subagent'} <span className="dim">({b.children.length} events)</span></summary>
         <div className="chat-agent-body">
           {b.children.map((c, i) => <Block key={i} b={c} />)}
-          {b.result && <div className="chat-line dim">↳ {b.result}</div>}
+          {b.summary && <div className="chat-line dim">↳ {b.summary}</div>}
         </div>
       </details>
     )
@@ -148,11 +167,12 @@ export function Block({ b }) {
     const label = <>▸ <b>{b.name}</b> <span className="dim">{short(headline, 160)}</span></>
     // With a result it becomes a disclosure. The old markup clipped the result to 80px of
     // overflow:hidden, which made everything past the first few lines unreachable — the one thing
-    // you open a tool call to read.
+    // you open a tool call to read. The closed row shows `summary`, the short form, so it still says
+    // what came back without being opened; the body holds the long form.
     if (b.result == null) return <div className={cls} title={r?.title || b.name}>{label}</div>
     return (
       <details className={cls + ' chat-tool'} title={r?.title || b.name}>
-        <summary>{label}</summary>
+        <summary>{label}{b.summary ? <> <span className="dim" style={PEEK}>{b.summary}</span></> : null}</summary>
         <div className="chat-tool-result">{b.result}</div>
       </details>
     )

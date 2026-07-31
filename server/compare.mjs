@@ -26,6 +26,18 @@ const DIR = () => path.join(os.homedir(), '.claude', 'dashboard-compare')
 export const LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 export const MAX_MODELS = LABELS.length
 
+// The two bounds Compare was the only agent-spawning module without.
+//
+// MAX_PROMPT — the prompt is fanned out to one CLI spawn per model, so the same text is paid for up
+// to MAX_MODELS times over. 2000 is research.mjs's MAX_QUESTION and docs.mjs's
+// MAX_INSTRUCTION_CHARS, and a compare prompt is the same kind of thing: a request, not a document.
+//
+// RUN_TIMEOUT_MS — `runAgent` defaults to 30 minutes, and up to MAX_MODELS of those run under one
+// `Promise.all` holding the HTTP response open, with nothing to poll and no way to cancel. 300_000
+// is board.mjs's timeout for a single question-shaped agent run, which is what one pane is.
+export const MAX_PROMPT = 2000
+export const RUN_TIMEOUT_MS = 300_000
+
 // The id reaches the filesystem straight off the URL, so the shape is fixed here and every path
 // is built through `fileFor`. `randomBytes(5).toString('hex')` is 10 lowercase hex chars, inside
 // the range this accepts.
@@ -96,9 +108,17 @@ const read = id => {
   catch { throw Object.assign(new Error('no such comparison'), { status: 404 }) }
 }
 
+// Temp file then rename, because rename(2) is atomic within a filesystem: a reader sees the whole
+// old file or the whole new one. Truncating in place could not promise that, and a half-written file
+// is not a cosmetic loss — `read` reports it as a 404 and the list route skips it, so the
+// comparison vanishes. The temp name deliberately does not end in `.json`, so one left behind by a
+// crash cannot be picked up by the list route's readdir filter.
 const write = rec => {
   fs.mkdirSync(DIR(), { recursive: true })
-  fs.writeFileSync(fileFor(rec.id), JSON.stringify(rec, null, 2))
+  const file = fileFor(rec.id)
+  const tmp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(rec, null, 2))
+  fs.renameSync(tmp, file)
 }
 
 /** Validate the request body for a new comparison, or throw with an HTTP status attached. */
@@ -109,6 +129,7 @@ function parseRequest(body) {
   const bad = msg => { throw Object.assign(new Error(msg), { status: 400 }) }
 
   if (!prompt) bad('prompt is required')
+  if (prompt.length > MAX_PROMPT) bad(`prompt is longer than ${MAX_PROMPT} characters — it is sent to every model, so it is paid for up to ${MAX_MODELS} times over`)
   if (!models.length) bad('models must be a non-empty array')
   if (models.length > MAX_MODELS) bad(`at most ${MAX_MODELS} models — there are only ${MAX_MODELS} labels`)
   if (new Set(models).size !== models.length) bad('the same model twice is not a comparison')
@@ -130,15 +151,26 @@ export default function mountCompare(app, deps = {}) {
   const runAgent = deps.runAgent || defaultRunAgent
   const fail = (res, e) => res.status(e.status || 500).json({ error: String(e.message || e) })
 
+  // Ids with a vote being written. A vote is read → check → write, and if those interleave both
+  // callers pass the check and the second write replaces the first vote with a different one.
+  //
+  // ponytail: not reachable today — the vote handler is synchronous end to end, so Node runs it to
+  // completion before the next request. This holds the invariant locally instead of resting on that,
+  // and it is a Set rather than a lock manager because there is one local user and one process.
+  // Ceiling: per-process, so two servers over one ~/.claude still race; `write` keeps each file
+  // whole but does not serialise writers. Per-id file locks if that ever becomes real.
+  const voting = new Set()
+
   // A run blocks the request until every model has answered. That is deliberate for v1: `runAgent`
   // is buffered and hands back no handle, so there is nothing to poll and no partial pane to show.
+  // Bounded per pane by RUN_TIMEOUT_MS, or the response is held open for runAgent's 30-min default.
   app.post('/api/compare', async (req, res) => {
     try {
       const { cwd, prompt, models } = parseRequest(req.body)
       const runs = await Promise.all(assignLabels(models).map(async ({ label, model }) => {
         // A model that fails becomes a pane carrying its error. Dropping it would make the
-        // comparison look like it had fewer contenders than it did.
-        const r = await runAgent({ cwd, prompt, model })
+        // comparison look like it had fewer contenders than it did. A timeout is one such error.
+        const r = await runAgent({ cwd, prompt, model, timeoutMs: RUN_TIMEOUT_MS })
         return { label, model, text: r.result || '', error: r.error || null, cost: r.cost || 0, ms: r.ms || 0, turns: r.turns || 0 }
       }))
       // Stored in label order, so the file itself does not leak the order they were requested in.
@@ -168,26 +200,33 @@ export default function mountCompare(app, deps = {}) {
   })
 
   app.post('/api/compare/:id/vote', (req, res) => {
+    let held = null
     try {
       const rec = read(req.params.id)
-      if (rec.vote) return res.status(409).json({ error: 'already voted' })
+      if (rec.vote || voting.has(rec.id)) return res.status(409).json({ error: 'already voted' })
       const pane = rec.panes.find(p => p.label === String(req.body?.label || ''))
       if (!pane) return res.status(400).json({ error: `label must be one of: ${rec.panes.map(p => p.label).join(', ')}` })
+      voting.add((held = rec.id))
       rec.vote = { label: pane.label, model: pane.model, at: Date.now() }
       write(rec)
       res.json({ ok: true, vote: rec.vote, mapping: Object.fromEntries(rec.panes.map(p => [p.label, p.model])) })
     } catch (e) { fail(res, e) }
+    finally { if (held) voting.delete(held) }
   })
 
   // Refused before a vote: the synthesis is written by a named model, and naming it reveals a
   // model that was in the comparison.
+  //
+  // Not covered by `voting`: this awaits an agent between its read and its write, so two concurrent
+  // synthesises of one comparison end in last-write-wins. That replaces one synthesis with another
+  // rather than destroying a vote, so it is left as it is.
   app.post('/api/compare/:id/synthesize', async (req, res) => {
     try {
       const rec = read(req.params.id)
       if (!rec.vote) return res.status(409).json({ error: 'vote first — synthesising would reveal a model' })
       if (!rec.panes.some(p => p.text)) return res.status(409).json({ error: 'nothing to synthesise — every model errored' })
       const model = String(req.body?.model || '') || rec.vote.model
-      const r = await runAgent({ cwd: rec.cwd, prompt: synthPrompt(rec), model })
+      const r = await runAgent({ cwd: rec.cwd, prompt: synthPrompt(rec), model, timeoutMs: RUN_TIMEOUT_MS })
       if (r.error) return res.status(502).json({ error: r.error })
       rec.synthesis = { text: r.result || '', model, cost: r.cost || 0, ms: r.ms || 0, at: Date.now() }
       write(rec)

@@ -1,6 +1,12 @@
 /* research feature styles — owned by the research agent.
    Separate file so four agents can add CSS in parallel without touching styles.css.
-   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono. */
+   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono.
+
+   AGPL-3.0-only, as the whole program is. Written from the capability description in the brief; no
+   Odysseus source was consulted for this file — neither `static/js/research/`, which the brief
+   permitted, nor the demo recording — so NOTICE clause 1 does not apply to it. Same footing and
+   same wording as `lib/chat-protocol.mjs`. Recorded because NOTICE could not otherwise place this
+   file, and a missing header is not evidence. */
 
 .research-ask { display: flex; flex-direction: column; gap: 6px; }
 .research-ask textarea { resize: vertical; font: 400 13px var(--body); }

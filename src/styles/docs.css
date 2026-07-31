@@ -4,7 +4,12 @@
 
    Layout only. Panes, rows, badges and buttons come from styles.css (.section, .list-pane,
    .detail-pane, .detail-head, .row, .badge, .mini, .status) — this file adds the pieces that screen
-   does not already have: a scrolling file list, a full-height editor, and the proposal strip. */
+   does not already have: a scrolling file list, a full-height editor, and the proposal strip.
+
+   No Odysseus source was read for this file, so NOTICE clause 1 does not apply to it — the wording
+   follows `lib/chat-protocol.mjs`. `static/js/document.js` was consulted for the SECTION
+   (`src/sections/DocsSection.jsx`, which carries the clause 1 header) and not for these styles.
+   This file is AGPL-3.0 regardless, because the whole program is. */
 
 /* --- file list ------------------------------------------------------------------------------- */
 .docs-root { font: 400 10px var(--mono); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -238,6 +238,37 @@ test('an agent error or an empty answer is reported, not written', async () => {
   assert.equal(r.body.text, '   ', 'whitespace is a real answer for a file the user asked to blank')
 })
 
+// `runAgent` today turns its own failures into `{error}`, so this asks about the case it does NOT
+// cover: a REJECTION. This is an `async` Express 4 handler, and Express 4 does not route a rejected
+// promise to the error middleware — it becomes an unhandled rejection, which under Node's default
+// policy kills the process rather than answering the request. The harness awaits the handler, so
+// before the try/catch this test failed with the raw error instead of reading a 500 body.
+test('a rejecting agent produces a 500, not an unhandled rejection', async () => {
+  const file = path.join(ROOT, 'note.md')
+  const before = fs.readFileSync(file, 'utf8')
+
+  const rejecting = harness(async () => { throw new Error('spawn claude ENOENT') })
+  const r = await rejecting('post', '/api/docs/ai-edit', { body: { path: 'note.md', instruction: 'x' } })
+  assert.equal(r.status, 500)
+  assert.equal(r.body.error, 'spawn claude ENOENT')
+  assert.equal(r.body.path, 'note.md')
+
+  // A synchronous throw is the same failure arriving by a different route — an agent module that
+  // validates its options eagerly, say — and must be reported the same way.
+  const throwing = harness(() => { throw new Error('bad options') })
+  const s = await throwing('post', '/api/docs/ai-edit', { body: { path: 'note.md', instruction: 'x' } })
+  assert.equal(s.status, 500)
+  assert.equal(s.body.error, 'bad options')
+
+  // A thrown non-Error has no `.message`; the handler must still answer rather than send `undefined`.
+  const weird = harness(async () => { throw 'just a string' })
+  const w = await weird('post', '/api/docs/ai-edit', { body: { path: 'note.md', instruction: 'x' } })
+  assert.equal(w.status, 500)
+  assert.equal(w.body.error, 'ai-edit-failed')
+
+  assert.equal(fs.readFileSync(file, 'utf8'), before, 'a failed AI edit still writes nothing')
+})
+
 test('unfence strips one fence and nothing else', () => {
   assert.equal(unfence('```md\nhi\n```'), 'hi')
   assert.equal(unfence('```\nhi\n```'), 'hi')

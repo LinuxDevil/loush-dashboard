@@ -1,5 +1,11 @@
 // Deep Research — ask a question, watch the agent search and read, get a cited report.
 //
+// AGPL-3.0-only, as the whole program is. No Odysseus source was consulted for this file — it was
+// written from a capability description, on the same footing as `lib/chat-protocol.mjs`. The brief
+// permitted reading `odysseus/static/js/research/` and it was not read; recorded here because NOTICE
+// could not otherwise place this file, and an absent header is not evidence either way. The server
+// half, `server/research.mjs`, DID consult upstream and carries the clause 1 attribution.
+//
 // The run lives on the SERVER (server/research.mjs), keyed by id. This component owns nothing but
 // the view: src/App.jsx remounts every section on refresh, so anything stateful here would be lost
 // mid-research. On mount it asks the server what is running and reattaches — that is the whole
@@ -23,6 +29,13 @@ const STATUS = {
 }
 const statusOf = s => STATUS[s] || { label: s || 'unknown', cls: '' }
 
+// The step stream is a nice-to-have layered over a run that lives on the server, so a failure to
+// reattach is bounded rather than retried forever: /events 404s whenever the server holds no live
+// run for the id (restart, or eviction), and a fixed 1s retry against that turns into an endless
+// 1 Hz request loop for as long as the section stays mounted.
+const MAX_STREAM_RETRIES = 5
+const retryDelay = n => Math.min(1000 * 2 ** n, 15000)
+
 export default function ResearchSection() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
@@ -30,19 +43,36 @@ export default function ResearchSection() {
   const [events, setEvents] = useState([])
   const [gap, setGap] = useState(null)
   const [err, setErr] = useState(null)
+  // Why the live feed stopped, when it stopped for a reason the user cannot see. A feed that
+  // silently went quiet is indistinguishable from a run that is thinking.
+  const [feedStopped, setFeedStopped] = useState(null)
   const esRef = useRef(null)
   const seqRef = useRef(0)
   const retryRef = useRef(null)
+  const triesRef = useRef(0)
 
   const load = () => api.get('/api/research').then(setList).catch(e => setErr(e.message))
   const merge = (id, patch) => setSel(s => (s && s.id === id ? { ...s, ...patch } : s))
   const detail = id => api.get(`/api/research/${id}`).then(d => merge(id, d)).catch(e => setErr(e.message))
+
+  // Backoff, and a hard stop. `openStream` is referenced lazily inside the timer, so declaring this
+  // first is fine.
+  const scheduleRetry = id => {
+    const n = triesRef.current
+    if (n >= MAX_STREAM_RETRIES) {
+      setFeedStopped(`stopped reattaching to the live step feed after ${n} attempts — the report below still updates when you reopen this run`)
+      return
+    }
+    triesRef.current = n + 1
+    retryRef.current = setTimeout(() => { esRef.current = openStream(id, seqRef.current) }, retryDelay(n))
+  }
 
   // The highest frame seq applied. Handed back as ?fromSeq on reconnect so the server sends only
   // what was missed instead of replaying the run from the start on every network blip.
   const openStream = (id, fromSeq) => {
     const es = new EventSource(`/api/research/${id}/events` + (fromSeq > 0 ? `?fromSeq=${fromSeq}` : ''))
     es.onmessage = m => {
+      triesRef.current = 0   // a stream that delivered earns a fresh retry budget if it drops later
       let f
       try { f = JSON.parse(m.data) } catch { return }
       if (f.kind === 'gap') {
@@ -62,7 +92,17 @@ export default function ResearchSection() {
       if (es.readyState !== EventSource.CLOSED) return
       es.close()
       if (esRef.current !== es) return
-      retryRef.current = setTimeout(() => { esRef.current = openStream(id, seqRef.current) }, 1000)
+      // The run's own status decides whether another attempt could ever succeed. A 404 here means
+      // the server has no live run for this id, and if the run is no longer `running` it never will
+      // again — retrying is then a request loop with no terminating condition.
+      api.get(`/api/research/${id}`)
+        .then(d => {
+          merge(id, d)
+          if (d.status === 'running') return scheduleRetry(id)
+          setFeedStopped(`the live step feed ended: this run is ${statusOf(d.status).label} on the server`)
+          load()
+        })
+        .catch(() => scheduleRetry(id))
     }
     return es
   }
@@ -71,7 +111,8 @@ export default function ResearchSection() {
     esRef.current?.close()
     clearTimeout(retryRef.current)
     seqRef.current = 0
-    setEvents([]); setGap(null); setErr(null); setSel(item)
+    triesRef.current = 0
+    setEvents([]); setGap(null); setErr(null); setFeedStopped(null); setSel(item)
     detail(item.id)
     if (item.status === 'running') esRef.current = openStream(item.id, 0)
   }
@@ -145,7 +186,7 @@ export default function ResearchSection() {
               </div>
             </div>
             {sel.error && <div className="chat-line err">{sel.error}</div>}
-            {(events.length > 0 || gap) && (
+            {(events.length > 0 || gap || feedStopped) && (
               <details className="research-steps" open={sel.status === 'running'}>
                 <summary>steps <span className="dim">({blocks.length} event{blocks.length === 1 ? '' : 's'})</span></summary>
                 <div className="chat-log research-feed">
@@ -156,11 +197,17 @@ export default function ResearchSection() {
                     </div>
                   )}
                   {blocks.map((b, i) => <Block key={i} b={b} />)}
-                  {sel.status === 'running' && <div className="chat-line dim">✦ researching…</div>}
+                  {feedStopped && <div className="chat-line err">⚠ {feedStopped}</div>}
+                  {sel.status === 'running' && !feedStopped && <div className="chat-line dim">✦ researching…</div>}
                 </div>
               </details>
             )}
             <div className="research-report">
+              {sel.reportTruncated && (
+                <div className="chat-line err">
+                  ⚠ this report is {fmtSize(sel.reportTotalBytes)} on disk and is shown TRUNCATED — what follows is the beginning of it, not the whole thing.
+                </div>
+              )}
               {sel.report ? <Markdown source={sel.report} /> : (
                 <p className="muted">{
                   sel.status === 'running' ? 'the report is written at the end of the run — watch the steps above'

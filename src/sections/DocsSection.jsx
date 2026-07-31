@@ -13,12 +13,21 @@
 // modification).
 // ---------------------------------------------------------------------------------------------
 //
-// The buffer is the thing this screen protects. Three rules follow from that:
+// The buffer is the thing this screen protects. Four rules follow from that:
 //
 //   · Switching files with unsaved work ASKS first. Silently dropping a buffer is the one bug that
 //     loses writing the user cannot get back.
 //   · An AI edit never lands in the buffer unreviewed, and never lands on disk at all — the server
 //     returns proposed text, the diff is accepted or rejected here, and only `save` writes.
+//   · An AI edit is only offered on a SAVED buffer. `/api/docs/ai-edit` builds its prompt, its
+//     selection check and its returned text from the file on disk, so against a dirty buffer the two
+//     disagree in two ways: a selection of freshly typed text comes back as a confusing
+//     `409 selection-not-in-file`, and a whole-document proposal is disk-based text whose diff, if
+//     accepted, reverts every unsaved edit. Requiring a save keeps the proposal's baseline and the
+//     buffer the same string, so accepting a diff can never discard work. The alternative — sending
+//     the buffer as the document body — would make the endpoint edit text it was handed rather than
+//     text it read, and "ai-edit never writes and always reflects the file" is the property that
+//     makes the accept/reject flow trustworthy. Save first is the smaller change and the stronger one.
 //   · Preview renders the BUFFER, not the file on disk, because what you just typed is the thing
 //     you are trying to look at.
 //
@@ -93,14 +102,29 @@ export default function DocsSection() {
     .then(d => { setSaved(buf); flash(`saved ${d.path} (${d.bytes} bytes)`); loadList() })
     .catch(e => flash('save failed: ' + e.message))
 
+  // Requires a clean buffer — see the third rule in the header. The bar is disabled while dirty, so
+  // this guard is only reachable through a race, but what it prevents is a proposal whose diff would
+  // silently revert unsaved work.
+  const aiBlocked = dirty ? 'save first — an AI edit is computed from the file on disk' : ''
   const runAiEdit = () => {
+    if (aiBlocked) return flash(aiBlocked)
     setBusy(true)
-    // The selection is sent as text and matched by content on the server, so a proposal computed
-    // against an excerpt that has since changed is refused there rather than spliced in blind.
+    // `buf === saved` here, so the proposal's baseline is both the buffer and the file: the selection
+    // is matched by content on the server against the same text the user is looking at.
     api.post('/api/docs/ai-edit', { path: sel, instruction, selection: selText || undefined })
       .then(d => setProposal({ text: d.text, original: buf, instruction }))
       .catch(e => flash('AI edit failed: ' + e.message))
       .finally(() => setBusy(false))
+  }
+
+  // The same rule from the other direction. The diff shown is against the buffer as it stood when
+  // the request went out; typing while the model worked makes those keystrokes invisible in it, and
+  // applying the proposal would drop them. Ask rather than discard.
+  const acceptProposal = () => {
+    const stale = buf !== proposal.original
+    if (stale && !window.confirm('You have typed since this proposal was requested, and the diff does not show those edits. Apply it anyway and lose them?')) return
+    setBuf(proposal.text); setProposal(null)
+    flash('proposal applied to the editor — not yet saved')
   }
 
   const filtered = useMemo(() => {
@@ -135,10 +159,10 @@ export default function DocsSection() {
             </div>
             {status && <div className="status">{status}</div>}
             <AiEditBar instruction={instruction} onInstruction={setInstruction} selection={selText}
-              busy={busy} disabled={saved === null} onRun={runAiEdit} />
+              busy={busy} disabled={saved === null || !!aiBlocked} reason={aiBlocked} onRun={runAiEdit} />
             {proposal && (
               <ProposalReview original={proposal.original} proposed={proposal.text} instruction={proposal.instruction}
-                onAccept={() => { setBuf(proposal.text); setProposal(null); flash('proposal applied to the editor — not yet saved') }}
+                onAccept={acceptProposal}
                 onReject={() => { setProposal(null); flash('proposal discarded — nothing was written') }} />
             )}
             <div className="docs-body">

@@ -18,7 +18,11 @@ import { Tabs } from '../ui/tabs.jsx'
 import { modelName } from '../lib/modelName.js'
 
 const DEFAULT_MODELS = 'opus, sonnet'
+// Both mirror server/compare.mjs — MAX_MODELS and MAX_PROMPT. The server is the authority and
+// rejects with a 400 either way; these exist so the limit is visible while typing rather than
+// after a submit.
 const MAX_MODELS = 6
+const MAX_PROMPT = 2000
 
 export default function CompareSection() {
   const [scopes, setScopes] = useState([])
@@ -89,6 +93,7 @@ export default function CompareSection() {
       <div className="panel cmp-form">
         <div className="sect-label">New comparison</div>
         <textarea rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} disabled={!!busy}
+          maxLength={MAX_PROMPT}
           placeholder="one prompt, sent to every model below — e.g. “refactor this module and explain the seam you chose”" />
         <div className="cmp-controls">
           <select value={cwd} onChange={e => setCwd(e.target.value)} aria-label="working directory" disabled={!!busy}>
@@ -98,6 +103,7 @@ export default function CompareSection() {
           <input value={modelsText} onChange={e => setModelsText(e.target.value)} disabled={!!busy}
             aria-label="models" placeholder="models, comma separated" />
           <span className="cmp-note">{models.length}/{MAX_MODELS} models</span>
+          <span className="cmp-note">{prompt.length}/{MAX_PROMPT} chars</span>
           <button className="primary" onClick={run}
             disabled={!!busy || !prompt.trim() || !cwd || !models.length || models.length > MAX_MODELS}>
             {busy === 'running' ? 'running…' : 'Run blind'}

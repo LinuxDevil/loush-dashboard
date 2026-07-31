@@ -12,8 +12,13 @@ import React from 'react'
 // The scope is stated on the button, never inferred silently: with a selection it says how much text
 // it will send, and with none it says the whole document. "AI edit" on its own would leave the user
 // guessing which one they just authorised.
-export default function AiEditBar({ instruction, onInstruction, selection, busy, disabled, onRun }) {
+//
+// When the bar is disabled it says WHY in the same place the scope would be. A control that is greyed
+// out with no reason reads as broken, and the reason here — unsaved changes — is one the user can act
+// on in a single click.
+export default function AiEditBar({ instruction, onInstruction, selection, busy, disabled, reason, onRun }) {
   const scope = selection ? `selection (${selection.length} chars)` : 'whole document'
+  const note = disabled && reason ? reason : scope
   return (
     <div className="docs-ai-bar">
       <input
@@ -21,10 +26,11 @@ export default function AiEditBar({ instruction, onInstruction, selection, busy,
         value={instruction}
         disabled={disabled || busy}
         onChange={e => onInstruction(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && instruction.trim() && !busy) onRun() }}
+        onKeyDown={e => { if (e.key === 'Enter' && instruction.trim() && !busy && !disabled) onRun() }}
       />
-      <span className="docs-ai-scope">{scope}</span>
-      <button className="mini" disabled={disabled || busy || !instruction.trim()} onClick={onRun}>
+      <span className="docs-ai-scope">{note}</span>
+      <button className="mini" title={disabled ? reason || '' : ''}
+        disabled={disabled || busy || !instruction.trim()} onClick={onRun}>
         {busy ? 'thinking…' : 'AI edit'}
       </button>
     </div>

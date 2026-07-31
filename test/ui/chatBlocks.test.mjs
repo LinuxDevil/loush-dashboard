@@ -13,9 +13,13 @@ import { readFileSync } from 'node:fs'
 // rendered as the answer alone, and a turn that only reasoned rendered as nothing at all.
 // `redacted_thinking` is the sharper case — it carries no readable text, so the tempting handling is
 // to skip it, which produces a transcript that silently omits that the model thought.
+//
+// And: the reducer runs during render in three sections, so any unguarded field access on a stream
+// event takes the whole transcript down. A malformed or partial event must produce a missing block,
+// never a thrown one.
 
 const short = (v, n = 200) => {
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
+  const s = typeof v === 'string' ? v : JSON.stringify(v) ?? ''
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
@@ -27,18 +31,19 @@ function buildBlocks(events) {
       for (const c of ev.message.content)
         if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
           const b = byToolId[c.tool_use_id]
-          b.result = short(c.content, 400)
+          b.summary = short(c.content, 400)
+          b.result = short(c.content, 20_000)
           b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
           if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult
         }
-        else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text, ts: ev.timestamp || null })
+        else if (c.type === 'text') target(ev).push({ kind: 'user', text: String(c.text ?? ''), ts: ev.timestamp || null })
         else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}`, ts: ev.timestamp || null })
     } else if (ev.type === 'user') {
       target(ev).push({ kind: 'user', text: String(ev.message?.content ?? ''), ts: ev.timestamp || null })
     } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
       let usageLeft = ev.message?.usage || null
       for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })
+        if (c.type === 'text' && String(c.text ?? '').trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })
         else if (c.type === 'thinking' && String(c.thinking ?? '').trim()) target(ev).push({ kind: 'thinking', text: c.thinking, ts: ev.timestamp || null, model: ev.message?.model || null })
         else if (c.type === 'redacted_thinking') target(ev).push({ kind: 'thinking', text: '', redacted: true, ts: ev.timestamp || null, model: ev.message?.model || null })
         else if (c.type === 'tool_use') {
@@ -135,14 +140,79 @@ test('thinking does not consume the usage figure that belongs to the first tool 
   assert.deepEqual(tool.usage, { input_tokens: 120, output_tokens: 8 })
 })
 
+// A text block with no `text` is what a partial or malformed stream event looks like, and
+// `c.text.trim()` threw a TypeError on it. buildBlocks runs during render in three sections, so that
+// throw blanked the whole transcript — one bad frame cost every message before it.
+test('a text content block with no text is skipped, not thrown on', () => {
+  let blocks
+  assert.doesNotThrow(() => {
+    blocks = buildBlocks([assistant([
+      { type: 'text' },
+      { type: 'text', text: null },
+      { type: 'text', text: 'Answer.' },
+    ])])
+  })
+  assert.deepEqual(blocks.map(b => b.kind), ['text'])
+  assert.equal(blocks[0].text, 'Answer.')
+})
+
+test('a user text block with no text yields an empty string, not null', () => {
+  // The block feeds `<Cap text={b.text}>`, whose capture handler calls `text.slice()`. A null here
+  // renders fine and then throws on click, which is worse than rendering an empty turn.
+  const blocks = buildBlocks([{ type: 'user', message: { content: [{ type: 'text', text: null }] } }])
+  assert.deepEqual(blocks.map(b => b.kind), ['user'])
+  assert.equal(blocks[0].text, '')
+})
+
+test('a tool_result with no content does not throw — short() tolerates undefined', () => {
+  // JSON.stringify(undefined) is undefined, not a string, so the old `short` threw on `.length`.
+  const events = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_3', name: 'Bash', input: { command: 'ls' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_3' }] } },
+  ]
+  let blocks
+  assert.doesNotThrow(() => { blocks = buildBlocks(events) })
+  assert.equal(blocks[0].result, '')
+  assert.equal(blocks[0].summary, '')
+})
+
+test('a tool result keeps a short summary and a much longer body', () => {
+  // The point of the split: the collapsed row shows a peek, the opened <details> shows enough that
+  // "expand" actually reveals something. With one 400-char value it revealed nothing.
+  const content = 'x'.repeat(5000)
+  const events = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_4', name: 'Read', input: { file_path: 'a.txt' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_4', content }] } },
+  ]
+  const b = buildBlocks(events)[0]
+  assert.equal(b.summary.length, 401, '400 chars plus the ellipsis')
+  assert.equal(b.result, content, 'well under the body ceiling, so it is kept whole')
+  assert.ok(b.result.length > b.summary.length * 10)
+})
+
+test('the body is still capped, because every block is retained for the session', () => {
+  const content = 'y'.repeat(50_000)
+  const events = [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_5', name: 'Bash', input: { command: 'cat big' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_5', content }] } },
+  ]
+  const b = buildBlocks(events)[0]
+  assert.equal(b.result.length, 20_001, '20k chars plus the ellipsis — an uncapped body pins megabytes per block')
+})
+
 // A restated reducer can drift from the component silently, which would make every assertion above
-// pass against code that no longer exists. This reads the real source as text and pins the two
-// branches the file is about, so a rewrite of them fails here rather than going unnoticed.
+// pass against code that no longer exists. This reads the real source as text and pins the branches
+// the file is about, so a rewrite of them fails here rather than going unnoticed.
 test('the restated reducer still matches the branches in chatBlocks.jsx', () => {
   const source = readFileSync(new URL('../../src/ui/chatBlocks.jsx', import.meta.url), 'utf8')
   for (const branch of [
+    "if (c.type === 'text' && String(c.text ?? '').trim()) target(ev).push({ kind: 'text', text: c.text, ts: ev.timestamp || null, model: ev.message?.model || null })",
     "else if (c.type === 'thinking' && String(c.thinking ?? '').trim()) target(ev).push({ kind: 'thinking', text: c.thinking, ts: ev.timestamp || null, model: ev.message?.model || null })",
     "else if (c.type === 'redacted_thinking') target(ev).push({ kind: 'thinking', text: '', redacted: true, ts: ev.timestamp || null, model: ev.message?.model || null })",
+    "else if (c.type === 'text') target(ev).push({ kind: 'user', text: String(c.text ?? ''), ts: ev.timestamp || null })",
+    'b.summary = short(c.content, 400)',
+    'b.result = short(c.content, 20_000)',
+    "const s = typeof v === 'string' ? v : JSON.stringify(v) ?? ''",
   ])
     assert.ok(source.includes(branch), `chatBlocks.jsx no longer contains:\n  ${branch}\nUpdate this test to match.`)
 })

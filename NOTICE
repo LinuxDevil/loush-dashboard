@@ -30,12 +30,42 @@ clause 1 header and §5(a) modification notice:
   src/sections/DocsSection.jsx     ← static/js/document.js
   src/sections/docs/AiEditBar.jsx  ← static/js/document.js
 
-The chat message rendering (`src/ui/chatBlocks.jsx`) and the Compare UI
-(`src/sections/CompareSection.jsx`, `src/styles/compare.css`) are NOT in that
-list. They were written from Odysseus's bundled demo recordings and capability
-descriptions without reading its source, so clause 1 does not attach to them —
-they follow the `lib/chat-protocol.mjs` wording instead. They are still AGPL-3.0,
+Files where Odysseus source was NOT read. These were written from its bundled demo
+recordings and from capability descriptions, so clause 1 does not attach to them;
+they carry the `lib/chat-protocol.mjs` wording instead. All are AGPL-3.0 anyway,
 because the whole program is.
+
+  src/ui/chatBlocks.jsx
+  src/sections/CompareSection.jsx
+  src/styles/compare.css
+  src/sections/ResearchSection.jsx
+  src/styles/research.css
+  src/styles/docs.css
+
+**Basis for the last three, stated plainly because it is weaker than the rest of
+this audit.** The first three say so in their own headers. The last three did not
+when this audit was written, and were briefly recorded here as unplaceable. They
+are placed on the statements of the agents that wrote them, given at completion:
+
+  · The author of `server/research.mjs`, `ResearchSection.jsx` and `research.css`
+    reported consulting Odysseus source for the server module ONLY — naming
+    `src/deep_research.py` and `routes/research/research_routes.py` — and stated
+    that the JSX and CSS were written without reading `static/js/research/` or the
+    demo recording.
+  · The author of `server/docs.mjs`, `DocsSection.jsx` and `docs.css` enumerated
+    exactly two consultations, `routes/document_routes.py` and
+    `static/js/document.js`. `docs.css` was not among them.
+
+That is testimony, not inspection: nobody diffed these files against Odysseus to
+confirm it. It is corroborated only by `server/research.mjs` citing the two Python
+files and not `static/js/research/`, which is consistent but proves nothing. The
+distinction does not affect distribution — AGPL-3.0 applies either way — but it
+would matter to anyone relicensing, so the strength of the evidence is recorded
+here rather than smoothed over.
+
+On that basis all three now carry the standard header wording in the files
+themselves, so this paragraph records why they say it rather than being the only
+place it is said.
 
 **Obligations that come with that — these are not optional:**
 

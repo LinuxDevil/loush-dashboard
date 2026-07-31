@@ -278,48 +278,61 @@ export default function mount(app, deps = {}) {
   })
 
   // Proposes. Does not write. The client diffs {text} against its buffer and PUTs on accept.
+  //
+  // The whole body is inside a try/catch because this is an `async` handler on Express 4, which does
+  // not route a rejected promise to the error middleware: it becomes an unhandled rejection, and
+  // Node's default policy for that is to kill the process. `runAgent` currently resolves its own
+  // failures into `{error}`, so nothing here rejects today — but that is another module's contract,
+  // not this handler's guarantee, and server/compare.mjs wraps every async handler for this reason.
   app.post('/api/docs/ai-edit', async (req, res) => {
     const t = target(req, res, req.body?.path)
     if (!t) return
-    const instruction = String(req.body?.instruction ?? '').trim()
-    if (!instruction) return bad(res, 400, 'instruction-required')
-    if (instruction.length > MAX_INSTRUCTION_CHARS) return bad(res, 400, 'instruction-too-long', { limit: MAX_INSTRUCTION_CHARS })
-    const rawSel = req.body?.selection
-    const selection = typeof rawSel === 'string' && rawSel.trim() ? rawSel : ''
-    if (selection.length > MAX_SELECTION_CHARS) return bad(res, 400, 'selection-too-long', { limit: MAX_SELECTION_CHARS })
-
-    let whole
     try {
-      const st = fs.statSync(t.abs)
-      if (st.size > MAX_FILE_BYTES) return bad(res, 413, 'file-too-large', { path: t.rel, bytes: st.size, limit: MAX_FILE_BYTES })
-      whole = fs.readFileSync(t.abs, 'utf8')
-    } catch { return bad(res, 404, 'not-found', { path: t.rel }) }
-    // A selection the file on disk no longer contains would produce a proposal we cannot splice
-    // back into the right region. Refuse rather than rewrite the wrong one.
-    if (selection && !whole.includes(selection)) return bad(res, 409, 'selection-not-in-file', { path: t.rel })
+      const instruction = String(req.body?.instruction ?? '').trim()
+      if (!instruction) return bad(res, 400, 'instruction-required')
+      if (instruction.length > MAX_INSTRUCTION_CHARS) return bad(res, 400, 'instruction-too-long', { limit: MAX_INSTRUCTION_CHARS })
+      const rawSel = req.body?.selection
+      const selection = typeof rawSel === 'string' && rawSel.trim() ? rawSel : ''
+      if (selection.length > MAX_SELECTION_CHARS) return bad(res, 400, 'selection-too-long', { limit: MAX_SELECTION_CHARS })
 
-    const out = await runAgent({
-      cwd: rootOf(), timeoutMs: AI_TIMEOUT_MS, model: req.body?.model,
-      prompt: aiEditPrompt({ rel: t.rel, ext: t.ext, instruction, selection, whole }),
-      // "This endpoint never writes" was only true of the endpoint. lib/agent.mjs spawns the CLI
-      // with --dangerously-skip-permissions, so the MODEL could pick up Write and edit the file
-      // itself — the accept/reject diff would then be reviewing a change already on disk. The
-      // whole document is in the prompt, so no tool is needed to do this job at all.
-      allowedTools: AI_EDIT_TOOLS,
-    })
-    if (out?.error) return bad(res, 502, out.error, { path: t.rel })
-    if (out?.blocked) return bad(res, 409, 'agent-blocked', { path: t.rel, detail: out.blocked })
-    const proposed = unfence(out?.result)
-    if (!proposed) return bad(res, 502, 'empty-proposal', { path: t.rel })
+      let whole
+      try {
+        const st = fs.statSync(t.abs)
+        if (st.size > MAX_FILE_BYTES) return bad(res, 413, 'file-too-large', { path: t.rel, bytes: st.size, limit: MAX_FILE_BYTES })
+        whole = fs.readFileSync(t.abs, 'utf8')
+      } catch { return bad(res, 404, 'not-found', { path: t.rel }) }
+      // A selection the file on disk no longer contains would produce a proposal we cannot splice
+      // back into the right region. Refuse rather than rewrite the wrong one. The prompt, the splice
+      // and the returned text all come from `whole`, so a client editing a DIRTY buffer would be
+      // diffing against a document it no longer has; DocsSection.jsx therefore offers this only on a
+      // saved buffer, which is what keeps "disk" and "what the user is looking at" the same string.
+      if (selection && !whole.includes(selection)) return bad(res, 409, 'selection-not-in-file', { path: t.rel })
 
-    res.json({
-      path: t.rel,
-      // Whole-file text for the client to diff against its buffer, so accept is one PUT whether
-      // the instruction covered a selection or the document.
-      text: selection ? whole.replace(selection, () => proposed) : proposed,
-      selection: selection || null,
-      wrote: false,       // stated, not implied: this endpoint never touches the disk
-      cost: out?.cost ?? 0,
-    })
+      const out = await runAgent({
+        cwd: rootOf(), timeoutMs: AI_TIMEOUT_MS, model: req.body?.model,
+        prompt: aiEditPrompt({ rel: t.rel, ext: t.ext, instruction, selection, whole }),
+        // "This endpoint never writes" was only true of the endpoint. lib/agent.mjs spawns the CLI
+        // with --dangerously-skip-permissions, so the MODEL could pick up Write and edit the file
+        // itself — the accept/reject diff would then be reviewing a change already on disk. The
+        // whole document is in the prompt, so no tool is needed to do this job at all.
+        allowedTools: AI_EDIT_TOOLS,
+      })
+      if (out?.error) return bad(res, 502, out.error, { path: t.rel })
+      if (out?.blocked) return bad(res, 409, 'agent-blocked', { path: t.rel, detail: out.blocked })
+      const proposed = unfence(out?.result)
+      if (!proposed) return bad(res, 502, 'empty-proposal', { path: t.rel })
+
+      res.json({
+        path: t.rel,
+        // Whole-file text for the client to diff against its buffer, so accept is one PUT whether
+        // the instruction covered a selection or the document.
+        text: selection ? whole.replace(selection, () => proposed) : proposed,
+        selection: selection || null,
+        wrote: false,       // stated, not implied: this endpoint never touches the disk
+        cost: out?.cost ?? 0,
+      })
+    } catch (e) {
+      bad(res, 500, e?.message || 'ai-edit-failed', { path: t.rel })
+    }
   })
 }

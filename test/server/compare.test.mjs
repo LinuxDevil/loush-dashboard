@@ -12,9 +12,11 @@ process.env.USERPROFILE = TMP
 const REPO = path.join(TMP, 'repo')
 fs.mkdirSync(REPO, { recursive: true })
 
-const { default: mountCompare, assignLabels, LABELS, MAX_MODELS } = await import('../../server/compare.mjs')
+const { default: mountCompare, assignLabels, LABELS, MAX_MODELS, MAX_PROMPT, RUN_TIMEOUT_MS } =
+  await import('../../server/compare.mjs')
 
 const MODELS = ['opus', 'sonnet', 'haiku']
+const STORE = () => path.join(TMP, '.claude', 'dashboard-compare')
 
 // One deterministic "run" per model, with numbers far enough apart that a leak would be obvious.
 const COSTS = { opus: 0.9, sonnet: 0.3, haiku: 0.02 }
@@ -40,7 +42,7 @@ function harness(deps = { runAgent }) {
 }
 
 const call = harness()
-const reset = () => fs.rmSync(path.join(TMP, '.claude', 'dashboard-compare'), { recursive: true, force: true })
+const reset = () => fs.rmSync(STORE(), { recursive: true, force: true })
 const start = async (models = MODELS, prompt = 'explain event loops') =>
   (await call('post', '/api/compare', { body: { cwd: REPO, prompt, models } })).body.id
 
@@ -137,6 +139,24 @@ test('a second vote is refused rather than rewriting history', async () => {
   assert.equal(again.status, 409)
 })
 
+// The same thing without the `await` between them. A vote is read → check → write, so two that
+// interleave would both pass the check and the second write would silently replace the first vote
+// with a different one. Exactly one vote is recorded and it is the one that was acknowledged.
+test('two votes arriving together still record exactly one vote', async () => {
+  reset()
+  const id = await start()
+  const [first, second] = await Promise.all([
+    call('post', '/api/compare/:id/vote', { params: { id }, body: { label: 'A' } }),
+    call('post', '/api/compare/:id/vote', { params: { id }, body: { label: 'B' } }),
+  ])
+  assert.deepEqual([first.status, second.status].sort(), [200, 409], 'one lands, one is refused — never two 200s')
+
+  const won = first.status === 200 ? first : second
+  const after = (await call('get', '/api/compare/:id', { params: { id } })).body
+  assert.equal(after.vote.label, won.body.vote.label, 'the stored vote is the acknowledged one')
+  assert.equal(after.vote.at, won.body.vote.at, 'and it was not overwritten by the loser')
+})
+
 test('a label that is not on the board is refused and the names are still withheld', async () => {
   reset()
   const id = await start()
@@ -186,6 +206,7 @@ test('the request body is validated before anything runs', async () => {
   reset()
   const cases = [
     [{ cwd: REPO, prompt: '', models: MODELS }, /prompt is required/],
+    [{ cwd: REPO, prompt: 'x'.repeat(MAX_PROMPT + 1), models: MODELS }, new RegExp(`longer than ${MAX_PROMPT} characters`)],
     [{ cwd: REPO, prompt: 'p', models: [] }, /non-empty array/],
     [{ cwd: REPO, prompt: 'p', models: 'sonnet' }, /non-empty array/],
     [{ cwd: REPO, prompt: 'p', models: LABELS.concat('G') }, new RegExp(`at most ${MAX_MODELS} models`)],
@@ -199,6 +220,37 @@ test('the request body is validated before anything runs', async () => {
     assert.match(r.body.error, re)
   }
   assert.deepEqual((await call('get', '/api/compare')).body, [], 'nothing was persisted by a rejected request')
+})
+
+// The bound is on the prompt because it is fanned out to one spawn per model, so the cost of a huge
+// one is multiplied by MAX_MODELS. It is a bound, not an off-by-one: the limit itself is allowed.
+test('a prompt of exactly MAX_PROMPT characters is accepted, and no agent runs for one over', async () => {
+  reset()
+  const spawned = []
+  const c = harness({ runAgent: async a => { spawned.push(a.model); return runAgent(a) } })
+  const post = prompt => c('post', '/api/compare', { body: { cwd: REPO, prompt, models: MODELS } })
+
+  assert.equal((await post('x'.repeat(MAX_PROMPT))).status, 200)
+  assert.equal(spawned.length, MODELS.length)
+
+  const over = await post('x'.repeat(MAX_PROMPT + 1))
+  assert.equal(over.status, 400)
+  assert.equal(spawned.length, MODELS.length, 'the rejected prompt spawned nothing — the cap is checked before the fan-out')
+})
+
+// Every runAgent call must carry an explicit timeoutMs. Without one it inherits runAgent's 30-minute
+// default, and up to MAX_MODELS of those run under one Promise.all holding the HTTP response open.
+test('every agent run is bounded well below runAgent\'s 30-minute default', async () => {
+  reset()
+  const seen = []
+  const c = harness({ runAgent: async a => { seen.push(a.timeoutMs); return runAgent(a) } })
+  const id = (await c('post', '/api/compare', { body: { cwd: REPO, prompt: 'anything', models: MODELS } })).body.id
+  await c('post', '/api/compare/:id/vote', { params: { id }, body: { label: 'A' } })
+  await c('post', '/api/compare/:id/synthesize', { params: { id } })
+
+  assert.equal(seen.length, MODELS.length + 1, 'one call per pane plus the synthesis')
+  for (const t of seen) assert.equal(t, RUN_TIMEOUT_MS, 'a call with no timeoutMs inherits the 30-minute default')
+  assert.ok(RUN_TIMEOUT_MS > 0 && RUN_TIMEOUT_MS < 1800_000, 'the whole point is that it is under the default')
 })
 
 test('the past-comparisons list counts the models but never names them', async () => {
@@ -262,7 +314,23 @@ test('delete removes the comparison from the list', async () => {
 test('a corrupt file is skipped instead of taking the list down', async () => {
   reset()
   const id = await start()
-  fs.writeFileSync(path.join(TMP, '.claude', 'dashboard-compare', 'junkfile.json'), '{not json')
+  fs.writeFileSync(path.join(STORE(), 'junkfile.json'), '{not json')
   const list = (await call('get', '/api/compare')).body
   assert.deepEqual(list.map(x => x.id), [id])
+})
+
+// Writes go to a sibling temp file and are renamed over the target, so a crash mid-write leaves the
+// old file rather than a truncated one. Two observable consequences of that: nothing is left over
+// after a successful write, and a leftover temp file from a crash is not itself readable as a
+// comparison — it does not end in `.json`, so the list route never opens it.
+test('a write leaves no temp file behind, and one a crash left is not read as a comparison', async () => {
+  reset()
+  const id = await start()
+  await call('post', '/api/compare/:id/vote', { params: { id }, body: { label: 'A' } })
+  assert.deepEqual(fs.readdirSync(STORE()), [`${id}.json`], 'the rename target is the only survivor')
+  assert.ok(JSON.parse(fs.readFileSync(path.join(STORE(), `${id}.json`), 'utf8')).vote, 'and it is whole')
+
+  fs.writeFileSync(path.join(STORE(), 'abc123.json.999.tmp'), '{"id":"abc123","panes":[')
+  assert.deepEqual((await call('get', '/api/compare')).body.map(x => x.id), [id])
+  assert.equal((await call('get', '/api/compare/:id', { params: { id } })).status, 200, 'the real file is untouched')
 })

@@ -48,6 +48,8 @@ const newId = () => randomBytes(5).toString('hex')   // 10 chars of [0-9a-f]; in
 const MAX_LIVE = 3
 const MAX_QUESTION = 2000
 const REPORT_CAP = 2 * 1024 * 1024
+const KILL_GRACE_MS = 5000   // how long a cancelled child gets to honour SIGTERM before SIGKILL
+const KEEP_FINISHED = 20     // finished runs kept addressable for reconnects; the archive is on disk
 
 const runs = new Map()
 
@@ -96,6 +98,33 @@ function writeMeta(r) {
       error: r.error, reportBytes: r.reportBytes, ms: r.ms, cost: r.cost,
     }, null, 2))
   } catch {}
+}
+
+/**
+ * The report, never reading more than `cap` bytes of it into memory.
+ *
+ * readFileSync-then-slice bounded the RESPONSE but not the read: the whole file landed in memory
+ * first, and the file is written by an agent, so nothing here bounds its size. `truncated` is part
+ * of the contract — a silently clipped report reads as a complete one, the same failure as a
+ * cancelled run reading as done.
+ */
+export function readReportCapped(file, cap = REPORT_CAP) {
+  const empty = { report: '', truncated: false, bytes: 0 }
+  let bytes
+  try { bytes = fs.statSync(file).size } catch { return empty }
+  if (bytes <= cap) {
+    try { return { report: fs.readFileSync(file, 'utf8'), truncated: false, bytes } } catch { return empty }
+  }
+  let fd = null
+  try {
+    fd = fs.openSync(file, 'r')
+    const buf = Buffer.alloc(cap)
+    const got = fs.readSync(fd, buf, 0, cap, 0)
+    // A multi-byte character straddling the cap decodes to U+FFFD; drop that partial tail rather
+    // than end the report on a replacement glyph.
+    return { report: buf.toString('utf8', 0, got).replace(/�+$/, ''), truncated: true, bytes }
+  } catch { return empty }
+  finally { if (fd !== null) { try { fs.closeSync(fd) } catch {} } }
 }
 
 /**
@@ -154,6 +183,21 @@ function readReportBytes(id) {
 }
 
 /**
+ * Ids of finished runs the live map can forget, oldest first.
+ *
+ * A run whose child is STILL ALIVE is never forgotten, whatever its status: this map holds the only
+ * reference to that process handle, so evicting it makes the child unkillable — it would keep
+ * running, keep spending, and could still overwrite report.md with nothing left able to stop it.
+ * That is exactly the state a force-finished cancel is in.
+ */
+export function evictableIds(entries, keep = KEEP_FINISHED) {
+  const finished = entries.filter(x => x.status !== 'running').sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+  return finished.slice(0, Math.max(0, finished.length - keep))
+    .filter(x => !x.listeners?.size && !x.child?.alive)
+    .map(x => x.id)
+}
+
+/**
  * Terminal transition. The report file is the deliverable, so if the agent answered in prose
  * without writing it, the prose is saved rather than discarded — a run that did the work and
  * skipped the last instruction should not lose the work.
@@ -174,9 +218,20 @@ function finish(r, { error }) {
   push(r, 'complete', researchView(r))
   for (const l of r.listeners) { try { l.end() } catch {} }
   r.listeners.clear()
-  // Finished runs stay addressable for reconnects, but not forever — the archive is on disk.
-  const finished = [...runs.values()].filter(x => x.status !== 'running').sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
-  for (const old of finished.slice(0, Math.max(0, finished.length - 20))) if (!old.listeners.size) runs.delete(old.id)
+  for (const id of evictableIds([...runs.values()])) runs.delete(id)
+}
+
+/**
+ * SIGTERM, then SIGKILL if the child is still there. `then` runs after the escalation, so a caller
+ * that force-finishes the run does it once the process is actually gone rather than marking a
+ * still-running child terminal.
+ */
+function killEscalating(r, then) {
+  r.child?.kill('SIGTERM')
+  setTimeout(() => {
+    if (r.child?.alive) r.child.kill('SIGKILL')
+    then?.()
+  }, KILL_GRACE_MS).unref?.()
 }
 
 export default function mount(app) {
@@ -257,9 +312,11 @@ export default function mount(app) {
     const live = runs.get(req.params.id)
     const m = live ? null : readMeta(p.meta)
     if (!live && !m) return res.status(404).json({ error: 'no such research run' })
-    let report = ''
-    try { report = fs.readFileSync(p.report, 'utf8').slice(0, REPORT_CAP) } catch {}
-    res.json({ ...(live ? researchView(live) : fromMeta({ ...m, id: req.params.id })), report })
+    // `reportTruncated` travels with the body: the client cannot tell a clipped report from a whole
+    // one by looking at it, and `reportTotalBytes` is what it should have been.
+    const { report, truncated, bytes } = readReportCapped(p.report)
+    const view = live ? researchView(live) : fromMeta({ ...m, id: req.params.id })
+    res.json({ ...view, report, reportTruncated: truncated, reportTotalBytes: bytes })
   })
 
   // Replay then live, so a browser refresh mid-research resumes instead of restarting.
@@ -284,10 +341,11 @@ export default function mount(app) {
     const r = runs.get(req.params.id)
     if (!r || r.status !== 'running') return res.status(404).json({ error: 'no research run in flight for this id' })
     r.cancelled = true
-    r.child?.kill()
-    // The child's exit drives `finish`, but a child that never exits must not leave the run
-    // reading as running forever.
-    setTimeout(() => finish(r, { error: null }), 5000).unref?.()
+    // The child's exit drives `finish`, but a child that never exits must not leave the run reading
+    // as running forever — and SIGTERM alone cannot promise that, so the grace period ends in
+    // SIGKILL. Force-finishing BEFORE the kill would publish a terminal run whose agent is still
+    // searching, still spending, and still able to write report.md.
+    killEscalating(r, () => finish(r, { error: null }))
     res.json({ ok: true })
   })
 
@@ -302,7 +360,9 @@ export default function mount(app) {
       // rm below is the last word.
       r.cancelled = true
       r.deleted = true
-      r.child?.kill()
+      // Escalated for the same reason as cancel, and more urgently: the run leaves the map below, so
+      // this closure holds the last reference able to kill a child that shrugged off SIGTERM.
+      killEscalating(r)
     }
     runs.delete(req.params.id)
     try { fs.rmSync(p.dir, { recursive: true, force: true }) }
