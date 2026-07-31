@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { ViewerModeToggle, DiffPane } from './ViewerModes.jsx'
+import EditableView from './EditableView.jsx'
+import { modeAvailability, resolveMode } from '../lib/viewerModes.js'
 import Markdown from './Markdown.jsx'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
@@ -105,18 +108,34 @@ ${content.replace(/<\/script>/g, '<\\/script>').replace(/^\s*import\s.*$/gm, '//
   return <iframe className="frame" sandbox="allow-scripts" srcDoc={srcdoc} title="jsx preview" />
 }
 
+// 073 + 076: source / preview / diff as three MODES of the file you are already looking at,
+// rather than three screens. The mode-availability decision is a pure function so it is testable,
+// and an unavailable mode is DISABLED with a reason on hover — not silently swapped for source,
+// which makes the toggle look broken.
+//
+// The diff baseline is the last content this viewer loaded. That is an honest baseline for
+// "what changed while I was looking", and it is NOT a git diff — DiffPane says so when there is
+// nothing to compare against, rather than rendering every line as added.
+// Text formats we are willing to write back. Deliberately a small allowlist: an editor offered on
+// a format we cannot round-trip losslessly is a data-loss button.
+const editableExts = new Set(['md', 'txt', 'json', 'jsonl', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'css', 'html', 'htm', 'yml', 'yaml', 'sh', 'py', 'toml', 'ini', 'csv'])
+
 export function Viewer({ item, raw }) {
   const [content, setContent] = useState(null)
   const [err, setErr] = useState(null)
+  const [mode, setMode] = useState('preview')
+  // The baseline is captured on the FIRST load of a path and not refreshed on re-render, so the
+  // diff answers "what changed since I opened this", which is a question with a real answer.
+  const [baseline, setBaseline] = useState(null)
   const ext = item.ext
   const isImg = IMG_EXT.has(ext)
   const url = '/api/artifacts/raw?path=' + encodeURIComponent(item.path)
 
   useEffect(() => {
-    setContent(null); setErr(null)
+    setContent(null); setErr(null); setBaseline(null)
     if (isImg || ext === 'pdf') return
     api.get('/api/artifacts/content?path=' + encodeURIComponent(item.path))
-      .then(d => setContent(d.content)).catch(e => setErr(e.message))
+      .then(d => { setContent(d.content); setBaseline(b => (b === null ? d.content : b)) }).catch(e => setErr(e.message))
   }, [item.path])
 
   if (isImg) return <div className="img-wrap"><img src={url} alt={item.name} /></div>
@@ -124,6 +143,32 @@ export function Viewer({ item, raw }) {
   if (err) return <p className="muted center">{err}</p>
   if (content === null) return <p className="muted center">loading…</p>
   if (raw) return <CodeView content={content} ext={ext === 'svg' || ext === 'html' ? 'html' : ext} />
+
+  const avail = modeAvailability({ ext, isBinary: isImg || ext === 'pdf' })
+  const active = resolveMode(mode, avail)
+  const body = () => {
+    // Source mode is EDITABLE for text files, driven by the EditorHost contract (076): content
+    // lives in the DOM, saves carry an expectedMtime so a concurrent change is refused rather
+    // than clobbered, and every degraded capability is stated on screen.
+    if (active === 'source') return editableExts.has(ext)
+      ? <EditableView path={item.path} initialContent={content} />
+      : <CodeView content={content} ext={ext} />
+    if (active === 'diff') return <DiffPane before={baseline} after={content} />
+    return null
+  }
+  const chrome = inner => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <ViewerModeToggle file={item.name} mode={active} onMode={setMode} availability={avail} />
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>{inner}</div>
+    </div>
+  )
+  if (active !== 'preview') return chrome(body())
+  return chrome(previewFor(item, content, ext, url))
+}
+
+// The preview renderers, unchanged — split out so the mode chrome above wraps every file type
+// rather than only the ones that happened to be handled inline.
+function previewFor(item, content, ext, url) {
 
   if (ext === 'md') return <Markdown source={content} className="md pad" />
   if (ext === 'html' || ext === 'htm') return <iframe className="frame" sandbox="allow-scripts" src={url} title={item.name} />

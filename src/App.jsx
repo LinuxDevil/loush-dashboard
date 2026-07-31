@@ -5,6 +5,8 @@ import McpSection from './sections/McpSection.jsx';
 import HooksSection from './sections/HooksSection.jsx';
 import ArtifactsSection from './sections/ArtifactsSection.jsx';
 import Overview from './sections/Overview.jsx';
+import HealthSection from './sections/HealthSection.jsx';
+import UsageDetail from './sections/UsageDetail.jsx';
 import LiveSection from './sections/LiveSection.jsx';
 import TeamsSection from './sections/TeamsSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
@@ -171,6 +173,8 @@ const BASE_SECTIONS = [
           { label: 'Context Explorer', el: <ContextExplorerSection /> },
           { label: 'Forensics', el: <ForensicsSection /> },
           { label: 'Usage', el: <UsagePanel /> },
+          { label: 'Usage detail', el: <UsageDetail /> },
+          { label: 'Health', el: <HealthSection /> },
           { label: 'Config', el: <HarnessSection /> },
           { label: 'Team baseline', el: <TeamBaseline /> },
         ]}

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import SessionCards from '../ui/SessionCards.jsx'
 import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
@@ -147,6 +148,7 @@ export default function SessionsSection() {
   const [usage, setUsage] = useState(null)
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'last', dir: -1 })
+  const [view, setView] = useState('table')
   const [cur, setCur] = useState(0)
   const [events, setEvents] = useState(null)
   const filterRef = useRef(null)
@@ -231,7 +233,20 @@ export default function SessionsSection() {
           <div className="kpi-sub">context overflow events · see Forensics</div></div>
       </div>
 
-      <div className="panel" style={{ marginBottom: 0 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        {['table', 'cards'].map(v => (
+          <button key={v} className="mini" style={{ marginTop: 0, color: view === v ? 'var(--accent)' : undefined }} onClick={() => setView(v)}>{v}</button>
+        ))}
+        {/* 092: the same sessions as kanban cards, with the files each one touched. A session
+            whose file activity was never recorded shows as unknown rather than "0 files" — the
+            board must not report an absence of data as an absence of work. */}
+      </div>
+      {view === 'cards' && (
+        <div className="panel" style={{ marginBottom: 12 }}>
+          <SessionCards sessions={d?.sessions || []} />
+        </div>
+      )}
+      {view === 'table' && <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
           <h3>Session ledger <span className="muted">
             {}
@@ -316,7 +331,7 @@ export default function SessionsSection() {
           <code style={{ color: GREEN }}>cd &lt;cwd&gt; && claude --resume &lt;id&gt;</code> — the dashboard does not
           re-host your terminal.
         </p>
-      </div>
+      </div>}
     </div>
   )
 }

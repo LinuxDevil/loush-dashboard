@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import Markdown from '../ui/Markdown.jsx'
+import SelectionChips, { useSelectionChips } from '../ui/SelectionChips.jsx'
 import { extractTokenBudget, renderToolCall } from '../../lib/chat-render.mjs'
 import { marked } from 'marked'
 import { api, fmtDate } from '../lib/api.js'
@@ -221,13 +222,18 @@ function InputBar({ cwd, ended, onSend, initial }) {
       }
     }
   }
+  const chips = useSelectionChips()
   const send = async () => {
     const images = []
     for (const a of atts.filter(x => x.kind === 'image')) images.push({ media_type: a.media_type, data: a.data || await a._p })
     const refs = atts.filter(x => x.kind === 'file' || x.kind === 'ref').map(x => `@${x.path || x.name}`).join('\n')
-    const text = [input.trim(), refs].filter(Boolean).join('\n')
+    // 077: editor selections ride along as chips. `chipsToPrompt` reports its own truncation
+    // inside the text it returns, so a clipped payload cannot look complete to the model.
+    const chipText = chips.toPrompt ? chips.toPrompt() : ''
+    const text = [input.trim(), refs, chipText].filter(Boolean).join('\n')
     if (!text && !images.length) return
     setInput(''); setAtts([]); setSug(null)
+    chips.clear?.()
     onSend(text || 'see attached', images)
   }
   const key = e => {
@@ -241,6 +247,8 @@ function InputBar({ cwd, ended, onSend, initial }) {
   }
   return (
     <div className="chat-inputwrap">
+      <SelectionChips packed={chips.packed} onRemove={chips.remove} onClear={chips.clear}
+        onToggleData={chips.toggleData} tabNotice={chips.tabNotice} onDismissNotice={chips.dismissNotice} />
       {sug && (
         <div className="chat-sug">
           {sug.items.map((it, i) => (

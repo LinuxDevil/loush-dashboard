@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import FlowDiagram from '../ui/FlowDiagram.jsx'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
@@ -17,6 +18,18 @@ const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0))
 const ago = t => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
 
 const COL_CAP = 14
+
+// 070: a real sankey of observed tool-to-tool flow, alongside the existing view. Node and link
+// counts are capped for legibility and the cap is printed on the diagram — a truncated graph that
+// looks complete is a lie about the data.
+function ObservedSankey({ data }) {
+  const seq = data?.sequences || data?.toolSequences || null
+  const links = data?.links || null
+  if (!seq && !links) {
+    return <p className="small muted">No tool-sequence data in this scan, so there is no flow to draw — this is missing input, not an empty graph.</p>
+  }
+  return <FlowDiagram title="Observed tool flow" sequences={seq} links={links} />
+}
 
 export default function FlowSection() {
   const [data, setData] = useState(null)
@@ -115,6 +128,12 @@ export default function FlowSection() {
           {nodes.length} nodes · {invocations} observed invocations{view.hidden > 0 ? ` · showing top ${COL_CAP}/type (${view.hidden} hidden — filter to find them)` : ''}
         </span>
       </div>
+
+      {mode === 'Observed flow' && (
+        <div style={{ ...PANEL, padding: 12 }}>
+          <ObservedSankey data={data} />
+        </div>
+      )}
 
       <div style={{ position: 'relative', ...PANEL, animation: 'fadeUp .5s ease both' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>

@@ -448,6 +448,34 @@ app.get('/api/artifacts/content', (req, res) => {
   res.json({ content: fs.readFileSync(p, 'utf8') })
 })
 
+// The write half of the viewer contract (076). `safe()` is the same containment every other
+// artifact route uses, so this adds no reachable path it does not already allow — but it is a
+// WRITE, so two things are returned that a read does not need:
+//
+//   · the post-write stat, which is what lets the editor host recognise a watcher event as its
+//     OWN save rather than a third party's edit. Comparing content instead fails the moment a
+//     format-on-save rewrites the bytes.
+//   · an expectedMtime precondition. Without it, saving a file that changed on disk since it was
+//     loaded silently discards the other change — the same lost-update the tracker guards against.
+app.put('/api/artifacts/content', (req, res) => {
+  const p = safe(req.query.path ?? req.body?.path)
+  const content = req.body?.content
+  if (typeof content !== 'string') return res.status(400).json({ error: 'content must be a string' })
+  let before = null
+  try { before = fs.statSync(p) } catch {}
+  const expected = req.body?.expectedMtimeMs
+  if (expected != null && before && Math.abs(before.mtimeMs - Number(expected)) > 1) {
+    return res.status(409).json({
+      error: 'the file changed on disk since it was loaded', expectedMtimeMs: Number(expected), actualMtimeMs: before.mtimeMs,
+      detail: 'reload and reapply your edit — writing now would discard the other change',
+    })
+  }
+  const bak = before ? backup(p) : null
+  fs.writeFileSync(p, content)
+  const st = fs.statSync(p)
+  res.json({ ok: true, bytes: Buffer.byteLength(content), mtimeMs: st.mtimeMs, size: st.size, backup: bak })
+})
+
 app.get('/api/artifacts/download', (req, res) => res.download(safe(req.query.path)))
 
 app.post('/api/artifacts/reveal', (req, res) => {
