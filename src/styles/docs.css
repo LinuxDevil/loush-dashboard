@@ -1,3 +1,43 @@
 /* docs feature styles — owned by the docs agent.
    Separate file so four agents can add CSS in parallel without touching styles.css.
-   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono. */
+   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono.
+
+   Layout only. Panes, rows, badges and buttons come from styles.css (.section, .list-pane,
+   .detail-pane, .detail-head, .row, .badge, .mini, .status) — this file adds the pieces that screen
+   does not already have: a scrolling file list, a full-height editor, and the proposal strip. */
+
+/* --- file list ------------------------------------------------------------------------------- */
+.docs-root { font: 400 10px var(--mono); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-rows { overflow-y: auto; min-height: 0; flex: 1; margin: 0 -14px -14px; padding: 0 14px; }
+.docs-row-name { display: flex; align-items: center; gap: 7px; font: 400 12px var(--mono); color: var(--text-primary); }
+.docs-row-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-row-meta { font: 400 10px var(--mono); color: var(--text-tertiary); margin-top: 3px; }
+/* The unsaved marker is amber, the app's "your attention is needed" colour, and never red: unsaved
+   work is not an error. */
+.docs-dirty { color: var(--amber); font-size: 9px; margin-left: auto; padding-left: 6px; }
+
+/* --- editor pane ----------------------------------------------------------------------------- */
+.docs-pane { display: flex; flex-direction: column; min-height: 0; }
+.docs-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.docs-state { font: 400 11px var(--mono); color: var(--text-tertiary); }
+.docs-state.dirty { color: var(--amber); }
+.docs-body { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--border-subtle); }
+/* CodeMirror brings its own scroller; it needs a bounded parent or it collapses to zero height. */
+.docs-editor { height: 100%; font-size: 12px; }
+.docs-editor .cm-editor { height: 100%; background: var(--bg-inset); }
+.docs-editor .cm-editor.cm-focused { outline: none; }
+.docs-editor .cm-gutters { background: var(--bg-inset); border-right: 1px solid var(--border-subtle); }
+
+/* --- AI edit bar ----------------------------------------------------------------------------- */
+.docs-ai-bar { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+.docs-ai-bar input { flex: 1; min-width: 160px; }
+.docs-ai-scope { font: 400 10px var(--mono); color: var(--text-tertiary); white-space: nowrap; }
+
+/* --- proposal review ------------------------------------------------------------------------- */
+/* Bounded height on purpose: the proposal is a decision to make, not the screen. The editor stays
+   visible underneath it so accepting is a comparison rather than a leap. */
+.docs-proposal { border: 1px solid var(--accent); border-radius: var(--r-card); background: var(--bg-surface); margin-bottom: 10px; overflow: hidden; }
+.docs-proposal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); }
+.docs-proposal-instruction { font: 500 12px var(--body); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 340px; }
+.docs-proposal-note { font: 400 10px var(--mono); margin-left: auto; }
+.docs-proposal-diff { max-height: 40vh; overflow: auto; }
