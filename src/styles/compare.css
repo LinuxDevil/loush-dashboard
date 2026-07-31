@@ -1,11 +1,13 @@
 /* compare feature styles — owned by the compare agent.
    Separate file so four agents can add CSS in parallel without touching styles.css.
-   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono.
+   Tokens only, none invented here: --bg-*, --text-*, --border-*, --accent, --red, --red-bg,
+   --r-card, --r-ctl, --mono.
 
    Written from the capability description and docs/compare.webm; no Odysseus source was read for
-   this file, so NOTICE clause 1 does not apply to it. Only tokens from the allowed list appear
-   below — including for the error block, which is why a failure is marked by an --accent rule and
-   monospace rather than by --red. */
+   this file, so NOTICE clause 1 does not apply to it.
+
+   A failure is --red, not --accent: --accent is the one brand/interactive colour and means "link,
+   focus, primary action". An error drawn in it says the opposite of what happened. */
 
 .cmp textarea { width: 100%; resize: vertical; }
 .cmp-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
@@ -14,10 +16,10 @@
 
 .cmp-err {
   font: 400 11.5px/1.55 var(--mono);
-  color: var(--text-primary);
-  background: var(--bg-inset);
-  border: 1px solid var(--border-default);
-  border-left: 2px solid var(--accent);
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid var(--red-bg);
+  border-left: 2px solid var(--red);
   border-radius: var(--r-ctl);
   padding: 8px 10px;
   margin-top: 10px;
@@ -69,7 +71,10 @@
   color: var(--text-tertiary);
 }
 
+/* A pane's error is already inside a bordered card and is the pane's whole content, so it does not
+   want the top margin the form-level one needs. */
 .cmp-body { padding: 12px 14px; min-height: 120px; max-height: 460px; overflow-y: auto; }
+.cmp-body .cmp-err { margin-top: 0; }
 .cmp-synth { border-color: var(--accent); }
 
 .cmp-row { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px solid var(--border-subtle); }
