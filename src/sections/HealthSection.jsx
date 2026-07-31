@@ -127,16 +127,17 @@ function Complexity() {
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
         <h3 style={{ margin: 0 }}>Repo complexity</h3>
-        <span style={{ font: `600 13px ${MONO}` }}>{d.score}/{d.maxScore ?? 6}</span>
-        <span className="small muted">{d.band || d.label || ''}</span>
+        <span style={{ font: `600 13px ${MONO}` }}>{d.score}/{d.scoreOutOf ?? d.maxScore ?? 6}</span>
+        <span className="small muted">{d.dimensionsMeasured != null ? `${d.dimensionsMeasured} of ${d.maxScore} dimensions measurable` : ''}</span>
+        {d.incompleteNote && <span className="small" style={{ color: SEV.warn }}>{d.incompleteNote}</span>}
         <button className="mini" style={{ marginLeft: 'auto' }} onClick={reload}>recompute</button>
       </div>
 
       <table style={{ width: '100%', font: `400 11px ${MONO}`, marginTop: 8 }}>
         <tbody>
           {dims.map(x => (
-            <tr key={x.id || x.name}>
-              <td style={{ color: 'var(--text-secondary)' }}>{x.id || x.name}</td>
+            <tr key={x.key || x.label}>
+              <td style={{ color: 'var(--text-secondary)' }} title={x.measuredFrom || x.rationale || undefined}>{x.label || x.key}</td>
               <td className="num" style={{ color: 'var(--text-primary)' }}>{String(x.measured)}</td>
               <td className="num muted">≥ {String(x.threshold)}</td>
               <td className="num" style={{ color: x.met ? 'var(--green)' : 'var(--text-tertiary)' }}>{x.met ? 'met' : '—'}</td>
@@ -159,11 +160,14 @@ function Complexity() {
               unused. The audit computes provenUnusedCount separately and it is deliberately 0
               unless the observation window can support the claim. */}
           <Bar tone={audit.observationWindow?.tooShortForHabitClaims ? SEV.warn : 'var(--text-tertiary)'}>
-            {audit.headline || `${audit.installedCount ?? '?'} installed, ${audit.noInvocationCount ?? '?'} with no recorded invocation`}
+            {audit.headline || `${audit.installedCount ?? '?'} installed, ${audit.noRecordedInvocationCount ?? '?'} with no recorded invocation`}
             <div className="small" style={{ marginTop: 4 }}>
               Observation window {audit.observationWindow?.days != null ? `${audit.observationWindow.days.toFixed(2)} days` : 'unknown'}
               {audit.observationWindow?.tooShortForHabitClaims && ' — too short to tell "not needed" from "not needed this week"; treat every zero as "no data yet".'}
             </div>
+            {(audit.caveats || []).map((c, i) => (
+              <div key={i} className="small" style={{ marginTop: 3, color: SEV.warn }}>{typeof c === 'string' ? c : c.text || c.reason}</div>
+            ))}
             {audit.inventoryCompleteness && audit.inventoryCompleteness !== 'complete' && (
               <div className="small" style={{ marginTop: 4, color: SEV.warn }}>
                 Inventory is {audit.inventoryCompleteness}: managed/plugin capabilities are not on local disk, so the installed count is a floor, not a total.

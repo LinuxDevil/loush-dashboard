@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { PROJECT, CLAUDE } from './dashboard-core.mjs'
 import { checkAll, formatReport } from '../lib/contracts.mjs'
-import { complexityOf, auditOverEngineering } from '../lib/repo-complexity.mjs'
+import { complexityOf, auditOverEngineering, gatherRepoEvidence, scoreComplexity } from '../lib/repo-complexity.mjs'
 import { toolEfficiency } from '../lib/tool-efficiency.mjs'
 import { bucketUsage } from '../lib/usage-buckets.mjs'
 import { ingestExecutionFile, summarizeRuns } from '../lib/ci-cost.mjs'
@@ -96,6 +96,42 @@ export default function mountWave3(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Build the audit's inputs from the real capability ledger. `firesAll`/`last` are what the
+  // ledger already derives from transcripts; the window is the span those transcripts actually
+  // cover, because a "never fired" claim is meaningless without saying over what period.
+  const auditFromLedger = () => {
+    if (!deps.capabilityLedger) return { ok: false, reason: 'capability ledger is not wired into this server' }
+    let led
+    try { led = deps.capabilityLedger() } catch (e) { return { ok: false, reason: `capability ledger failed: ${e.message}` } }
+    // The ledger returns its rows under `items`, not `rows` — checked against the real payload
+    // rather than guessed, since a wrong key here yields "nothing to audit" that looks like a
+    // legitimately empty install.
+    const rows = Array.isArray(led?.items) ? led.items : Array.isArray(led?.rows) ? led.rows : Array.isArray(led) ? led : []
+    if (!rows.length) return { ok: false, reason: 'the capability ledger returned no rows, so there is nothing to audit' }
+    const installed = rows.map(r => ({ kind: r.kind, name: r.name, installedAt: r.installedAt ?? null, alwaysOnTokens: r.alwaysOnTokens ?? null }))
+    // One synthetic invocation per recorded fire, timestamped at the last-seen time. The ledger
+    // keeps counts rather than individual events, so this is the finest granularity available —
+    // and recordCompleteness stays 'partial' to say the record is not event-level.
+    const invocations = []
+    for (const r of rows) if (r.firesAll > 0 && Number.isFinite(r.last)) invocations.push({ kind: r.kind, name: r.name, t: r.last })
+    // The window is the span the TRANSCRIPT RECORD covers, not the span between recorded fires.
+    // Using fire times would make the window shrink as fewer things fire — so a capability set
+    // that fires rarely would look observed over a shorter period precisely when the "never
+    // fired" claim needs the longest one. The record's own extent is the honest denominator.
+    let window = null
+    if (collectUsage) {
+      try {
+        const { files } = collectUsage()
+        const firsts = files.map(f => f.first).filter(Number.isFinite)
+        const lasts = files.map(f => f.last).filter(Number.isFinite)
+        if (firsts.length && lasts.length) {
+          window = { start: Math.min(...firsts), end: Math.max(...lasts), source: 'first to last activity across the scanned transcripts' }
+        }
+      } catch { window = null }
+    }
+    return auditOverEngineering({ installed, invocations, window, recordCompleteness: 'partial' })
+  }
+
   // ---- 110: repo complexity + over-engineering audit ----
   app.get('/api/repo/complexity', (req, res) => {
     const dir = req.query.dir ? String(req.query.dir) : defaultDir()
@@ -107,8 +143,25 @@ export default function mountWave3(app, deps = {}) {
       return res.status(403).json({ error: 'not a configured project directory', dir: resolved, roots })
     }
     try {
-      const score = complexityOf(resolved)
-      res.json({ ...score, audit: auditOverEngineering ? auditOverEngineering(resolved) : null })
+      // gatherRepoEvidence is called explicitly rather than via complexityOf() so the walk's own
+      // exclusions can be returned. The walk skips nested git checkouts — on this machine that
+      // was eight agent worktrees holding copies of the same files — and a count that silently
+      // drops them is exactly the kind of unreported bound this codebase refuses elsewhere.
+      const evidence = gatherRepoEvidence(resolved)
+      const score = scoreComplexity(evidence)
+      res.json({
+        ...score,
+        // auditOverEngineering takes {installed, invocations, window}, NOT a path — it was being
+        // handed the directory string, so it saw no capabilities, no window, and correctly
+        // refused to produce a headline. The refusal was right; the input was wrong.
+        audit: auditFromLedger(),
+        evidence: {
+          sourceFiles: evidence.sourceFiles,
+          nestedCheckoutsSkipped: evidence.nestedCheckoutsSkipped,
+          totalFilesSeen: evidence.totalFilesSeen,
+          deniedDirs: evidence.deniedDirs,
+        },
+      })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

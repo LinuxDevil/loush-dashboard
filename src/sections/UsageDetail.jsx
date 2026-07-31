@@ -39,7 +39,7 @@ function ToolEfficiency() {
       </p>
       <table style={{ width: '100%', font: `400 11px ${MONO}` }}>
         <thead><tr style={{ color: DIM, textAlign: 'right' }}>
-          <th style={{ textAlign: 'left' }}>tool</th><th>calls</th><th>ok</th><th>fail</th><th>unresolved</th><th>success</th><th>out bytes</th>
+          <th style={{ textAlign: 'left' }}>tool</th><th>calls</th><th>ok</th><th>fail</th><th>unresolved</th><th>success</th><th>tok / useful call</th><th>out bytes</th>
         </tr></thead>
         <tbody>
           {tools.map(t => (
@@ -53,7 +53,19 @@ function ToolEfficiency() {
                   failure moves the rate in a direction nobody measured. */}
               <td style={{ color: t.unresolved ? AMBER : DIM }}>{t.unresolved}</td>
               <td>{pct(t.successRate)}</td>
-              <td>{t.meanOutputBytes == null ? '—' : tok(Math.round(t.meanOutputBytes))}</td>
+              {/* The headline of 111: tokens burned per call that actually produced a result.
+                  It carries its own basis and denominator because the attribution is a choice,
+                  and a ratio whose denominator is invisible cannot be checked. */}
+              <td style={{ color: t.tokensPerSuccessfulCall == null ? DIM : t.tokensEstimated ? AMBER : 'var(--text-primary)' }}
+                title={t.tokensPerSuccessfulCall == null
+                  ? 'no token attribution for this tool — not zero, unmeasured'
+                  : `${t.tokensBasis || 'basis unstated'} over ${t.tokensDenominator} call(s)${t.tokensUnattributed ? `; ${t.tokensUnattributed} call(s) unattributed` : ''}${t.tokensEstimated ? ' — estimated' : ''}`}>
+                {t.tokensPerSuccessfulCall == null ? '—' : tok(Math.round(t.tokensPerSuccessfulCall))}{t.tokensEstimated ? ' ~' : ''}
+              </td>
+              <td title={t.outputSizeComplete === false ? `${t.outputSizeUnmeasured} call(s) had no measurable output — this mean covers ${t.outputDenominator}` : undefined}
+                style={{ color: t.outputSizeComplete === false ? AMBER : undefined }}>
+                {t.meanOutputBytes == null ? '—' : tok(Math.round(t.meanOutputBytes))}
+              </td>
             </tr>
           ))}
         </tbody>
