@@ -61,6 +61,7 @@ import mountAgentTeams from './agent-teams.mjs'
 import mountInventory, { KINDS, OFF, SETTINGS_FILES, itemFile, itemRoot, listItemNames, scopeDir } from './inventory.mjs'
 import { git as gitSafe } from '../lib/git-safe.mjs'
 import mountWave3 from './wave3.mjs'
+import mountWave4 from './wave4.mjs'
 import {
   HOME, CLAUDE, CLAUDE_JSON, PROJECT, WIN, BACKUPS, PORT,
   safe, backup, parseFM, readClaudeJson,
@@ -1968,6 +1969,33 @@ app.post('/api/ci/rerun', (req, res) => {
 
 mountDrift(app, { projectDirs: (...a) => projectDirs(...a), scanTranscripts: (...a) => scanTranscripts(...a) })
 mountWave3(app, { collectUsage: (...a) => collectUsage(...a), projectDirs: (...a) => projectDirs(...a), capabilityLedger: (...a) => capabilityLedger(...a) })
+
+// Session rows for the insight engine. Assembled here rather than reused from /api/sessions
+// because the rules need per-tool breakdowns (`errorsByTool`, `toolUsesByTool`) that failStats
+// already computes and that endpoint drops at the row boundary — without them two of the four
+// rules can never fire, and a rule that is silently starved of input looks exactly like a rule
+// with nothing to report.
+function insightSessionRows() {
+  const { files } = collectUsage()
+  const fail = {}
+  for (const r of failStats()) fail[r.file] = r
+  return files.filter(f => !f.isAgent && f.msgs > 0).map(f => {
+    const fr = fail[f.path]
+    return {
+      sessionId: path.basename(f.path, '.jsonl'),
+      proj: f.proj, cwd: f.cwd || '',
+      in: f.in, cacheRead: f.cr, out: f.out, cost: f.cost,
+      toolCalls: f.toolCalls, msgs: f.msgs,
+      first: f.first, last: f.last,
+      // null, not 0, when no forensics record exists — "not measured" is not "no errors".
+      errors: fr ? Object.values(fr.toolErrs).reduce((a, b) => a + b, 0) : null,
+      errorsByTool: fr ? fr.toolErrs : null,
+      toolUsesByTool: fr ? fr.toolUses : null,
+      forensicsAvailable: !!fr,
+    }
+  })
+}
+mountWave4(app, { projectDirs: (...a) => projectDirs(...a), sessionRows: insightSessionRows })
 
 // ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
 mountBoard(app)
