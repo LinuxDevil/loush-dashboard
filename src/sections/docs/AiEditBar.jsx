@@ -1,8 +1,13 @@
 import React from 'react'
 
-// The AI edit control. Consulted Odysseus `static/js/document.js` for the shape of this interaction
-// (an instruction typed against the current selection, the model's answer returned for review) —
-// see the header of src/sections/DocsSection.jsx for the attribution this file is covered by.
+// The AI edit control. This file is AGPL-3.0-only and is derived in part from Odysseus
+// (https://github.com/odysseus-dev/odysseus), Copyright (c) the Odysseus contributors, AGPL-3.0 —
+// see NOTICE, clause 1. Consulted `static/js/document.js` for the shape of this interaction: an
+// instruction typed against the current selection, the model's answer returned for review.
+// Modified 2026-07-31 (AGPL §5(a)): upstream collects the instruction with `window.prompt` and
+// applies the answer straight to the buffer; here the scope is shown before the run and the answer
+// goes through an accept/reject diff. Stated in full rather than deferring to DocsSection.jsx's
+// header, because a notice that only exists in another file travels badly when this one is copied.
 //
 // The scope is stated on the button, never inferred silently: with a selection it says how much text
 // it will send, and with none it says the whole document. "AI edit" on its own would leave the user

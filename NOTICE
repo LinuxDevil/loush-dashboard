@@ -18,9 +18,24 @@ Mohammad, so no third-party consent was required.
 ### Odysseus — https://github.com/odysseus-dev/odysseus
 Copyright (c) the Odysseus contributors. Licensed under AGPL-3.0.
 
-Portions of the chat message rendering, Compare, Deep Research, and Documents
-features are derived from Odysseus. This project is AGPL-3.0 specifically so that
-such reuse is permitted.
+Portions of the Compare, Deep Research, and Documents features are derived from
+Odysseus. This project is AGPL-3.0 specifically so that such reuse is permitted.
+
+Audited 2026-07-31. Files where Odysseus source WAS read, each carrying its own
+clause 1 header and §5(a) modification notice:
+
+  server/compare.mjs               ← routes/compare/compare_routes.py
+  server/research.mjs              ← src/deep_research.py, routes/research/research_routes.py
+  server/docs.mjs                  ← routes/document_routes.py
+  src/sections/DocsSection.jsx     ← static/js/document.js
+  src/sections/docs/AiEditBar.jsx  ← static/js/document.js
+
+The chat message rendering (`src/ui/chatBlocks.jsx`) and the Compare UI
+(`src/sections/CompareSection.jsx`, `src/styles/compare.css`) are NOT in that
+list. They were written from Odysseus's bundled demo recordings and capability
+descriptions without reading its source, so clause 1 does not attach to them —
+they follow the `lib/chat-protocol.mjs` wording instead. They are still AGPL-3.0,
+because the whole program is.
 
 **Obligations that come with that — these are not optional:**
 
