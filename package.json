@@ -6,7 +6,7 @@
     "type": "git",
     "url": "git+https://github.com/LinuxDevil/AI-Dashboard.git"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"node --watch server/index.mjs\" \"vite --open\"",

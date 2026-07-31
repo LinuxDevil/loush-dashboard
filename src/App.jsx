@@ -11,6 +11,9 @@ import LiveSection from './sections/LiveSection.jsx';
 import TeamsSection from './sections/TeamsSection.jsx';
 import ProjectsSection from './sections/ProjectsSection.jsx';
 import ChatSection from './sections/ChatSection.jsx';
+import CompareSection from './sections/CompareSection.jsx';
+import ResearchSection from './sections/ResearchSection.jsx';
+import DocsSection from './sections/DocsSection.jsx';
 import HarnessSection from './sections/HarnessSection.jsx';
 import ContextExplorerSection from './sections/ContextExplorerSection.jsx';
 import GovernanceSection from './sections/GovernanceSection.jsx';
@@ -113,6 +116,9 @@ const BASE_SECTIONS = [
       <Hub
         items={[
           { label: 'Chat', el: <ChatSection /> },
+          { label: 'Compare', el: <CompareSection /> },
+          { label: 'Deep Research', el: <ResearchSection /> },
+          { label: 'Documents', el: <DocsSection /> },
           { label: 'Insights', el: <InsightsSection /> },
         ]}
       />

@@ -1,0 +1,3 @@
+/* research feature styles — owned by the research agent.
+   Separate file so four agents can add CSS in parallel without touching styles.css.
+   Use existing tokens only: --bg-*, --text-*, --border-*, --accent, --r-card, --r-ctl, --mono. */

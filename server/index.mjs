@@ -62,6 +62,9 @@ import mountInventory, { KINDS, OFF, SETTINGS_FILES, itemFile, itemRoot, listIte
 import { git as gitSafe } from '../lib/git-safe.mjs'
 import mountWave3 from './wave3.mjs'
 import mountWave4 from './wave4.mjs'
+import mountCompare from './compare.mjs'
+import mountResearch from './research.mjs'
+import mountDocs from './docs.mjs'
 import {
   HOME, CLAUDE, CLAUDE_JSON, PROJECT, WIN, BACKUPS, PORT,
   safe, backup, parseFM, readClaudeJson,
@@ -674,19 +677,44 @@ function historyEvents(cwd, sessionId) {
   } catch {}
   return main
 }
+// Permission modes we will pass through, and the one we default to.
+//
+// The default stays `skip` because that is what every chat in this app has always run as, and
+// silently tightening it would break resumed sessions that expect tools to just work. But it is
+// now a CHOICE the caller states, not a hardcoded constant — and an unrecognised value is
+// rejected rather than forwarded, because these strings become argv for a child process.
+const PERMISSION_MODES = new Set(['skip', 'default', 'acceptEdits', 'plan', 'bypassPermissions'])
+// Tool names are `Read`, `Bash`, `mcp__server__tool`, and CLI patterns like `Bash(git log:*)`.
+// Anything outside this shape is refused: an unvalidated string here is argv injection.
+const TOOL_PATTERN = /^[A-Za-z0-9_*:().,\-\/\s]+$/
+
 app.post('/api/chat', (req, res) => {
-  const { cwd, resume, model } = req.body
+  const { cwd, resume, model, permissionMode, allowedTools, mcpConfig } = req.body
   if (!cwd || !fs.existsSync(cwd)) return res.status(400).json({ error: 'cwd does not exist' })
+  const mode = permissionMode || 'skip'
+  if (!PERMISSION_MODES.has(mode))
+    return res.status(400).json({ error: `unknown permissionMode "${mode}"`, allowed: [...PERMISSION_MODES] })
+  if (allowedTools != null && (!Array.isArray(allowedTools) || !allowedTools.every(t => typeof t === 'string' && TOOL_PATTERN.test(t))))
+    return res.status(400).json({ error: 'allowedTools must be an array of tool-name patterns' })
+  if (mcpConfig != null && !fs.existsSync(mcpConfig))
+    return res.status(400).json({ error: 'mcpConfig file does not exist', path: mcpConfig })
   if (resume) {
     const existing = [...chats.entries()].find(([, c]) => c.alive && c.cwd === cwd && c.resume === resume)
     if (existing) return res.json({ id: existing[0] })
   }
-  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions', '--append-system-prompt', PLAN_SCHEMA_RULE]
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--append-system-prompt', PLAN_SCHEMA_RULE]
+  if (mode === 'skip') args.push('--dangerously-skip-permissions')
+  else args.push('--permission-mode', mode)
+  if (allowedTools?.length) args.push('--allowedTools', allowedTools.join(','))
+  // --strict-mcp-config is the half that matters: without it the CLI MERGES the given file with
+  // the user's global servers, so "run this chat with only these two servers" would silently
+  // still have all of them.
+  if (mcpConfig) args.push('--mcp-config', mcpConfig, '--strict-mcp-config')
   if (resume) args.push('--resume', resume)
   if (model) args.push('--model', model)
   const child = spawn('claude', args, { cwd, env: process.env, shell: WIN })
   const id = Math.random().toString(36).slice(2, 10)
-  const chat = { child, cwd, resume: resume || null, model: model || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
+  const chat = { child, cwd, resume: resume || null, model: model || null, permissionMode: mode, allowedTools: allowedTools || null, mcpConfig: mcpConfig || null, sessionId: resume || null, alive: true, events: resume ? historyEvents(cwd, resume) : [], listeners: new Set() }
   chats.set(id, chat)
   let buf = ''
   child.stdout.on('data', d => {
@@ -707,8 +735,10 @@ app.post('/api/chat', (req, res) => {
   child.on('exit', code => { chat.alive = false; chatBroadcast(chat, { type: 'closed', code }) })
   res.json({ id })
 })
+// permissionMode ships in the listing on purpose: a chat running with tools restricted must not
+// look identical to one running with permissions skipped.
 app.get('/api/chat', (req, res) =>
-  res.json([...chats.entries()].map(([id, c]) => ({ id, cwd: c.cwd, sessionId: c.sessionId, model: c.model, alive: c.alive, events: c.events.length }))))
+  res.json([...chats.entries()].map(([id, c]) => ({ id, cwd: c.cwd, sessionId: c.sessionId, model: c.model, permissionMode: c.permissionMode || 'skip', allowedTools: c.allowedTools, mcpConfig: c.mcpConfig, alive: c.alive, events: c.events.length }))))
 app.get('/api/chat/:id/events', (req, res) => {
   const chat = chats.get(req.params.id)
   if (!chat) return res.status(404).json({ error: 'no such chat' })
@@ -2002,6 +2032,12 @@ mountBoard(app)
 
 // ---------- loush runs: .loush/<ticket>/ across known repos (contract §12–16) ----------
 mountLoushRuns(app, { collectUsage: (...a) => collectUsage(...a) })
+
+// ---------- odysseus-derived features. Mounted against stubs up front so the four parallel
+// agents each own one module and never edit this file. See docs/plan-odysseus-features.md ----------
+mountCompare(app)
+mountResearch(app)
+mountDocs(app)
 
 
 app.get('/api/scheduler', (req, res) => res.json(readSchedulerConfig(CLAUDE)))

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, toast, tildify } from '../lib/api.js'
-import { buildBlocks, Block } from './ChatSection.jsx'
+import { buildBlocks, Block } from '../ui/chatBlocks.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"

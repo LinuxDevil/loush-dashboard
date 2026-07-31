@@ -1,160 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
-import Markdown from '../ui/Markdown.jsx'
 import SelectionChips, { useSelectionChips } from '../ui/SelectionChips.jsx'
-import { extractTokenBudget, renderToolCall } from '../../lib/chat-render.mjs'
-import { marked } from 'marked'
 import { api, fmtDate } from '../lib/api.js'
 import { extractPlan, blocksToPlan, diagnoseSession } from '../lib/plan.js'
 import PlanGraph from './PlanGraph.jsx'
 import { ContextTimeline } from './ContextExplorerSection.jsx'
 import ActivityTimeline from './ActivityTimeline.jsx'
-
-const short = (v, n = 200) => {
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
-  return s.length > n ? s.slice(0, n) + '…' : s
-}
-
-export function buildBlocks(events) {
-  const blocks = [], byToolId = {}
-  const target = ev => (ev.parent_tool_use_id && byToolId[ev.parent_tool_use_id]?.children) || blocks
-  for (const ev of events) {
-    if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
-      for (const c of ev.message.content)
-        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
-          const b = byToolId[c.tool_use_id]
-          b.result = short(c.content, 400)
-          b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
-          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult
-        }
-        else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
-        else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
-    } else if (ev.type === 'user') {
-      target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
-    } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
-      let usageLeft = ev.message?.usage || null
-      for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text })
-        else if (c.type === 'tool_use') {
-          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, ts: ev.timestamp || null, usage: usageLeft, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
-          usageLeft = null
-          byToolId[c.id] = b
-          target(ev).push(b)
-        }
-      }
-    } else if (ev.type === 'result') {
-      blocks.push({ kind: 'turn-end', ms: ev.duration_ms, cost: ev.total_cost_usd })
-    } else if (ev.type === 'stderr') {
-      blocks.push({ kind: 'stderr', text: ev.text })
-    } else if (ev.type === 'closed') {
-      blocks.push({ kind: 'closed', code: ev.code, error: ev.error })
-    }
-  }
-  return blocks
-}
-
-function ReviewButtons({ text, chatId, cwd }) {
-  const [done, setDone] = useState(null)
-  const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
-  if (done) return <div className="dim" style={{ font: "400 10px var(--mono)", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
-  return (
-    <div style={{ display: 'flex', gap: 6, padding: '1px 8px 4px' }}>
-      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & accepted" onClick={() => record('accept')}>✓ accept</button>
-      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & rejected" onClick={() => record('reject')}>✗ reject</button>
-    </div>
-  )
-}
-
-export function Block({ b }) {
-  if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
-  if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
-  if (b.kind === 'text') return <Markdown source={b.text} className="chat-msg assistant" />
-  if (b.kind === 'stderr') return <div className="chat-line err">{b.text}</div>
-  if (b.kind === 'closed') return <div className="chat-line err">session ended{b.error ? ` — ${b.error}` : b.code ? ` (exit ${b.code})` : ''}</div>
-  if (b.kind === 'turn-end') return <div className="chat-line dim">◦ turn done {b.ms ? `· ${(b.ms / 1000).toFixed(1)}s` : ''} {b.cost ? `· $${b.cost.toFixed(3)}` : ''}</div>
-  if (b.kind === 'tool' && b.children) {
-    const agent = b.input?.subagent_type || 'agent'
-    return (
-      <details className="chat-agent">
-        <summary>◆ {agent} — {b.input?.description || b.input?.prompt?.slice(0, 80) || 'subagent'} <span className="dim">({b.children.length} events)</span></summary>
-        <div className="chat-agent-body">
-          {b.children.map((c, i) => <Block key={i} b={c} />)}
-          {b.result && <div className="chat-line dim">↳ {b.result}</div>}
-        </div>
-      </details>
-    )
-  }
-  if (b.kind === 'tool') {
-    // The shared summariser knows each tool's arguments — "Read src/App.jsx" instead of the
-    // first key that happens to be present. It is also where the rule lives that tool input
-    // VALUES are never echoed, since a Bash command can carry a token.
-    const r = renderToolCall({ message: { content: [{ type: 'tool_use', name: b.name, input: b.input }] } })
-    const headline = r?.summary && r.kind !== 'unknown'
-      ? r.summary
-      : short(b.input?.command || b.input?.file_path || b.input?.pattern || b.input?.prompt || b.input, 120)
-    return (
-      <div className={'chat-line tool' + (b.isError ? ' err' : '')} title={r?.title || b.name}>
-        ▸ <b>{b.name}</b> <span className="dim">{short(headline, 160)}</span>
-        {b.result != null && <div className="chat-tool-result">{b.result}</div>}
-      </div>
-    )
-  }
-  return null
-}
-
-/**
- * Live context occupancy for the running turn.
- *
- * Renders "— of ?" rather than a bar when the model's window is unknown: the token count is a
- * real measurement, but without a denominator a percentage would be invented. An over-100 reading
- * is shown as-is, because it means our window figure for that model is wrong.
- */
-export function ContextPill({ events }) {
-  let budget = null
-  for (let i = events.length - 1; i >= 0; i--) {
-    const b = extractTokenBudget(events[i])
-    if (b.used != null) { budget = b; break }
-  }
-  if (!budget) return null
-  const k = n => (n >= 1000 ? (n / 1000).toFixed(n >= 10_000 ? 0 : 1) + 'k' : String(n))
-  if (!budget.known)
-    return (
-      <span className="pill dim" title={`context window for "${budget.model || 'this model'}" is not known to this dashboard (${budget.reason}) — the token count is real, the percentage would not be`}>
-        ctx {k(budget.used)} / ?
-      </span>
-    )
-  const pct = budget.percent
-  const tone = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : ''
-  return (
-    <span className={'pill ' + tone} title={`${budget.used.toLocaleString()} of ${budget.window.toLocaleString()} tokens on the last turn · ${budget.model}${budget.over ? ' · over the window we have recorded for this model' : ''}`}>
-      ctx {k(budget.used)} / {k(budget.window)} · {pct.toFixed(pct < 10 ? 1 : 0)}%{budget.over ? ' ⚠' : ''}
-    </span>
-  )
-}
-
-function capture(text) {
-  const kind = prompt('Capture as: command / skill / prompt / note', 'command')
-  if (!kind) return
-  const done = p => p.then(r => alert('saved' + (r.path ? ' → ' + r.path : ''))).catch(e => alert(e.message))
-  if (kind === 'command' || kind === 'skill') {
-    const name = prompt(`${kind} name:`)
-    if (!name) return
-    const content = kind === 'command'
-      ? `---\ndescription: captured from a chat session\n---\n\n${text}\n\n$ARGUMENTS\n`
-      : `---\nname: ${name}\ndescription: captured from a chat session\n---\n\n${text}\n`
-    done(api.post(`/api/res/${kind}s`, { scope: 'user', name, content }))
-  } else if (kind === 'prompt') {
-    done(api.post('/api/prompts', { title: text.slice(0, 60), tags: ['captured'], inputs: [{ type: 'text', value: text }] }))
-  } else {
-    done(api.post('/api/notes', { title: text.slice(0, 40), content: text }))
-  }
-}
-
-const Cap = ({ text, children }) => (
-  <div className="cap-wrap">
-    {children}
-    <button className="cap-btn" title="capture as command / skill / prompt / note" onClick={() => capture(text)}>⤴</button>
-  </div>
-)
+// Transcript rendering lives in ui/chatBlocks.jsx — see the header there for the split.
+import { buildBlocks, ContextPill, MessageLog } from '../ui/chatBlocks.jsx'
 
 const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = err; r.readAsDataURL(f) })
 
@@ -297,6 +149,7 @@ export default function ChatSection() {
   const [events, setEvents] = useState([])
   const [prefill, setPrefill] = useState('')
   const [model, setModel] = useState('')
+  const [permMode, setPermMode] = useState('skip')
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState('chat')
   const [ctxData, setCtxData] = useState(null)
@@ -365,8 +218,13 @@ export default function ChatSection() {
   }
   useEffect(() => () => { esRef.current?.close(); clearTimeout(reconnectRef.current) }, [])
 
+  // Every launch path goes through here. There are three of them — New session, the `chat-open`
+  // window event, and clicking a pin — and an option added to only one of them means "resumed
+  // from a pin" silently ignores the mode you picked.
+  const startBody = over => ({ cwd, model: model || undefined, permissionMode: permMode, ...over })
+
   const start = async resume => {
-    const { id } = await api.post('/api/chat', { cwd, resume, model: model || undefined })
+    const { id } = await api.post('/api/chat', startBody({ resume }))
     attach(id)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
@@ -374,13 +232,13 @@ export default function ChatSection() {
     const onOpen = e => {
       const { sessionId, cwd: c, prefill: pre } = e.detail || {}
       if (pre) setPrefill(pre)
-      api.post('/api/chat', { cwd: c || cwd, resume: sessionId || undefined, model: model || undefined })
+      api.post('/api/chat', startBody({ cwd: c || cwd, resume: sessionId || undefined }))
         .then(({ id }) => { attach(id, c); api.get('/api/chat').then(setActive).catch(() => {}) })
         .catch(err => alert(err.message))
     }
     window.addEventListener('chat-open', onOpen)
     return () => window.removeEventListener('chat-open', onOpen)
-  }, [cwd, model]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cwd, model, permMode]) // eslint-disable-line react-hooks/exhaustive-deps
   const send = async (text, images) => {
     if (!chatId) return
     setBusy(true)
@@ -423,6 +281,12 @@ export default function ChatSection() {
             <option value="sonnet">sonnet</option>
             <option value="opus">opus</option>
           </select>
+          <select value={permMode} onChange={e => setPermMode(e.target.value)} title="how the agent asks before using tools — 'skip' is the historical default and asks for nothing">
+            <option value="skip">skip permissions</option>
+            <option value="default">ask (default)</option>
+            <option value="acceptEdits">auto-accept edits</option>
+            <option value="plan">plan only</option>
+          </select>
           <button className="primary" onClick={() => start()}>New session</button>
         </div>
         {active.filter(a => a.alive).length > 0 && (
@@ -430,7 +294,7 @@ export default function ChatSection() {
             <h3>Live now</h3>
             {active.filter(a => a.alive).map(a => (
               <div key={a.id} className="chat-session" onClick={() => attach(a.id, a.cwd)}>
-                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.model ? a.model + ' · ' : ''}{a.events} events · {a.cwd}</span>
+                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.model ? a.model + ' · ' : ''}{a.permissionMode && a.permissionMode !== 'skip' ? a.permissionMode + ' · ' : ''}{a.events} events · {a.cwd}</span>
               </div>
             ))}
           </div>
@@ -439,7 +303,7 @@ export default function ChatSection() {
           <div className="chat-sessions">
             <h3>Pinned</h3>
             {pins.map(p => (
-              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', { cwd: p.cwd || cwd, resume: p.sessionId, model: model || undefined }).then(({ id }) => attach(id, p.cwd)) }}>
+              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', startBody({ cwd: p.cwd || cwd, resume: p.sessionId })).then(({ id }) => attach(id, p.cwd)) }}>
                 <b>★ {p.label || p.title || p.sessionId}</b>
                 <span className="dim">
                   {(p.cwd || '').split('/').pop()}{p.configVersion ? ` · cfg ${p.configVersion}` : ''}
@@ -476,6 +340,7 @@ export default function ChatSection() {
           <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
           {liveModel && <span className="dim" style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
+          {permMode !== 'skip' && <span className="pill" title="tool permissions are restricted for this session">{permMode}</span>}
           <ContextPill events={events} />
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
@@ -508,16 +373,7 @@ export default function ChatSection() {
         : view === 'activity'
         ? <div className="chat-log"><ActivityTimeline blocks={blocks} /></div>
         : <div className="chat-log">
-        {gap && (
-          <div className="chat-line err" title={`this client last saw seq ${gap.from}; the server's retained log now starts at seq ${gap.earliestSeq}`}>
-            ⚠ reconnected past the retained history — {gap.earliestSeq - gap.from - 1} event(s) between seq {gap.from + 1} and {gap.earliestSeq - 1} are gone
-            {gap.dropped ? ` (${gap.dropped} dropped on this run in total)` : ''}. What follows is not the whole session.
-          </div>
-        )}
-        {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
-          ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
-          : <Block key={i} b={b} />)}
-        {busy && <div className="chat-line dim">✦ working…</div>}
+        <MessageLog blocks={blocks} gap={gap} busy={busy} chatId={chatId} cwd={cwd} />
         <div ref={endRef} />
       </div>}
       <InputBar cwd={cwd} ended={ended} onSend={send} initial={prefill} />
