@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import { marked } from 'marked'
 import { HEAD, BODY, MONO, BB, GREEN, DIM, HI, PANEL, Card, H1, miniBtn, primaryBtn, inp, useCopy } from './ui.jsx'
 import { PRESETS, report, toSlack } from './reports.js'
 
-// §6 — preview → hand-edit → copy / download. Nothing is uploaded anywhere; "Copy as Slack" hands you the
-// text and a human sends it. (There is no server route that posts arbitrary text to the webhook — the only
-// Slack endpoint on the box sends a fixed test string — so this stays a copy, which is the safer default.)
 export default function Export({ snap, win, me }) {
   const [preset, setPreset] = useState('standup')
   const [md, setMd] = useState('')
@@ -49,7 +47,7 @@ export default function Export({ snap, win, me }) {
       </div>
       <div style={{ ...PANEL, padding: '12px 16px' }}>
         <div style={{ font: `600 12px ${HEAD}`, color: HI, marginBottom: 8 }}>Preview</div>
-        <div className="md" style={{ maxHeight: 520, overflow: 'auto', color: 'var(--text-secondary)', font: `400 13px/1.65 ${BODY}` }} dangerouslySetInnerHTML={{ __html: marked.parse(md || '') }} />
+        <Markdown source={md || ''} style={{ maxHeight: 520, overflow: 'auto', color: 'var(--text-secondary)', font: `400 13px/1.65 ${BODY}` }} />
       </div>
     </div>
   </section>

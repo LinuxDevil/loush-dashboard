@@ -5,15 +5,18 @@ import { Tabs, DiffView, lineDiff } from '../ui/tabs.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
 export default function GovernanceSection() {
   const [tab, setTab] = useState('Versions')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Versions', 'Approvals', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Versions', 'Approvals', 'Access', 'Freeze audit', 'Integrity', 'Audit log', 'Drift', 'Batch ops']} tab={tab} setTab={setTab} />
       {tab === 'Versions' && <Versions />}
       {tab === 'Approvals' && <Approvals />}
+      {tab === 'Access' && <Access />}
+      {tab === 'Freeze audit' && <FreezeAudit />}
+      {tab === 'Integrity' && <Integrity />}
       {tab === 'Audit log' && <Audit />}
       {tab === 'Drift' && <Drift />}
       {tab === 'Batch ops' && <BatchOps />}
@@ -31,12 +34,12 @@ function Versions() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
   const [scope, setScope] = useState('')
-  const [sel, setSel] = useState([]) // up to 2 version ids for diff
+  const [sel, setSel] = useState([])
   const [diff, setDiff] = useState(null)
   const scopes = useScopes()
   const dq = useDebounced(q)
   const load = () => api.get(`/api/gov/versions?q=${encodeURIComponent(q)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {})
-  useEffect(() => { api.get(`/api/gov/versions?q=${encodeURIComponent(dq)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {}) }, [dq, scope]) // debounced search
+  useEffect(() => { api.get(`/api/gov/versions?q=${encodeURIComponent(dq)}&scope=${encodeURIComponent(scope)}`).then(setList).catch(() => {}) }, [dq, scope])
   const pick = async id => {
     const next = sel.includes(id) ? sel.filter(x => x !== id) : [...sel.slice(-1), id]
     setSel(next)
@@ -148,11 +151,279 @@ function Approvals() {
   )
 }
 
+const MODE_BITS = ['r', 'w', 'x']
+const MODE_HELP = { r: 'read and display this project', w: 'write into it (config, captures, tickets)', x: 'run commands against it' }
+
+function Access() {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [newProfile, setNewProfile] = useState('')
+  const load = () => api.get('/api/access').then(setData).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [])
+
+  const send = async (fn) => {
+    setBusy(true); setErr('')
+    try { await fn(); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  const toggleBit = (profile, project, mode, bit) => {
+    const next = MODE_BITS.map((b, i) => (b === bit ? (mode[i] === b ? '-' : b) : mode[i])).join('')
+    return send(() => api.put('/api/access/permission', { profile, project, mode: next }))
+  }
+
+  if (err && !data) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!data) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>loading…</div>
+  const { matrix, enforced } = data
+
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 4 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Project access</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{tildify(data.file)}</span>
+        <span style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: enforced ? 'var(--green)' : 'var(--amber, var(--text-tertiary))' }}>
+          {enforced ? 'enforcing' : 'not enforced — recording only'}
+        </span>
+        <button className="mini" style={{ marginTop: 0 }} disabled={busy}
+          onClick={() => send(() => api.put('/api/access/enforced', { enforced: !enforced }))}>
+          {enforced ? 'stop enforcing' : 'start enforcing'}
+        </button>
+      </div>
+      <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        {MODE_BITS.map(b => <span key={b} style={{ marginRight: 14 }}><b style={{ color: 'var(--text-secondary)' }}>{b}</b> {MODE_HELP[b]}</span>)}
+        <div style={{ marginTop: 4 }}>
+          A cell with no entry is <code>---</code>. Nothing is inherited between cells — a profile with access to one project has none on another.
+          {!enforced && ' While not enforcing, denied actions are allowed and flagged, so you can fill this in safely before switching it on.'}
+        </div>
+      </div>
+      {err && <div style={{ font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 8 }}>{err}</div>}
+
+      {matrix.projects.length === 0
+        ? <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no projects known yet — open Workspaces &gt; Projects first</div>
+        : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', font: `400 11px ${MONO}`, minWidth: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '6px 10px 6px 4px', color: 'var(--text-tertiary)', fontWeight: 400 }}>profile</th>
+                  {matrix.projects.map(p => (
+                    <th key={p} title={p} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--text-secondary)', fontWeight: 400, whiteSpace: 'nowrap' }}>
+                      {p.split('/').pop() || p}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.rows.map(row => (
+                  <tr key={row.profile}>
+                    <td style={{ padding: '6px 10px 6px 4px', color: 'var(--accent-light)', whiteSpace: 'nowrap' }}>{row.profile}</td>
+                    {row.cells.map(cell => (
+                      <td key={cell.project} style={{ padding: '4px 10px' }}>
+                        <span style={{ display: 'inline-flex', gap: 2 }}>
+                          {MODE_BITS.map((b, i) => {
+                            const on = cell.mode[i] === b
+                            return (
+                              <button key={b} disabled={busy} title={`${row.profile} may ${MODE_HELP[b]}`}
+                                onClick={() => toggleBit(row.profile, cell.project, cell.mode, b)}
+                                style={{
+                                  marginTop: 0, padding: '1px 5px', minWidth: 18, cursor: 'pointer',
+                                  font: `600 11px ${MONO}`,
+                                  color: on ? 'var(--green)' : 'var(--text-tertiary)',
+                                  background: on ? 'var(--bg-raised, transparent)' : 'transparent',
+                                  border: `1px solid ${on ? 'var(--green)' : 'var(--border-subtle)'}`, borderRadius: 3,
+                                }}>{on ? b : '-'}</button>
+                            )
+                          })}
+                          {!cell.configured && <span title="never configured — denied by default" style={{ color: 'var(--text-tertiary)', marginLeft: 4 }}>·</span>}
+                        </span>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center' }}>
+        <input value={newProfile} onChange={e => setNewProfile(e.target.value)} placeholder="new profile name…" style={{ width: 200 }} />
+        <button className="mini" style={{ marginTop: 0 }} disabled={busy || !newProfile.trim() || !matrix.projects.length}
+          onClick={() => send(async () => {
+            await api.put('/api/access/permission', { profile: newProfile.trim(), project: matrix.projects[0], mode: '---' })
+            setNewProfile('')
+          })}>add profile</button>
+      </div>
+    </div>
+  )
+}
+
+const FA_STATUS = {
+  pass: { color: 'var(--green)', gloss: 'checked against the repo and satisfied' },
+  fail: { color: 'var(--red)', gloss: 'checked against the repo and not satisfied' },
+  manual: { color: 'var(--text-tertiary)', gloss: 'no machine can decide this — tick it yourself once reviewed' },
+  'n-a': { color: 'var(--text-tertiary)', gloss: 'scoped to a stack this project does not use' },
+  unknown: { color: 'var(--violet)', gloss: 'the check itself could not run — not a pass and not a fail' },
+}
+
+function FreezeAudit() {
+  const [projects, setProjects] = useState([])
+  const [project, setProject] = useState('')
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [show, setShow] = useState('actionable')
+
+  useEffect(() => {
+    api.get('/api/projects').then(list => {
+      setProjects(list)
+      setProject(p => p || (list.find(x => x.current) || list[0] || {}).path || '')
+    }).catch(e => setErr(e.message))
+  }, [])
+  const load = p => { setD(null); api.get('/api/gov/freeze-audit?fresh=1&project=' + encodeURIComponent(p)).then(setD).catch(e => setErr(e.message)) }
+  useEffect(() => { if (project) load(project) }, [project])
+
+  const tick = (id, ticked) =>
+    api.put('/api/gov/freeze-audit/tick', { project, id, ticked }).then(() => load(project)).catch(e => setErr(e.message))
+
+  if (err && !d) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>auditing…</div>
+
+  const sum = d.summary || {}
+  const rows = (d.items || []).filter(i => show === 'all' || ['fail', 'unknown', 'manual'].includes(i.status))
+  const ready = d.verdict === 'READY TO FREEZE'
+
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Freeze audit</div>
+        <select value={project} onChange={e => setProject(e.target.value)} style={{ maxWidth: 280 }}>
+          {projects.map(p => <option key={p.path} value={p.path}>{p.name}</option>)}
+        </select>
+        <span style={{ font: `600 11px ${MONO}`, color: ready ? 'var(--green)' : 'var(--amber, #d79921)' }}>{d.verdict}</span>
+        <select value={show} onChange={e => setShow(e.target.value)} style={{ marginLeft: 'auto' }}>
+          <option value="actionable">needs attention</option>
+          <option value="all">all {sum.total} items</option>
+        </select>
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, font: `400 11px ${MONO}`, marginBottom: 6, flexWrap: 'wrap' }}>
+        {['pass', 'fail', 'manual', 'n-a', 'unknown'].map(k => (
+          <span key={k} title={FA_STATUS[k].gloss} style={{ color: FA_STATUS[k].color }}>{sum[k] || 0} {k}</span>
+        ))}
+      </div>
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        {}
+        stacks detected: {d.detectedStacks?.length ? d.detectedStacks.join(', ') : 'none'}
+        {d.stackEvidence && Object.keys(d.stackEvidence).length > 0 && ' (' + Object.entries(d.stackEvidence).map(([k, v]) => `${k}: ${v.join('; ')}`).join(' · ') + ')'}
+        <div>
+          <b>{sum.manual || 0}</b> items no machine can decide — they stay open until a human ticks them.
+          {sum.unknown > 0 && <> <b style={{ color: 'var(--violet)' }}>{sum.unknown} could not be checked at all</b>, which blocks a freeze exactly as hard as a failure.</>}
+        </div>
+      </div>
+      {err && <div style={{ font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 8 }}>{err}</div>}
+
+      <div style={{ maxHeight: 520, overflowY: 'auto' }}>
+        {rows.map(i => {
+          const st = FA_STATUS[i.status] || FA_STATUS.unknown
+          const isTicked = (d.ticked || []).includes(i.id)
+          return (
+            <div key={i.id} style={{ display: 'flex', gap: 10, padding: '7px 4px', borderBottom: '1px solid var(--border-subtle)', font: `400 11px ${MONO}`, alignItems: 'flex-start' }}>
+              <span title={st.gloss} style={{ color: st.color, width: 62, flexShrink: 0 }}>{i.status}</span>
+              <span style={{ color: 'var(--text-tertiary)', width: 54, flexShrink: 0 }}>{i.id}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: 'var(--text-secondary)' }}>{i.text}</div>
+                {}
+                {i.evidence?.detail && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>{i.evidence.detail}</div>}
+                {i.status === 'manual' && i.manualReason && <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>manual: {i.manualReason}</div>}
+              </div>
+              {}
+              {i.status === 'manual' && (
+                <label style={{ flexShrink: 0, display: 'flex', gap: 4, alignItems: 'center', color: isTicked ? 'var(--green)' : 'var(--text-tertiary)' }}>
+                  <input type="checkbox" checked={isTicked} onChange={e => tick(i.id, e.target.checked)} />
+                  reviewed
+                </label>
+              )}
+            </div>
+          )
+        })}
+        {rows.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--green)' }}>nothing needs attention</div>}
+      </div>
+    </div>
+  )
+}
+
+// Two checks that both answer "is this config actually doing what it says".
+//
+// References: a hook whose script was deleted, or an MCP server pointing at a missing binary,
+// fails silently at runtime — Claude Code does not announce it. This makes it visible.
+// Skill audit: instruction text that would exfiltrate, bypass logging, or grant itself tools.
+function Integrity() {
+  const [refs, setRefs] = useState(null)
+  const [skills, setSkills] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api.get('/api/gov/references').then(setRefs).catch(e => setErr(e.message))
+    api.get('/api/security/skill-audit').then(setSkills).catch(e => setErr(e.message))
+  }, [])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 6 }}>Referenced paths</div>
+        {!refs && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>checking…</div>}
+        {refs && (
+          <>
+            <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+              {refs.checked} reference{refs.checked === 1 ? '' : 's'} checked
+              {refs.skippedPathless > 0 && ` · ${refs.skippedPathless} resolved via PATH, not checkable`}
+              {/* A predicate that could not run reports unknown, never dangling — an EACCES must
+                  not become an accusation that working config is broken. */}
+              {(refs.unknown || []).length > 0 && ` · ${refs.unknown.length} could not be checked`}
+            </div>
+            {(refs.dangling || []).length === 0
+              ? <div style={{ font: `400 11px ${MONO}`, color: refs.checked ? 'var(--green)' : 'var(--text-tertiary)' }}>
+                  {refs.checked ? 'every referenced path exists' : 'nothing references a checkable path yet'}
+                </div>
+              : (refs.dangling || []).map((x, i) => (
+                  <div key={i} style={{ font: `400 11px ${MONO}`, color: 'var(--red)', padding: '2px 0' }}>
+                    {x.source} → <b>{x.path}</b> is missing
+                  </div>
+                ))}
+          </>
+        )}
+      </div>
+
+      <div style={{ ...PANEL }}>
+        <div style={{ font: `600 14px ${HEAD}`, marginBottom: 6 }}>Skill content audit</div>
+        {!skills && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>scanning…</div>}
+        {skills && (
+          <>
+            <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+              {skills.scanned} file{skills.scanned === 1 ? '' : 's'} scanned · {skills.flagged} flagged
+            </div>
+            {(skills.results || []).map((r, i) => (
+              <div key={i} style={{ marginBottom: 8 }}>
+                <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{r.file}</div>
+                {r.findings.map((f, j) => (
+                  <div key={j} style={{ font: `400 11px ${MONO}`, color: f.severity === 'critical' ? 'var(--red)' : 'var(--amber, #d79921)', paddingLeft: 12 }}>
+                    [{f.severity}] {f.message}
+                  </div>
+                ))}
+              </div>
+            ))}
+            {/* Rules err toward a miss rather than a false accusation, so a clean scan is not a
+                clean bill of health and should not be read as one. */}
+            <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 6 }}>{skills.note}</div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Audit() {
   const [list, setList] = useState([])
   const [q, setQ] = useState('')
   const dq = useDebounced(q)
-  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq]) // debounced
+  useEffect(() => { api.get('/api/gov/versions?q=' + encodeURIComponent(dq)).then(setList).catch(() => {}) }, [dq])
   return (
     <div style={{ ...PANEL }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 12 }}>
@@ -180,7 +451,6 @@ function Audit() {
   )
 }
 
-// feature 19: apply one change across many projects — always dry-run first
 const BATCH_OPS = [
   ['set-setting', 'set a settings field'],
   ['enable-skill', 'enable a global skill'],

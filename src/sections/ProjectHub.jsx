@@ -6,7 +6,7 @@ import { api, tildify, fmtDate } from '../lib/api.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const kTok = n => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(n ?? 0)))
 const TYPE = {
   rule: 'var(--accent)', skill: 'var(--accent-light)', agent: 'var(--violet)', mcp: 'var(--blue)', adr: 'var(--green)', ref: 'var(--text-secondary)',
@@ -27,13 +27,12 @@ const ScopeChip = ({ scope }) => scope === 'project'
 
 export default function ProjectHub({ project }) {
   const [d, setD] = useState(null)
-  const [sel, setSel] = useState(null) // selected graph node id
-  const [file, setFile] = useState(null) // {path, content}
+  const [sel, setSel] = useState(null)
+  const [file, setFile] = useState(null)
   const [replay, setReplay] = useState(null)
   const [replayId, setReplayId] = useState(null)
   const load = () => api.get('/api/hub?project=' + encodeURIComponent(project)).then(setD).catch(() => {})
   useEffect(() => { setD(null); setSel(null); load() }, [project])
-  // graph layout: center = project rules (or global), others on ellipse grouped by type
   const C = { x: 320, y: 205 }
   const gnodes = d?.graph.nodes || []
   const centerId = gnodes.find(n => n.type === 'rule' && n.label !== 'global rules')?.id || 'rules:global'
@@ -62,7 +61,7 @@ export default function ProjectHub({ project }) {
     const k = (byKind[c.kind] ||= { kind: c.kind, always: 0, onInvoke: 0, n: 0 })
     k.n++
     if (c.mode === 'always') k.always += c.tokens
-    else if (c.mode === 'on-invoke') { k.always += c.tokens; k.onInvoke += c.onInvoke || 0 } // skill descriptions are always-loaded metadata
+    else if (c.mode === 'on-invoke') { k.always += c.tokens; k.onInvoke += c.onInvoke || 0 }
   }
   const segOrder = ['system', 'rules', 'skill', 'mcp']
   const segs = segOrder.filter(k => byKind[k]).map(k => ({ ...byKind[k], color: TYPE[k], label: k === 'skill' ? `skill metadata (${byKind[k].n})` : k === 'mcp' ? `MCP tool defs (${byKind[k].n})` : k }))
@@ -91,7 +90,7 @@ export default function ProjectHub({ project }) {
 
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* PHASE 1 — overview strip */}
+      {}
       <div className="hx-overview">
         <div style={{ ...PANEL, display: 'flex', alignItems: 'center', gap: 16 }}>
           <svg width="76" height="76" viewBox="0 0 76 76">
@@ -121,7 +120,7 @@ export default function ProjectHub({ project }) {
         ))}
       </div>
 
-      {/* PHASE 1 — context budget composition */}
+      {}
       <div style={{ ...PANEL }}>
         <CardTitle hint={`always-on ${kTok(d.budget.alwaysOn)} / ${kTok(d.budget.softCap)} soft cap${d.budget.alwaysOn > d.budget.softCap ? ' — over budget' : ''}`}>Context budget composition</CardTitle>
         <div style={{ display: 'flex', height: 13, borderRadius: 7, overflow: 'hidden', background: 'var(--bg-surface-hover)', marginBottom: 10 }}>
@@ -157,7 +156,7 @@ export default function ProjectHub({ project }) {
         </div>
       </div>
 
-      {/* PHASE 1 — prompt preview + graph */}
+      {}
       <div className="hx-2a">
         <div style={{ ...PANEL, padding: 0, overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '15px 20px', borderBottom: '1px solid var(--border-default)' }}>
@@ -220,7 +219,7 @@ export default function ProjectHub({ project }) {
         </div>
       </div>
 
-      {/* PHASE 2 — inventory */}
+      {}
       <div className="hx-2">
         <div style={{ ...PANEL }}>
           <CardTitle hint={`${inv.skills.length} available · sorted by recency`}>Skills</CardTitle>
@@ -308,7 +307,7 @@ export default function ProjectHub({ project }) {
         </div>
       </div>
 
-      {/* PHASE 3 — trigger map + audit */}
+      {}
       <div className="hx-2">
         <div style={{ ...PANEL }}>
           <CardTitle hint="event → activation">Trigger map</CardTitle>
@@ -340,7 +339,7 @@ export default function ProjectHub({ project }) {
         </div>
       </div>
 
-      {/* PHASE 3 — session replay */}
+      {}
       <div style={{ ...PANEL }}>
         <CardTitle hint="which config actually fired, per session">Session replay / provenance</CardTitle>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -385,7 +384,7 @@ export default function ProjectHub({ project }) {
         )}
       </div>
 
-      {/* artifact file editor drawer */}
+      {}
       {file && (
         <>
           <div className="drawer-overlay" onClick={() => setFile(null)} />

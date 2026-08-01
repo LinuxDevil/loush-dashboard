@@ -1,10 +1,4 @@
-// Prompt Quality — rates *how the user prompts* (Claude Code or Cursor) across 8 fixed dimensions.
-// Expensive: one `claude -p` call reads a sample of the user's real prompts and returns a scored
-// rubric with a real example + an optimization per dimension. So it's cached to disk and only
-// (re)computed on POST /refresh — never on GET. Fails soft to the user's own baseline self-scores.
-//
 // ponytail: single-user local dashboard — spawnSync blocks the handler during the claude -p call,
-// which is fine here; and we duplicate ~10 lines of Cursor DB path rather than couple to server-cursor.
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -14,7 +8,6 @@ const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
 const STORE = path.join(process.cwd(), 'promptcheck.json')
 
-// The rubric is fixed — these are the user's own 8 dimensions with their baseline self-scores.
 const DIMENSIONS = [
   ['Collaborative planning', 9],
   ['Sharp corrections when I drift', 9],
@@ -40,7 +33,6 @@ const readStore = () => { try { return JSON.parse(fs.readFileSync(STORE, 'utf8')
 const writeStore = o => fs.writeFileSync(STORE, JSON.stringify(o, null, 2))
 
 // ---- prompt sampling ----------------------------------------------------------------------------
-// Only the user's own words. Skip tool-result / command wrappers (start with '<'), and slash commands.
 const clean = t => typeof t === 'string' && t.length >= 8 && t.length <= 2000 && !t.startsWith('<') && !t.startsWith('/')
 
 function claudePrompts(limit = 120) {
@@ -48,7 +40,7 @@ function claudePrompts(limit = 120) {
   let files = []
   try {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!ent.isDirectory()) continue // skip .DS_Store etc.
+      if (!ent.isDirectory()) continue
       const pd = path.join(dir, ent.name)
       for (const f of fs.readdirSync(pd)) if (f.endsWith('.jsonl')) {
         const p = path.join(pd, f)
@@ -82,7 +74,6 @@ function cursorPrompts(limit = 120) {
       : path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, '.config'), 'Cursor', 'User')
   const db = path.join(userDir, 'globalStorage', 'state.vscdb')
   if (!fs.existsSync(db)) return []
-  // type=1 bubbles are user messages (same schema server-cursor.mjs relies on).
   const sql = `SELECT trim(json_extract(value,'$.text')) t FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND json_extract(value,'$.type')=1 AND length(json_extract(value,'$.text')) BETWEEN 8 AND 2000 LIMIT ${limit * 3}`
   const r = spawnSync('sqlite3', ['-json', `file:${db}?mode=ro`, sql], { timeout: 120_000, maxBuffer: 64 * 1024 * 1024 })
   if (r.status !== 0) return []

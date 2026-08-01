@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react'
 
-// Field specs per resource kind — mirrors the real frontmatter formats found on disk.
 export const SPECS = {
   skills: {
     title: 'Skill',
@@ -46,11 +45,10 @@ export const SPECS = {
   },
 }
 
-// Serialize frontmatter matching the on-disk conventions (quoted strings, YAML list for allowed-tools, inline string for agent tools).
 export function serializeFM(values, spec) {
   const lines = []
   for (const f of spec.fields) {
-    if (f.k === 'type' || f.k === 'command' || f.k === 'args' || f.k === 'env' || f.k === 'url') continue // mcp handled separately
+    if (f.k === 'type' || f.k === 'command' || f.k === 'args' || f.k === 'env' || f.k === 'url') continue
     let v = values[f.k]
     if (v === undefined || v === null || v === '') continue
     if (f.list) {

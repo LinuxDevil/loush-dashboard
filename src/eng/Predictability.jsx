@@ -3,18 +3,13 @@ import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, Card, CardHead
 import { Lines } from './charts.jsx'
 import { pctl } from './stats.js'
 
-// §8 — committed vs delivered, carryover, mid-sprint injection. The old sprintStats() showed "Done x/y"
-// over whatever is in the sprint NOW, which structurally hides scope creep and always flatters us.
-// This reads the Sprint changelog items: committed-at-start vs injected-after-start vs carried-over.
 const light = v => (v == null ? DIM : v >= 85 ? GREEN : v >= 70 ? GOLD : RED)
 
 export default function Predictability({ snap, onOpenTicket }) {
   const [copy, copied] = useCopy()
-  const sprints = [...(snap.sprints || [])].reverse() // oldest → newest for the trend
+  const sprints = [...(snap.sprints || [])].reverse()
   const cur = sprints[sprints.length - 1]
   const sayDo = sprints.map(s => s.sayDoPct).filter(v => v != null)
-  // MEDIAN, not mean: one sprint that committed 2 points and delivered 40 produces a say/do of 2000% and a
-  // mean that says the team is a miracle. The chart clamps at 200% for the same reason.
   const avg6 = sayDo.length ? Math.round(pctl(sayDo, 0.5)) : null
   const cap = v => (v == null ? null : Math.min(v, 200))
   const inj = sprints.map(s => s.injectionPct).filter(v => v != null)

@@ -6,7 +6,7 @@ import { Stagger, CountUp } from '../ui/anim.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { error: 'var(--red)', warning: 'var(--amber)', info: 'var(--text-secondary)' }
 const KIND_ICON = { approval: '☑', budget: '¤', eval: '𝜎', session: '⌨', recommendation: '❒', board: '▦', run: '⟳', action: '⚡', ticket: '◱', review: '⟨⟩', quality: '◈', ci: '⚙' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
@@ -24,7 +24,6 @@ export default function InboxSection({ onNav }) {
   )
 }
 
-// Gap B — cadence loop control. Opt-in (default off); results land in the Inbox as info items.
 function Scheduler() {
   const [cfg, setCfg] = useState(null)
   useEffect(() => { api.get('/api/scheduler').then(setCfg).catch(() => {}) }, [])
@@ -64,12 +63,6 @@ function Scheduler() {
 }
 
 // ---------- 1: delivery risk in the inbox ----------
-// Two data planes, two filter chips, BOTH ON by default. The planes are a server-side boundary
-// (work = JIRA/GitHub/CI artifacts everyone can already see · harness = this machine's own ~/.claude),
-// not a UI mode: there is no view/lens/role switcher here or anywhere else in this app.
-//
-// "Nudge" COPIES a line for a human to send. It never sends anything. That is deliberate and permanent:
-// the instant the dashboard messages people on its own, it becomes the thing engineers route around.
 const PLANES = [
   ['work', 'Work', 'JIRA · GitHub · CI — artifacts the whole team can already open'],
   ['harness', 'Harness', "this machine's own Claude Code telemetry — self-only, always"],
@@ -90,9 +83,6 @@ function Inbox({ onNav }) {
   const [showDone, setShowDone] = useState(false)
   const [planes, setPlanes] = useState({ work: true, harness: true })
   const [copied, setCopied] = useState(null)
-  // Dedupe by key: /api/inbox keys its `recommendation` rows on the finding TEXT alone, so the same
-  // finding raised against two projects arrives twice under one key. Dropping the dupe here is correct —
-  // clearing one would clear "both" anyway, since the server stores done-state by that same key.
   const load = () => api.get('/api/inbox').then(list => {
     const seen = new Set()
     setItems(list.filter(i => !seen.has(i.key) && seen.add(i.key)))

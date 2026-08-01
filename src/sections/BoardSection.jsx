@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const STAGE_C = { backlog: 'var(--text-secondary)', 'in-progress': 'var(--blue)', 'code-review': 'var(--amber)', fixing: 'var(--accent-light)', 'ready-for-qa': 'var(--violet)', 'qa-running': 'var(--blue)', 'bug-reported': 'var(--red)', 'ready-for-release': 'var(--green)', released: 'var(--text-tertiary)' }
 const TYPE_C = { feature: 'var(--blue)', sub: 'var(--text-secondary)', bug: 'var(--red)' }
 const MODELS = ['haiku', 'sonnet', 'opus']
@@ -14,8 +14,21 @@ const lbl = s => s.replace(/-/g, ' ')
 
 function useProjects() {
   const [scopes, setScopes] = useState([])
-  useEffect(() => { api.get('/api/harness').then(d => setScopes(d.scopes.filter(s => s.id !== 'global'))).catch(() => {}) }, [])
-  return scopes
+  // `.catch(() => {})` around a `.then()` that also does the filtering meant a shape change in
+  // /api/harness — or any throw inside the filter — rendered "no projects" forever, with the
+  // error surfaced nowhere. An empty board that is actually a broken fetch is indistinguishable
+  // from an empty board, so the failure is now carried out to the caller.
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    api.get('/api/harness')
+      .then(d => {
+        if (!d || !Array.isArray(d.scopes)) throw new Error('/api/harness did not return a scopes array')
+        setScopes(d.scopes.filter(s => s.id !== 'global'))
+        setError(null)
+      })
+      .catch(e => { setError(e.message || String(e)); setScopes([]) })
+  }, [])
+  return Object.assign(scopes, { error })
 }
 const H2 = ({ children }) => <div style={{ font: `600 12px ${HEAD}`, marginBottom: 6 }}>{children}</div>
 const Meta = ({ children, color = 'var(--text-tertiary)' }) => <span style={{ font: `400 11px ${MONO}`, color }}>{children}</span>
@@ -280,7 +293,7 @@ function Setup({ project, board, onRefresh }) {
   const [pipe, setPipe] = useState(null)
   useEffect(() => setCfg(board.config || {}), [board.config])
   const saveCfg = () => api.post('/api/board/config', { project, ...cfg, previewIdleMin: Number(cfg.previewIdleMin) || 240 }).then(onRefresh).catch(e => alert(e.message))
-  const F = ({ label, k, w, ph }) => ( // plain function, not <Component> — keeps input focus across re-renders
+  const F = ({ label, k, w, ph }) => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 3, width: w || 160 }}>
       <Meta>{label}</Meta>
       <input value={cfg[k] ?? ''} onChange={e => setCfg({ ...cfg, [k]: e.target.value })} placeholder={ph} />
@@ -381,20 +394,24 @@ export default function BoardSection() {
   const [dragOver, setDragOver] = useState(null)
   const load = () => project && api.get('/api/board?project=' + encodeURIComponent(project)).then(setBoard).catch(() => {})
   const move = (id, stage) => { const t = board?.tickets.find(x => x.id === id); if (t && t.stage !== stage) api.patch('/api/board/tickets/' + id, { stage }).then(load).catch(e => toast(e.message, 'error')) }
-  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project]) // pause while tab hidden
+  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project])
   useEffect(() => { if (!project && projects.length) setProject(projects[0].id) }, [projects])
 
   const stages = useMemo(() => {
     if (!board) return []
     const pipe = board.pipelines.find(p => p.id === (board.config?.pipeline || 'default')) || board.pipelines[0]
-    const extra = [...new Set(board.tickets.map(t => t.stage))].filter(s => !pipe.stages.includes(s)) // in-flight tickets on an older template still show
+    const extra = [...new Set(board.tickets.map(t => t.stage))].filter(s => !pipe.stages.includes(s))
     return [...pipe.stages, ...extra]
   }, [board])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <select value={project} onChange={e => setProject(e.target.value)}>{!projects.length && <option value="">no projects</option>}{projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
+        <select value={project} onChange={e => setProject(e.target.value)} title={projects.error || undefined}>
+          {!projects.length && <option value="">{projects.error ? 'could not load projects' : 'no projects'}</option>}
+          {projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        {projects.error && <Meta color="var(--red)">projects could not be loaded — {projects.error}</Meta>}
         {['board', 'analytics', 'setup'].map(x => <button key={x} className={tab === x ? 'primary' : ''} onClick={() => setTab(x)}>{x}</button>)}
         {tab === 'board' && board && (
           <label style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', display: 'flex', gap: 5, alignItems: 'center', marginLeft: 'auto' }}>

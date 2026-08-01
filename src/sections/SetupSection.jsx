@@ -3,16 +3,6 @@ import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 
 // ---------- Setup — every piece of config this app needs, entered visually ----------
-//
-// Configuring this dashboard used to mean hand-editing JSON in three places, and the only reason it
-// "worked out of the box" was another company's production config compiled into the source. Now that
-// everything org-specific is user config, there has to be somewhere to put it.
-//
-// SECRETS: this component can never display a credential, because no endpoint will return one. The
-// server answers `set: true|false` and nothing else. A token field is therefore always blank on load
-// — that is not a bug, it is the whole design. Submitting a blank field LEAVES the stored value
-// alone; clearing one requires the explicit Remove button. If the field round-tripped the value it
-// would be visible in devtools, in a screenshot, and in any cached response.
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -45,6 +35,36 @@ const Section = ({ title, sub, children, right }) => (
 const Dot = ({ ok, warn }) => <span style={{ width: 8, height: 8, borderRadius: 4, display: 'inline-block', background: ok ? GREEN : warn ? GOLD : DIM, flexShrink: 0 }} />
 const emails = s => String(s || '').split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
 
+function Paths() {
+  const [m, setM] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/meta').then(setM).catch(e => setErr(e.message)) }, [])
+  const rows = [
+    ['home', m?.home, 'your home directory'],
+    ['Claude config', m?.claudeDir, 'skills, commands, agents, settings.json and the transcripts this dashboard reads'],
+    ['current project', m?.project, 'the checkout most screens default to'],
+    ['backups', m?.backups, 'every file this app overwrites is copied here first'],
+  ]
+  return (
+    <div style={card}>
+      <b>Paths</b>
+      <div style={{ color: DIM, font: '400 12px sans-serif', margin: '6px 0 10px' }}>
+        Where this dashboard reads and writes. Nothing here is editable — these come from the server.
+      </div>
+      {err && <div style={{ color: RED, font: '400 12px monospace' }}>{err}</div>}
+      {!m && !err && <div style={{ color: DIM, font: '400 12px monospace' }}>loading…</div>}
+      {m && rows.map(([label, value, gloss]) => (
+        <div key={label} style={{ display: 'flex', gap: 12, padding: '4px 0', font: '400 12px monospace', alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <span style={{ color: DIM, width: 130, flexShrink: 0 }}>{label}</span>
+          {}
+          <span style={{ color: value ? 'var(--text-primary)' : DIM }}>{value || 'unknown'}</span>
+          <span style={{ color: DIM, flexBasis: '100%', fontSize: 11 }}>{gloss}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function SetupSection() {
   const [d, setD] = useState(null)
   const [err, setErr] = useState(null)
@@ -67,6 +87,8 @@ export default function SetupSection() {
       <StoryPoints d={d} reload={load} />
       <OrgTools d={d} reload={load} />
       <Notifications d={d} reload={load} />
+      <ModelPricing />
+      <Paths />
     </div>
   )
 }
@@ -348,7 +370,6 @@ function OrgTools({ d, reload }) {
   const ds = d.eng.designSystem || {}
   const [enabled, setEnabled] = useState(!!flag.enabled)
   const [emails, setEmails] = useState((flag.emails || []).join('\n'))
-  // one field, two sources: a URL is a Storybook build, anything else is a package name or path.
   const [dsSource, setDsSource] = useState(ds.storybook || ds.package || '')
   const [busy, setBusy] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -368,8 +389,6 @@ function OrgTools({ d, reload }) {
       reload()
     } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
   }
-  // Extract runs against what is TYPED, not what is saved, so a wrong package name is one click to
-  // find out about rather than a save + a terminal round-trip.
   const extract = async () => {
     setExtracting(true)
     try {
@@ -437,6 +456,207 @@ function Notifications({ d, reload }) {
           <button style={btn} disabled={busy} onClick={() => api.post('/api/notify/test').then(r => toast(r.ok ? 'Slack accepted the test message' : `Slack answered ${r.status}`, r.ok ? 'success' : 'error')).catch(e => toast(e.message, 'error'))}>Send test</button>
           <button style={danger} disabled={busy} onClick={() => confirm('Remove the stored Slack webhook?') && save({ slackWebhook: '' })}>Remove webhook</button>
         </>}
+      </div>
+    </Section>
+  )
+}
+
+// ---------- model pricing ----------
+const RATE_KEYS = ['in', 'out', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h']
+const RATE_LABEL = { in: 'input', out: 'output', cacheRead: 'cache read', cacheWrite5m: 'cache write 5m', cacheWrite1h: 'cache write 1h' }
+const rateInp = { ...inp, font: `400 12px ${MONO}`, padding: '6px 8px', textAlign: 'right' }
+
+const blankRule = () => ({ match: '', in: 0, out: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 })
+
+function ModelPricing() {
+  const [rules, setRules] = useState(null)
+  const [source, setSource] = useState(null)
+  const [unpriced, setUnpriced] = useState([])
+  const [open, setOpen] = useState({})
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = () => api.get('/api/pricing')
+    .then(p => { setRules(p.rules.map(r => ({ ...r }))); setSource(p.source) })
+    .catch(e => setErr(e.message))
+  useEffect(() => { load() }, [])
+  useEffect(() => { api.get('/api/usage').then(u => setUnpriced(u.unpricedModels || [])).catch(() => {}) }, [rules])
+
+  const set = (i, k, v) => setRules(rs => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)))
+  const setIntro = (i, k, v) => setRules(rs => rs.map((r, j) => (j === i ? { ...r, intro: { ...r.intro, [k]: v } } : r)))
+  const num = v => (v === '' ? '' : Number(v))
+
+  const toggleIntro = (i, on) => setRules(rs => rs.map((r, j) => {
+    if (j !== i) return r
+    if (!on) { const { intro, intro_until, ...rest } = r; return rest }
+    return { ...r, intro_until: '', intro: { in: 0, out: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } }
+  }))
+
+  const save = async () => {
+    setBusy(true); setErr('')
+    try {
+      const clean = rules.map(r => {
+        const out = r.id != null && r.id !== '' ? { id: r.id } : { match: r.match }
+        for (const k of RATE_KEYS) out[k] = Number(r[k]) || 0
+        if (r.intro_until) {
+          out.intro_until = r.intro_until
+          out.intro = {}
+          for (const k of RATE_KEYS) out.intro[k] = Number(r.intro?.[k]) || 0
+        }
+        return out
+      })
+      const p = await api.put('/api/pricing', { rules: clean })
+      setRules(p.rules.map(r => ({ ...r }))); setSource(p.source)
+      toast('Rates saved — every cost on every screen recomputes from these')
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  const reset = async () => {
+    setBusy(true); setErr('')
+    try {
+      const p = await api.put('/api/pricing', { rules: null })
+      setRules(p.rules.map(r => ({ ...r }))); setSource(p.source)
+      toast('Reset to the rates shipped with this build')
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  if (err && !rules) return <Section title="Model pricing" sub="could not load"><div style={{ color: RED, font: `400 12px ${MONO}` }}>{err}</div></Section>
+  if (!rules) return <Section title="Model pricing" sub="loading…"><div style={{ color: DIM, font: `400 12px ${MONO}` }}>loading…</div></Section>
+
+  return (
+    <Section
+      title="Model pricing"
+      sub={source === 'stored' ? 'your edited rates' : 'rates shipped with this build'}
+      right={<span style={{ display: 'flex', gap: 8 }}>
+        <button style={btn} onClick={() => setRules(rs => [...rs, blankRule()])} disabled={busy}>Add rule</button>
+        <button style={danger} onClick={reset} disabled={busy || source !== 'stored'} title={source === 'stored' ? 'discard your edits' : 'already on the shipped rates'}>Reset</button>
+        <button style={primary} onClick={save} disabled={busy}>Save</button>
+      </span>}
+    >
+      <div style={{ color: DIM, font: '400 12px sans-serif', lineHeight: 1.6, marginBottom: 12 }}>
+        USD per 1,000,000 tokens <b style={{ color: 'var(--text-primary)' }}>of that category</b> — output and cache
+        rates are listed per model, not derived from the input rate. The first matching rule wins:
+        exact <code style={{ font: `400 11px ${MONO}` }}>id</code> matches are tried before
+        substring <code style={{ font: `400 11px ${MONO}` }}>match</code> rules, so a dated snapshot can be
+        priced separately without a generic rule shadowing it. <b style={{ color: 'var(--text-primary)' }}>A model
+        with no rule here is left unpriced</b> — it contributes 0 rather than being billed at some other
+        model&apos;s rate, and is listed below so it cannot go unnoticed. Update these by hand when
+        Anthropic publishes new rates; sessions already on screen recompute immediately.
+      </div>
+
+      {unpriced.length > 0 && (
+        <div style={{ ...card, background: 'var(--bg-inset)', borderColor: GOLD + '55', padding: 12, marginBottom: 12 }}>
+          <b style={{ color: GOLD, font: `600 12px ${MONO}` }}>{unpriced.length} model{unpriced.length > 1 ? 's' : ''} in your history have no rate</b>
+          <div style={{ color: DIM, font: '400 11px sans-serif', margin: '4px 0 6px' }}>
+            Their tokens are counted but their cost is not — every total below is short by whatever these
+            actually cost. Add a rule for each, or accept the gap knowingly.
+          </div>
+          <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-primary)' }}>{unpriced.join(', ')}</div>
+        </div>
+      )}
+
+      {err && <div style={{ color: RED, font: `400 12px ${MONO}`, marginBottom: 10 }}>{err}</div>}
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', font: `600 10px ${MONO}`, letterSpacing: '.08em', textTransform: 'uppercase', color: DIM, padding: '0 6px 6px 0' }}>model</th>
+              {RATE_KEYS.map(k => (
+                <th key={k} style={{ textAlign: 'right', font: `600 10px ${MONO}`, letterSpacing: '.06em', textTransform: 'uppercase', color: DIM, padding: '0 6px 6px', whiteSpace: 'nowrap' }}>{RATE_LABEL[k]}</th>
+              ))}
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((r, i) => {
+              const exact = r.id != null && r.id !== ''
+              const hasIntro = !!r.intro_until || r.intro_until === ''
+              return (
+                <React.Fragment key={i}>
+                  <tr>
+                    <td style={{ padding: '3px 6px 3px 0' }}>
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <select
+                          value={exact ? 'id' : 'match'}
+                          onChange={e => setRules(rs => rs.map((x, j) => {
+                            if (j !== i) return x
+                            const sel = x.id ?? x.match ?? ''
+                            const { id, match, ...rest } = x
+                            return e.target.value === 'id' ? { ...rest, id: sel } : { ...rest, match: sel }
+                          }))}
+                          style={{ ...inp, width: 78, padding: '5px 4px', font: `400 11px ${MONO}` }}
+                          aria-label={`selector kind for rule ${i + 1}`}
+                        >
+                          <option value="match">match</option>
+                          <option value="id">exact</option>
+                        </select>
+                        <input
+                          style={{ ...inp, font: `400 12px ${MONO}`, padding: '6px 8px', minWidth: 200 }}
+                          value={exact ? r.id : (r.match ?? '')}
+                          onChange={e => set(i, exact ? 'id' : 'match', e.target.value)}
+                          placeholder="claude-opus-5"
+                          aria-label={`model for rule ${i + 1}`}
+                        />
+                      </div>
+                    </td>
+                    {RATE_KEYS.map(k => (
+                      <td key={k} style={{ padding: '3px 6px' }}>
+                        <input type="number" min="0" step="0.01" style={{ ...rateInp, width: 88 }}
+                          value={r[k]} onChange={e => set(i, k, num(e.target.value))}
+                          aria-label={`${RATE_LABEL[k]} rate for ${r.id || r.match || `rule ${i + 1}`}`} />
+                      </td>
+                    ))}
+                    <td style={{ padding: '3px 0 3px 6px', whiteSpace: 'nowrap' }}>
+                      <button style={{ ...btn, padding: '5px 8px', font: `500 11px ${MONO}` }}
+                        onClick={() => setOpen(o => ({ ...o, [i]: !o[i] }))}
+                        title="time-limited introductory rates">{open[i] ? '▾' : '▸'} promo</button>
+                      <button style={{ ...btn, padding: '5px 8px', marginLeft: 4, color: RED, borderColor: RED + '44' }}
+                        onClick={() => setRules(rs => rs.filter((_, j) => j !== i))}
+                        aria-label={`remove rule ${i + 1}`}>✕</button>
+                    </td>
+                  </tr>
+                  {open[i] && (
+                    <tr>
+                      <td colSpan={RATE_KEYS.length + 2} style={{ padding: '0 0 10px' }}>
+                        <div style={{ ...card, background: 'var(--bg-inset)', padding: 10 }}>
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <label style={{ display: 'flex', gap: 6, alignItems: 'center', font: `400 11px ${MONO}`, color: DIM }}>
+                              <input type="checkbox" checked={hasIntro} onChange={e => toggleIntro(i, e.target.checked)} />
+                              introductory rates until
+                            </label>
+                            <input
+                              style={{ ...inp, width: 130, font: `400 12px ${MONO}`, padding: '6px 8px' }}
+                              placeholder="YYYY-MM-DD" value={r.intro_until ?? ''} disabled={!hasIntro}
+                              onChange={e => set(i, 'intro_until', e.target.value)}
+                              aria-label={`promo cutoff date for ${r.id || r.match || `rule ${i + 1}`}`} />
+                            <span style={{ font: '400 11px sans-serif', color: DIM, flex: 1, minWidth: 220 }}>
+                              Usage on or before this date prices at the rates below; after it, at the standard
+                              rates above. Each day is priced at the rate in effect that day, so history stays
+                              correct once the promo ends. Leave the date empty for no promo.
+                            </span>
+                          </div>
+                          {hasIntro && (
+                            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                              {RATE_KEYS.map(k => (
+                                <label key={k} style={{ font: `400 10px ${MONO}`, color: DIM }}>
+                                  <div style={{ marginBottom: 3 }}>{RATE_LABEL[k]}</div>
+                                  <input type="number" min="0" step="0.01" style={{ ...rateInp, width: 88 }}
+                                    value={r.intro?.[k] ?? 0} onChange={e => setIntro(i, k, num(e.target.value))}
+                                    aria-label={`introductory ${RATE_LABEL[k]} rate for ${r.id || r.match || `rule ${i + 1}`}`} />
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </Section>
   )

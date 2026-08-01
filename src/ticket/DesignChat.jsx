@@ -1,17 +1,8 @@
 import React, { useRef, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import { marked } from 'marked'
 import { api, toast } from '../lib/api.js'
 
-// Chat scoped to the design.
-//
-// Two rules, both from what this pattern gets wrong elsewhere:
-//
-//  1. THE ASSISTANT NEVER WRITES THE GRAPH. It proposes an op list; the user picks which ops to
-//     apply. An assistant with write access turns every hallucination into a silent edit of the
-//     artifact you were using it to check.
-//  2. THERE IS NEVER AN EMPTY BOX. A bare text input invites vague questions and returns vague
-//     answers, so the starter actions are built from the ACTUAL graph and re-scope to whatever is
-//     selected. Chat is for generation and progression; the canvas is for orientation.
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)'
 const mini = { padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-surface)', color: 'var(--text-primary)', cursor: 'pointer', font: '500 11px var(--body)', textAlign: 'left' }
@@ -29,13 +20,12 @@ const describe = o => {
 }
 
 export default function DesignChat({ tKey, workspace, graph, selected, rev, onApplied }) {
-  const [log, setLog] = useState([])   // {role, text} | {role:'ops', ops, chosen:Set, applied}
+  const [log, setLog] = useState([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const taRef = useRef(null)
 
   const node = selected ? graph.nodes.find(n => n.id === selected) : null
-  // Starter actions carry a FINDING, not just a prompt — "(7 connections)" is why you would click it.
   const seeds = node
     ? [`Split “${node.data.label}” — is it doing too much?`,
        `What calls “${node.data.label}”?`,
@@ -96,11 +86,10 @@ export default function DesignChat({ tKey, workspace, graph, selected, rev, onAp
           if (e.role === 'error') return <div key={i} className="chat-line err">{e.text}</div>
           if (e.role === 'assistant') return (
             <div key={i}>
-              <div className="chat-msg assistant" style={{ maxWidth: '100%' }} dangerouslySetInnerHTML={{ __html: marked.parse(e.text || '') }} />
+              <Markdown source={e.text || ''} className="chat-msg assistant" style={{ maxWidth: '100%' }} />
               {e.cost != null && <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-secondary)', paddingLeft: 6 }}>${Number(e.cost).toFixed(3)}</div>}
             </div>
           )
-          // op card — a form, not conversation, so it renders as one
           return (
             <div key={i} style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: 9, background: 'var(--bg-base)' }}>
               <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>
@@ -118,8 +107,7 @@ export default function DesignChat({ tKey, workspace, graph, selected, rev, onAp
                   <span style={{ flex: 1 }}>{describe(o)}</span>
                 </label>
               ))}
-              {/* destructive ops start UNCHECKED — accept-all is how a proposal becomes an edit
-                  nobody reviewed */}
+              {}
               {e.applied
                 ? <div style={{ font: `400 10px ${MONO}`, color: e.applied.bad.length ? 'var(--amber)' : 'var(--green)', marginTop: 6 }}>
                     ✓ applied {e.applied.ok}{e.applied.bad.length ? ` · ${e.applied.bad.length} could not be applied: ${e.applied.bad[0].error}` : ''}

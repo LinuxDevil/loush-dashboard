@@ -1,9 +1,3 @@
-// Tests for lib/adf.mjs.
-//
-// The headline case is `[object Object]`: JIRA comment bodies arrive as ADF, server/eng.mjs passed
-// them to htmlToText() whose first act is String(html), and the resulting literal string was fed
-// into every acceptance-criteria and test-case prompt. That regression is pinned first and
-// explicitly, because it was invisible — the generated output still looked well-formed.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -13,7 +7,6 @@ const doc = (...content) => ({ type: 'doc', version: 1, content })
 const para = (...t) => ({ type: 'paragraph', content: t.map(x => (typeof x === 'string' ? { type: 'text', text: x } : x)) })
 const txt = s => ({ type: 'text', text: s })
 
-// ── the regression this module exists for ────────────────────────────────────────────────────────
 test('ADF comment body does not stringify to [object Object]', () => {
   const body = doc(para('The retry must be idempotent.'))
   const { text } = adfToText(body)
@@ -22,7 +15,6 @@ test('ADF comment body does not stringify to [object Object]', () => {
 })
 
 test('the old htmlToText path is what produced [object Object] — proving the bug was real', () => {
-  // htmlToText's first act, reproduced: String(adfObject).
   assert.equal(String(doc(para('hi'))), '[object Object]')
 })
 
@@ -34,9 +26,6 @@ test('isAdf distinguishes an ADF doc from rendered HTML', () => {
 })
 
 test('a content-less ADF doc is still claimed by the walker, not leaked to htmlToText', () => {
-  // If isAdf required Array.isArray(content), this shape would fall through to htmlToText and
-  // stringify to "[object Object]" — the precise bug this module exists to prevent. Claiming it
-  // costs nothing (adfToText returns '') and closes the hole.
   assert.equal(isAdf({ type: 'doc', version: 1 }), true)
   assert.equal(adfToText({ type: 'doc', version: 1 }).text, '')
 })
@@ -46,7 +35,6 @@ test('a string passes through untouched — rendered HTML is not this module job
   assert.deepEqual(adfToText(null), { text: '', warnings: [] })
 })
 
-// ── structure that carries requirements ──────────────────────────────────────────────────────────
 test('nested bullet lists keep their nesting', () => {
   const d = doc({
     type: 'bulletList',
@@ -93,7 +81,7 @@ test('a requirement stated in a table cell is not lost', () => {
   })
   const { text } = adfToText(d)
   assert.ok(text.includes('must be unique'), text)
-  assert.ok(text.includes('| --- | --- |'), text)   // header separator emitted
+  assert.ok(text.includes('| --- | --- |'), text)
 })
 
 test('code blocks keep their fence and language', () => {
@@ -128,12 +116,11 @@ test('headings, rules and blockquotes render', () => {
   assert.equal(adfToText(d).text, '## Scope\n> out of scope: mobile\n---')
 })
 
-// ── honesty: never drop content silently ─────────────────────────────────────────────────────────
 test('an unknown wrapper node recurses instead of dropping its text', () => {
   const d = doc({ type: 'someFutureBlock', content: [para('still important')] })
   const { text, warnings } = adfToText(d)
   assert.equal(text, 'still important')
-  assert.deepEqual(warnings, [])   // nothing was lost, so nothing is warned about
+  assert.deepEqual(warnings, [])
 })
 
 test('a childless unknown node is reported in warnings rather than vanishing', () => {
@@ -147,12 +134,11 @@ test('media is reported as omitted', () => {
   assert.ok(warnings.includes('media'), JSON.stringify(warnings))
 })
 
-// ── markdown -> ADF (posting back to JIRA) ───────────────────────────────────────────────────────
 test('markdownToAdf always returns a legal document', () => {
   const empty = markdownToAdf('')
   assert.equal(empty.type, 'doc')
   assert.equal(empty.version, 1)
-  assert.equal(empty.content.length, 1)   // an empty content array is rejected by JIRA
+  assert.equal(empty.content.length, 1)
 })
 
 test('markdownToAdf maps headings, bullets, ordered lists and code', () => {

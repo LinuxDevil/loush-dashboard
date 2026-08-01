@@ -1,15 +1,3 @@
-// src/sections/TodosSection.jsx — the full-screen TODO board.
-//
-// One day at a time, seven delivery stages, and every row filed under the directory and file it
-// belongs to. The two views are the same todos read two ways:
-//
-//   BOARD  by stage — "what is stuck in Code review" — the planning question.
-//   TREE   by directory → file — "what is outstanding in src/sections" — the code question, and the
-//          reason this list is worth having next to a Working Set rather than in a notes app.
-//
-// The Suggest panel is the join to real data: it lists the files the agent actually edited on the
-// selected day, in the selected repo, straight from the transcripts, and files them as Draft todos
-// already bound to their path. A day therefore starts from what happened, not from an empty box.
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
@@ -21,17 +9,14 @@ import {
 
 const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 
 // ---------------------------------------------------------------------------
-// day header
 // ---------------------------------------------------------------------------
 
 function DayBar({ date, setDate, stats, carry, ahead, days, settings, onRollNow }) {
   const today = dayKey()
   const has = new Set(days || [])
-  // Seven days ending on the selected one — enough to see the week without a calendar widget, and
-  // dots mark the days that actually hold something so an empty day is never a dead end.
   const strip = Array.from({ length: 7 }, (_, i) => shiftDay(date, i - 6))
   return (
     <div style={{ ...PANEL, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -53,8 +38,7 @@ function DayBar({ date, setDate, stats, carry, ahead, days, settings, onRollNow 
           {ahead > 0 && <span> · {ahead} ahead</span>}
         </div>
       </div>
-      {/* Roll-over changes data without the user asking, so it is stated and switchable here rather
-          than being a hidden policy someone discovers when yesterday's list appears on today's. */}
+      {}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
         <label title="unfinished todos move to the current day automatically, once per day"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 5, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', cursor: 'pointer' }}>
@@ -83,7 +67,6 @@ function DayBar({ date, setDate, stats, carry, ahead, days, settings, onRollNow 
 }
 
 // ---------------------------------------------------------------------------
-// capture
 // ---------------------------------------------------------------------------
 
 function QuickAdd({ date, root, dirs }) {
@@ -104,8 +87,7 @@ function QuickAdd({ date, root, dirs }) {
       <select value={status} onChange={e => setStatus(e.target.value)} aria-label="stage">
         {STATUSES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
-      {/* Path binding is optional and comes from the files the agent touched — a free-text path field
-          invites typos that file a todo under a directory that does not exist. */}
+      {}
       <select value={file} onChange={e => setFile(e.target.value)} aria-label="file"
         style={{ maxWidth: 280 }} disabled={!dirs.length}>
         <option value="">{dirs.length ? 'no file' : 'no agent history for this day'}</option>
@@ -121,7 +103,6 @@ function QuickAdd({ date, root, dirs }) {
 }
 
 // ---------------------------------------------------------------------------
-// views
 // ---------------------------------------------------------------------------
 
 function Board({ todos, onOpenFile, jiraConfig }) {
@@ -148,9 +129,6 @@ function Board({ todos, onOpenFile, jiraConfig }) {
   )
 }
 
-// Declared at module level ON PURPOSE. As a function defined inside Tree it was a NEW component type
-// on every render, so React unmounted and remounted the whole subtree whenever the day reloaded —
-// which silently collapsed any card the user had open, mid-typing, every time a todo changed.
 const Group = ({ open, onToggle, head, children }) => (
   <div style={{ ...PANEL, padding: 0, overflow: 'hidden' }}>
     <div onClick={onToggle}
@@ -178,7 +156,7 @@ function Tree({ todos, onOpenFile, jiraConfig }) {
             </span>
           </>
         }>
-          {/* directory-level todos first — they are not "in" any one file */}
+          {}
           {d.todos.map(t => <TodoCard key={t.id} todo={t} onOpenFile={onOpenFile} jiraConfig={jiraConfig} />)}
           {d.files.map(f => (
             <div key={f.file} style={{ borderLeft: '1px solid var(--border-subtle)', paddingLeft: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -206,7 +184,6 @@ function Tree({ todos, onOpenFile, jiraConfig }) {
 }
 
 // ---------------------------------------------------------------------------
-// insights — day / week / month
 // ---------------------------------------------------------------------------
 
 const KPI = ({ label, value, sub, tone }) => (
@@ -272,7 +249,7 @@ function Insights({ date, root }) {
             <KPI label="linked to JIRA" value={d.counts.linkedToJira} sub={`${d.byJira.length} ticket${d.byJira.length === 1 ? '' : 's'}`} />
           </div>
 
-          {/* time in each column — the answer to "where does the work actually sit" */}
+          {}
           <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <div style={{ font: `600 13px ${HEAD}` }}>Time in each column</div>
@@ -291,7 +268,7 @@ function Insights({ date, root }) {
                 <div style={{ flex: 1, height: 8, background: 'var(--bg-inset)', borderRadius: 4, overflow: 'hidden' }}>
                   <div style={{ width: `${Math.round((s.totalMs / maxStage) * 100)}%`, height: '100%', background: statusMeta(s.status).color, opacity: 0.8 }} />
                 </div>
-                {/* n travels with every aggregate — a 3-day median built from one card must look like one card */}
+                {}
                 <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', width: 210, textAlign: 'right', flexShrink: 0 }}>
                   {s.n ? `${humanMs(s.totalMs)} total · median ${humanMs(s.medianMs)} · n=${s.n}` : '—'}
                 </span>
@@ -304,12 +281,10 @@ function Insights({ date, root }) {
             )}
           </div>
 
-          {/* throughput */}
+          {}
           <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ font: `600 13px ${HEAD}` }}>Created vs completed{d.range.period === 'day' ? ', by hour' : ', by day'}</div>
-            {/* An axis with no bars reads as a broken chart. When the window genuinely holds no
-                create/complete events — work in flight from earlier days, which is a normal state —
-                say that, and keep the (empty) axis below it rather than implying a rendering failure. */}
+            {}
             {!d.series.some(b => b.created || b.completed) && (
               <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
                 Nothing was created or completed in this window — the {d.counts.active} active todo
@@ -334,7 +309,7 @@ function Insights({ date, root }) {
           </div>
 
           <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {/* aging — the honest cost of roll-over */}
+            {}
             <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ font: `600 13px ${HEAD}` }}>Carried forward the longest</div>
               {!d.aging.length ? (
@@ -349,7 +324,7 @@ function Insights({ date, root }) {
               ))}
             </div>
 
-            {/* where the work lives, in the code and on the board */}
+            {}
             <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ font: `600 13px ${HEAD}` }}>By directory</div>
               {!d.byDir.length ? (
@@ -387,7 +362,6 @@ function Insights({ date, root }) {
 }
 
 // ---------------------------------------------------------------------------
-// suggestions — what the agent actually did on this day
 // ---------------------------------------------------------------------------
 
 function Suggest({ date, root, sug, onRoot }) {
@@ -457,7 +431,6 @@ function Suggest({ date, root, sug, onRoot }) {
 }
 
 // ---------------------------------------------------------------------------
-// section
 // ---------------------------------------------------------------------------
 
 export default function TodosSection() {
@@ -468,8 +441,6 @@ export default function TodosSection() {
   const [sug, setSug] = useState(null)
   const { data, err } = useTodoDay(date, root)
 
-  // The suggestion payload is the day's raw agent activity — it re-reads whenever the day or the repo
-  // changes, and after an import so "already filed" stops lying.
   const loadSug = () => todoApi.suggest(date, root).then(s => {
     setSug(s)
     if (s.root && s.root !== root) setRoot(s.root)
@@ -481,8 +452,6 @@ export default function TodosSection() {
     return () => window.removeEventListener('todos-changed', on)
   }, [date, root])
 
-  // Seed a Claude session with the file's real working context (blast radius, recent hunks, the tool
-  // errors already hit on it) — the same hand-off Bugs and Library use, not a new mechanism.
   const openFile = async todo => {
     if (!todo.file) return
     const r = todo.root || root
@@ -507,7 +476,7 @@ export default function TodosSection() {
           .catch(e => toast(e.message, 'error'))} />
       <QuickAdd date={date} root={root} dirs={dirs} />
 
-      {/* Unfinished work from earlier days. Visible and movable, never silently hidden by the date scope. */}
+      {}
       {data.carry.length > 0 && (
         <div style={{ ...PANEL, borderColor: 'var(--amber)', background: 'var(--amber-bg)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

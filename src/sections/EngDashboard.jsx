@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import { marked } from 'marked'
 import {
   HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, STEEL, DIM, HI, PANEL, AVATARS,
@@ -20,36 +21,18 @@ import Compare from '../eng/Compare.jsx'
 import Epics from '../eng/Epics.jsx'
 import CIHealth from '../eng/CI.jsx'
 import Load from '../eng/Load.jsx'
+import ReadyBlocked from '../eng/ReadyBlocked.jsx'
 import Export from '../eng/Export.jsx'
 import CmdK from '../eng/CmdK.jsx'
 import { metricsFor, buildRadars, MemberCard, MemberDetail } from '../eng/MemberInsights.jsx'
 
-// Engineering Metrics — self-contained shell.
-// The Attention Queue is the landing route: three of four personas open this app to answer "what do I do
-// in the next twenty minutes", and Overview answered none of it. Overview is now the second click.
-//
-// DELETED, not hidden (all four personas, incl. both managers, demanded it):
-//   · memberRadar/Radar — five invented composites scored 0-100 per person. "Dev Quality" DROPPED when a
-//     reviewer requested changes; it punished an engineer for getting good review.
-//   · Workload's "Bug ratio — caused/tickets" and "Bugs owned — he caused" and the owner→fixer pair board,
-//     all built on guessed attribution (fixer = whoever dragged the card, routinely QA).
-//   · bestSP() and both call sites — it literally coached engineers to re-point a finished ticket so the
-//     estimation metric goes green. Goodhart's law shipped as a feature.
-//   · the Arcade tab + GameStrip — gamified delivery metrics produce gamed delivery metrics.
-//   · the `board` route (a pure duplicate of `sprint`), and the OKR tab's private Q3/Q4 toggle (a live
-//     correctness bug: it swapped objective definitions while measures came from the month-filtered set).
-// There is no view/lens/role switcher anywhere in here. The Time Lens is a time window. "Mine" is a filter
-// over identical rows.
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const BOARD_ORDER = ['PM Backlog', 'Backlog', 'To Do', 'In Progress', 'In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'Reopen', 'Re Open', 'Reopened', 'Ready for Release', 'Live', 'QA Blocked', 'Closed']
 const onTeam = i => !!(i.assigneeTeam || i.devAssignee)
 const accColor = a => (a >= 85 ? GREEN : a >= 75 ? GOLD : RED)
 
-// story points ↔ estimate: the org's table. Kept for estimate ERROR (a retro diagnostic).
-// bestSP() is DELETED — say nothing about what the estimate "should have been".
 const SP_DAYS = [[1, 0.4], [2, 0.8], [3, 1.5], [5, 3], [8, 6], [13, 10], [21, 22]]
 const estDaysOf = p => (SP_DAYS.find(x => x[0] === p) || [0, 0])[1]
-// client mirror of the server's recFor() budgets — used ONLY to normalize time-in-stage against its budget
 const stageBudget = (status, pts) => {
   const n = lc(status)
   if (n === 'in progress') return Math.max(0.5, estDaysOf(pts) || 1.5)
@@ -60,11 +43,6 @@ const stageBudget = (status, pts) => {
 const WAITING = ['In Code Review', 'Ready for QA', 'Design QA', 'In QA (Dev)', 'In QA', 'QA Blocked', 'Ready for Release']
 
 // ---------- identity: "mine" is a real filter, not a dropdown of colleagues ----------
-// All three come from /api/eng/me, which asks JIRA `/myself` behind the configured token and the `gh`
-// CLI for the GitHub login — so identity is DERIVED from the credentials you already set in Setup and
-// never stored in this repo. Any field may be null; the endpoint never 500s.
-// (This previously read ~/.claude/career.json via /api/career/config — a route this server does not
-//  serve, so `accountId` was always '' and "mine" silently degraded to an email-only match.)
 function useMe(members) {
   const [me, setMe] = useState(null)
   const [gh, setGh] = useState(() => localStorage.getItem('eng.me.gh') || '')
@@ -116,13 +94,13 @@ export default function EngDashboard({ onExit }) {
   const win = useMemo(() => resolveWindow(url.win, S?.sprints, url.from, url.to), [url.win, url.from, url.to, S?.sprints])
 
   const NAV = [
-    ['queue', 'Queue', '⚑'], ['overview', 'Overview', '▦'], ['review', 'Review', '⟨⟩'], ['quality', 'Quality', '◈'],
+    ['queue', 'Queue', '⚑'], ['ready', 'Ready / Blocked', '⇉'], ['overview', 'Overview', '▦'], ['review', 'Review', '⟨⟩'], ['quality', 'Quality', '◈'],
     ['investment', 'Investment', '◑'], ['sprints', 'Predictability', '◔'], ['epics', 'Epics', '⬡'], ['ci', 'CI', '⚙'],
     ['projects', 'Projects', '⊞'], ['load', 'Load', '☰'], ['sprint', 'Board', '▤'], ['members', 'Members', '◍'],
     ['okrs', 'OKRs', '◎'], ['export', 'Export', '↧'],
   ]
   const shell = children => (
-    <div style={{ minHeight: '100vh', color: 'var(--text-primary)', fontFamily: BODY, background: 'radial-gradient(950px 440px at 18% -10%,var(--bg-surface-active),transparent 60%),radial-gradient(760px 400px at 104% -4%,var(--blue-bg),transparent 55%),var(--bg-base)' }}>
+    <div style={{ minHeight: '100vh', color: 'var(--text-primary)', fontFamily: BODY, background: 'var(--bg-base)' }}>
       <TopBar team={S?.team} projects={projects} project={project} onProject={selectProject} nav={NAV}
         onAdd={() => setConfig({ mode: 'new' })} onEdit={() => project && project !== 'all' && setConfig({ mode: 'edit', key: project })}
         route={route} setRoute={r => setUrl({ route: r })} url={url} setUrl={setUrl} win={win} sprints={S?.sprints}
@@ -151,6 +129,7 @@ export default function EngDashboard({ onExit }) {
 
   return shell(
     route === 'queue' ? <AttentionQueue snap={S} me={me} mine={url.mine === '1'} setMine={v => setUrl({ mine: v ? '1' : '' })} project={project} onOpenTicket={openTicket} reload={() => load(true)} />
+      : route === 'ready' ? <ReadyBlocked project={project} onOpenTicket={openTicket} />
       : route === 'overview' ? <Overview {...common} />
       : route === 'review' ? <ReviewFlow snap={S} project={project} />
       : route === 'quality' ? <Quality snap={S} issues={issues} members={members} patch={patchIssue} reload={() => load(false)} />
@@ -173,10 +152,10 @@ function TopBar({ team, projects, project, onProject, onAdd, onEdit, route, setR
   const repoShort = r => (r || '').split('/')[1] || r
   const activeName = project === 'all' ? 'All projects' : (projects.find(p => p.key === project)?.name || team?.name || '')
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', borderBottom: '1px solid var(--border-default)' }}>
+    <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--bg-base)', borderBottom: '1px solid var(--border-default)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 22px 0', maxWidth: 1320, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--accent-light),var(--accent-dark))', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'none' }}>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'none' }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 20V11M10 20V4M16 20v-6M22 20V8" strokeWidth="2.6" strokeLinecap="round"  style={{ stroke: 'var(--bg-surface-active)' }} /></svg>
           </div>
           <div>
@@ -229,8 +208,6 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
   const cyc = of(shipped, i => pos(i.delivery))
   const cycPrev = of(shippedPrev, i => pos(i.delivery))
   const lead = of(shipped, i => pos(i.leadDays))
-  // the lead-minus-cycle gap is only honest over the SAME tickets — lead exists for every shipped ticket,
-  // cycle only for the ones that ever entered In Progress. Differencing two different sets invents a number.
   const gap = of(shipped.filter(i => i.delivery > 0 && i.leadDays > 0), i => i.leadDays - i.delivery)
   const R = S.review || {}
   const qa = of(shipped, i => i.qaCycles)
@@ -253,13 +230,10 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
     { v: String(staleN), l: 'stale', c: staleN ? RED : DIM },
   ]
 
-  // §2 THE artifact — one dot per ticket, p85 across. The tail is the story.
   const points = shipped.filter(i => i.delivery > 0 && (i.liveAt || i.closedAt)).map(i => ({
     x: Date.parse(i.liveAt || i.closedAt), y: i.delivery, color: typeColor(i.type), type: i.type, label: i.key, sub: i.assignee?.name, key: i.key,
   }))
 
-  // §2 — normalized time-in-stage: p50/p90 per status AGAINST that status's budget. Replaces "Where time
-  // goes", which summed days across ALL tickets so the status with the most tickets always looked worst.
   const stages = ['In Progress', 'In Code Review', 'Ready for QA', 'In QA (Dev)', 'QA Blocked'].map(st => {
     const vals = issues.map(i => i.daysIn?.[st]).filter(v => v > 0.01)
     const s = stat(vals)
@@ -269,7 +243,6 @@ function Overview({ S, issues, shipped, active, members, prs, win, onOpenTicket 
   })
   const stMax = Math.max(1, ...stages.map(x => x.s.p90 || 0), ...stages.map(x => x.budget || 0))
 
-  // lead vs cycle, 6 months — the gap is "time it sat waiting on us"
   const trend = []
   for (let k = 5; k >= 0; k--) {
     const d = new Date(); d.setMonth(d.getMonth() - k)
@@ -373,8 +346,6 @@ function colsFor(items) {
   const oset = new Set(ordered.map(lc))
   return [...ordered, ...present.filter(s => !oset.has(lc(s)))]
 }
-// per-ticket hover: days in column · when to move · the MINE-vs-WAITING split (§12).
-// The "set it to 5pt for ≥90% estimate accuracy" row is DELETED — it coached people to game the metric.
 function IssueTip({ i, children }) {
   const [pos, setPos] = useState(null)
   const rec = i.rec
@@ -434,11 +405,11 @@ const RoleChip = ({ label, name, c }) => <span style={{ display: 'inline-flex', 
 function ColumnsBoard({ items, minCol = 232, onOpen }) {
   const cols = colsFor(items)
   if (!items.length) return <Empty text="Nothing here." />
-  return <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 6 }}>
+  return <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, overflow: 'auto', maxHeight: 'calc(100vh - 250px)', paddingBottom: 6 }}>
     {cols.map(col => {
       const its = items.filter(i => lc(i.status) === lc(col))
       return <div key={col} style={{ flex: `0 0 ${minCol}px`, width: minCol, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 4px' }}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', gap: 7, padding: '2px 4px 6px' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(col) }} />
           <span style={{ font: `600 11px ${BODY}`, color: 'var(--text-secondary)' }}>{col}</span>
           <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{its.length}</span>
@@ -451,7 +422,6 @@ function ColumnsBoard({ items, minCol = 232, onOpen }) {
     })}
   </div>
 }
-// sprint header stats — percentiles, no averages
 function sprintStats(items) {
   const done = items.filter(i => i.live)
   const cyc = of(done, i => pos(i.delivery))
@@ -571,7 +541,6 @@ const Sec = ({ title, right, children }) => <div style={{ ...PANEL, padding: '13
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
     <div style={{ font: `600 12px ${HEAD}`, color: HI, letterSpacing: '0.02em' }}>{title}</div>{right}</div>
   {children}</div>
-// rule-based insights. The "re-point this to 5pt so estimation goes green" line is DELETED.
 function insightsFor(i) {
   const out = []
   if (i.rec) {
@@ -618,8 +587,9 @@ function TicketDetail({ issue: i, onClose }) {
   const artMeta = { ac: { title: 'Acceptance Criteria', noun: 'acceptance criteria' }, tests: { title: 'Test Cases', noun: 'test cases' } }
   const nudge = `${i.assignee?.name || 'team'}: ${i.key} "${i.summary}" has been in ${i.status} for ${fx(i.inCurrent)} working days${i.rec?.atRisk ? ` — ${fx(Math.abs(i.rec.remaining))}d over its ${fx(i.rec.budget)}d budget` : ''}. ${i.url || ''}`
 
-  return <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'var(--bg-base)', display: 'flex', justifyContent: 'flex-end' }}>
-    <div onClick={e => e.stopPropagation()} style={{ width: 560, maxWidth: '96vw', height: '100vh', overflowY: 'auto', background: 'linear-gradient(180deg,var(--bg-surface),var(--bg-base))', borderLeft: '1px solid var(--border-default)', padding: '18px 20px 60px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+  // ponytail: reuses the app's existing .drawer-overlay / .drawer pair (styles.css) instead of a
+  return <div className="drawer-overlay" onClick={onClose} style={{ zIndex: 90 }}>
+    <div className="drawer" onClick={e => e.stopPropagation()} style={{ zIndex: 91, width: 560, maxWidth: '96vw', overflowY: 'auto', background: 'var(--bg-elevated)', padding: '18px 20px 60px', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TicketLink i={i} style={{ font: `600 12px ${MONO}` }} /><ProjTag k={i.project} /><span style={{ width: 7, height: 7, borderRadius: '50%', background: colorFor(i.status) }} /><span style={{ font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{i.status}</span></div>
@@ -702,7 +672,7 @@ function TicketDetail({ issue: i, onClose }) {
               <div style={{ display: 'flex', gap: 8 }}><button style={primaryBtn} onClick={() => save(kind, edit.md)}>save</button><button style={miniBtn} onClick={() => setEdit(null)}>cancel</button></div>
             </div> : a && <>
               {a.stale && <div style={{ font: `400 10px ${MONO}`, color: GOLD, marginBottom: 6 }}>⚠ ticket changed since this was generated — regenerate to refresh</div>}
-              <div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(a.md) }} />
+              <Markdown source={a.md} />
               <div style={{ font: `400 10px ${MONO}`, color: DIM, marginTop: 8 }}>{a.edited ? 'hand-edited' : `generated by ${a.model || 'claude'}`} · {fdate(a.at)}</div>
             </>}
           </Sec>
@@ -714,9 +684,6 @@ function TicketDetail({ issue: i, onClose }) {
 
 // ---------------- OKRS — no private quarter toggle. It inherits the global Time Lens. ----------------
 function Okrs({ S, issues, shipped, prs, win }) {
-  // The old tab had its own Q3/Q4 switch that swapped objective DEFINITIONS while every measure was still
-  // computed from the month-filtered set — so every percentage on screen was mislabelled. Fixed by deletion:
-  // the quarter is whatever quarter the Time Lens window ends in, and the measures come from that window.
   const q = `Q${Math.floor(new Date(win.to).getMonth() / 3) + 1}`
   const quarter = (S.okrs?.[q] ? q : Object.keys(S.okrs || {})[0]) || 'Q3'
   const merged = prs.filter(p => p.mergedAt)
@@ -728,7 +695,6 @@ function Okrs({ S, issues, shipped, prs, win }) {
     const cohort = live.filter(i => key(i) === minK)
     return of(cohort, i => pos(i.dev)).p50 || of(live, i => pos(i.dev)).p50 || 1
   })()
-  // every measure is now a MEDIAN, not a mean — a single 40-day ticket used to move these rings on its own
   const auto = {
     devTime: of(shipped, i => pos(i.dev)).p50,
     crTime: of(shipped, i => pos(i.cr)).p50,
@@ -871,9 +837,6 @@ function CredsForm({ onSaved }) {
     <button onClick={submit} disabled={busy || !f.email || !f.token} style={{ ...primaryBtn, alignSelf: 'flex-start', padding: '8px 16px', fontSize: 13 }}>{busy ? 'Saving…' : 'Save & connect'}</button>
   </div>
 }
-// Cold `snapshot?project=all` is slow (~30–65s uncached), so this is what the user stares at the longest.
-// A shimmer skeleton that mimics the real layout (header, the KPI row, a tall chart) reads as "loading",
-// not "broken/empty" — .skel snaps to a static panel under prefers-reduced-motion.
 function Loading() {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>

@@ -1,9 +1,3 @@
-// Tests for the org-specific tool-bundle flag (projects.json -> Company_Tools).
-//
-// The Constitution reader and Figma Capture were deleted wholesale because they are useless outside
-// the org whose repo layout they assume. That was half right: for that org they are load-bearing.
-// The flag is the middle ground, so its semantics need pinning — particularly the default, because
-// a feature flag that defaults ON is how someone else's tools ended up in everyone's sidebar.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -66,21 +60,16 @@ test('parseEngConfig carries the flag through both accepted shapes', () => {
 })
 
 test('Company_Tools is the canonical key, with camelCase spellings tolerated', () => {
-  // A hand-edited config file that silently ignores a key is indistinguishable from a broken feature.
   assert.equal(parseEngConfig({ Company_Tools: true }).companyTools.enabled, true)
   assert.equal(parseEngConfig({ companyTools: true }).companyTools.enabled, true)
   assert.equal(parseEngConfig({ company_tools: true }).companyTools.enabled, true)
-  // and the canonical key wins if somehow both are present
   assert.equal(parseEngConfig({ Company_Tools: false, companyTools: true }).companyTools.enabled, false)
 })
 
 test('the pre-rename Almosafer_Tools key still works, but Company_Tools wins', () => {
-  // Renaming the key must not silently disable the bundle for anyone who already had it on: an
-  // existing config would otherwise parse clean and just stop mounting the routes.
   assert.equal(parseEngConfig({ Almosafer_Tools: true }).companyTools.enabled, true)
   assert.equal(parseEngConfig({ almosaferTools: true }).companyTools.enabled, true)
   assert.equal(parseEngConfig({ almosafer_tools: true }).companyTools.enabled, true)
-  // the new name is authoritative when both are on disk, so a stale key cannot override a fresh save
   assert.equal(parseEngConfig({ Company_Tools: false, Almosafer_Tools: true }).companyTools.enabled, false)
 })
 
@@ -89,7 +78,6 @@ test('designSystem accepts a package, a storybook URL, or a bare string', () => 
   assert.deepEqual(normalizeDesignSystem('@org/ds'), { package: '@org/ds', storybook: null })
   assert.deepEqual(normalizeDesignSystem({ package: '@org/ds' }), { package: '@org/ds', storybook: null })
   assert.deepEqual(normalizeDesignSystem({ storybook: 'https://x.io/ds/' }), { package: null, storybook: 'https://x.io/ds/' })
-  // blank-but-present is "unset", not a source that will fail at extraction time
   for (const junk of [null, undefined, '', '   ', {}, { package: '' }, 42, []]) {
     assert.equal(normalizeDesignSystem(junk), null, `normalizeDesignSystem(${JSON.stringify(junk)})`)
   }

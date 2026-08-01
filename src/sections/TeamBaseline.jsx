@@ -3,9 +3,6 @@ import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 
 // ---------- 14: team harness baseline ----------
-// Promotes the existing baseline/drift machinery from "my projects on my disk" to "my team's repos".
-// The baseline is a team-harness.json COMMITTED IN A SHARED REPO and read from the git working copy —
-// so it is reviewable, diffable and revertible like any other code. Plane A: repos, not people.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)'

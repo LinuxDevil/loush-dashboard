@@ -1,135 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { marked } from 'marked'
+import SelectionChips, { useSelectionChips } from '../ui/SelectionChips.jsx'
 import { api, fmtDate } from '../lib/api.js'
 import { extractPlan, blocksToPlan, diagnoseSession } from '../lib/plan.js'
 import PlanGraph from './PlanGraph.jsx'
 import { ContextTimeline } from './ContextExplorerSection.jsx'
 import ActivityTimeline from './ActivityTimeline.jsx'
-
-const short = (v, n = 200) => {
-  const s = typeof v === 'string' ? v : JSON.stringify(v)
-  return s.length > n ? s.slice(0, n) + '…' : s
-}
-
-// fold raw stream-json events into renderable blocks; events with parent_tool_use_id
-// nest under the Task tool_use that spawned them (that's the subagent's output)
-export function buildBlocks(events) {
-  const blocks = [], byToolId = {}
-  const target = ev => (ev.parent_tool_use_id && byToolId[ev.parent_tool_use_id]?.children) || blocks
-  for (const ev of events) {
-    if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
-      for (const c of ev.message.content)
-        if (c.type === 'tool_result' && byToolId[c.tool_use_id]) {
-          const b = byToolId[c.tool_use_id]
-          b.result = short(c.content, 400)
-          b.isError = c.is_error === true || ev.toolUseResult?.status === 'error' || ev.toolUseResult?.interrupted === true
-          if (ev.toolUseResult && typeof ev.toolUseResult === 'object') b.toolResult = ev.toolUseResult // structuredPatch / stdout / stderr / filePath
-        }
-        else if (c.type === 'text') target(ev).push({ kind: 'user', text: c.text })
-        else if (c.type === 'image' && c.source?.data) target(ev).push({ kind: 'user-image', src: `data:${c.source.media_type};base64,${c.source.data}` })
-    } else if (ev.type === 'user') {
-      target(ev).push({ kind: 'user', text: String(ev.message?.content ?? '') })
-    } else if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
-      let usageLeft = ev.message?.usage || null // attach the message's token usage to its first tool (avoids double-count)
-      for (const c of ev.message.content) {
-        if (c.type === 'text' && c.text.trim()) target(ev).push({ kind: 'text', text: c.text })
-        else if (c.type === 'tool_use') {
-          const b = { kind: 'tool', id: c.id, name: c.name, input: c.input, ts: ev.timestamp || null, usage: usageLeft, children: c.name === 'Task' || c.name === 'Agent' ? [] : null }
-          usageLeft = null
-          byToolId[c.id] = b
-          target(ev).push(b)
-        }
-      }
-    } else if (ev.type === 'result') {
-      blocks.push({ kind: 'turn-end', ms: ev.duration_ms, cost: ev.total_cost_usd })
-    } else if (ev.type === 'stderr') {
-      blocks.push({ kind: 'stderr', text: ev.text })
-    } else if (ev.type === 'closed') {
-      blocks.push({ kind: 'closed', code: ev.code, error: ev.error })
-    }
-  }
-  return blocks
-}
-
-// L1: per-output review trail — records that a human reviewed an assistant output (accept/reject),
-// so "review every output" is logged, not implicit. Fire-and-forget to /api/chat-review.
-function ReviewButtons({ text, chatId, cwd }) {
-  const [done, setDone] = useState(null)
-  const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
-  if (done) return <div className="dim" style={{ font: "400 10px var(--mono)", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
-  return (
-    <div style={{ display: 'flex', gap: 6, padding: '1px 8px 4px' }}>
-      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & accepted" onClick={() => record('accept')}>✓ accept</button>
-      <button className="mini" style={{ marginTop: 0 }} title="record: reviewed & rejected" onClick={() => record('reject')}>✗ reject</button>
-    </div>
-  )
-}
-
-export function Block({ b }) {
-  if (b.kind === 'user') return <div className="chat-msg user">{b.text}</div>
-  if (b.kind === 'user-image') return <div className="chat-msg user" style={{ padding: 4 }}><img src={b.src} alt="attachment" style={{ maxWidth: 280, maxHeight: 220, borderRadius: 8, display: 'block' }} /></div>
-  if (b.kind === 'text') return <div className="chat-msg assistant" dangerouslySetInnerHTML={{ __html: marked.parse(b.text) }} />
-  if (b.kind === 'stderr') return <div className="chat-line err">{b.text}</div>
-  if (b.kind === 'closed') return <div className="chat-line err">session ended{b.error ? ` — ${b.error}` : b.code ? ` (exit ${b.code})` : ''}</div>
-  if (b.kind === 'turn-end') return <div className="chat-line dim">◦ turn done {b.ms ? `· ${(b.ms / 1000).toFixed(1)}s` : ''} {b.cost ? `· $${b.cost.toFixed(3)}` : ''}</div>
-  if (b.kind === 'tool' && b.children) {
-    const agent = b.input?.subagent_type || 'agent'
-    return (
-      <details className="chat-agent">
-        <summary>◆ {agent} — {b.input?.description || b.input?.prompt?.slice(0, 80) || 'subagent'} <span className="dim">({b.children.length} events)</span></summary>
-        <div className="chat-agent-body">
-          {b.children.map((c, i) => <Block key={i} b={c} />)}
-          {b.result && <div className="chat-line dim">↳ {b.result}</div>}
-        </div>
-      </details>
-    )
-  }
-  if (b.kind === 'tool')
-    return (
-      <div className="chat-line tool" title={JSON.stringify(b.input, null, 2)}>
-        ▸ <b>{b.name}</b> <span className="dim">{short(b.input?.command || b.input?.file_path || b.input?.pattern || b.input?.prompt || b.input, 120)}</span>
-        {b.result != null && <div className="chat-tool-result">{b.result}</div>}
-      </div>
-    )
-  return null
-}
-
-// feature 20: promote any message to a reusable artifact in one click
-function capture(text) {
-  const kind = prompt('Capture as: command / skill / prompt / note', 'command')
-  if (!kind) return
-  const done = p => p.then(r => alert('saved' + (r.path ? ' → ' + r.path : ''))).catch(e => alert(e.message))
-  if (kind === 'command' || kind === 'skill') {
-    const name = prompt(`${kind} name:`)
-    if (!name) return
-    const content = kind === 'command'
-      ? `---\ndescription: captured from a chat session\n---\n\n${text}\n\n$ARGUMENTS\n`
-      : `---\nname: ${name}\ndescription: captured from a chat session\n---\n\n${text}\n`
-    done(api.post(`/api/res/${kind}s`, { scope: 'user', name, content }))
-  } else if (kind === 'prompt') {
-    done(api.post('/api/prompts', { title: text.slice(0, 60), tags: ['captured'], inputs: [{ type: 'text', value: text }] }))
-  } else {
-    done(api.post('/api/notes', { title: text.slice(0, 40), content: text }))
-  }
-}
-
-const Cap = ({ text, children }) => (
-  <div className="cap-wrap">
-    {children}
-    <button className="cap-btn" title="capture as command / skill / prompt / note" onClick={() => capture(text)}>⤴</button>
-  </div>
-)
+// Transcript rendering lives in ui/chatBlocks.jsx — see the header there for the split.
+import { buildBlocks, ContextPill, MessageLog, SessionCostPill } from '../ui/chatBlocks.jsx'
 
 const fileToB64 = f => new Promise((ok, err) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = err; r.readAsDataURL(f) })
 
-// input bar with "/" command + "@" file autocomplete, image paste/attach, any-file upload
 function InputBar({ cwd, ended, onSend, initial }) {
   const [input, setInput] = useState(initial || '')
-  // `initial` arrives asynchronously when another section hands off a prompt. Without this the
-  // hand-off only ever worked if Chat had not been mounted yet — i.e. once per page load.
   useEffect(() => { if (initial) setInput(initial) }, [initial])
-  const [atts, setAtts] = useState([]) // {kind:'image', name, media_type, data} | {kind:'file', name, path}
-  const [sug, setSug] = useState(null) // {trigger:'/'|'@', items, idx, start, end}
+  const [atts, setAtts] = useState([])
+  const [sug, setSug] = useState(null)
   const cmdsRef = useRef(null)
   const taRef = useRef(null)
   const fileRef = useRef(null)
@@ -140,7 +25,7 @@ function InputBar({ cwd, ended, onSend, initial }) {
   const updateSug = (text, caret) => {
     clearTimeout(debRef.current)
     const before = text.slice(0, caret)
-    const cmd = /^\/([\w:-]*)$/.exec(before) // slash commands are message-initial
+    const cmd = /^\/([\w:-]*)$/.exec(before)
     const file = /@([^\s@]*)$/.exec(before)
     if (!cmd && !file) return setSug(null)
     debRef.current = setTimeout(async () => {
@@ -158,7 +43,7 @@ function InputBar({ cwd, ended, onSend, initial }) {
     }, cmd && cmdsRef.current ? 0 : 150)
   }
   const pick = item => {
-    if (sug.trigger === '@') { // file/folder refs become tags, not inline text
+    if (sug.trigger === '@') {
       setInput(input.slice(0, sug.start) + input.slice(sug.end))
       setAtts(a => [...a, { kind: 'ref', name: item.name }])
     } else {
@@ -174,19 +59,33 @@ function InputBar({ cwd, ended, onSend, initial }) {
         try {
           const r = await fetch('/api/chat/upload?name=' + encodeURIComponent(f.name), { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f })
           const j = await r.json()
-          if (!r.ok) throw new Error(j.error)
-          setAtts(a => [...a, { kind: 'file', name: f.name, path: j.path }])
+          // The server refuses with a machine reason and the bound it applied. Saying which limit
+          // was hit is the difference between "try a smaller file" and "the upload is broken".
+          if (!r.ok) throw new Error(
+            j.reason === 'file-too-large' ? `too large — ${(j.size / 1048576).toFixed(1)}MB, limit is ${Math.round(j.limit / 1048576)}MB`
+            : j.reason === 'exceeds-quota' ? `no room — the upload folder is capped at ${Math.round(j.limit / 1048576)}MB and this file cannot fit`
+            : j.reason === 'unusable-name' ? 'that filename has no usable characters'
+            : j.reason || j.error || `HTTP ${r.status}`)
+          // Eviction is reported rather than silent: an older attachment's `@path` in a prior
+          // message may no longer resolve, and that is worth knowing.
+          if (j.reclaimed?.length) console.warn(`upload quota: reclaimed ${j.reclaimed.length} older upload(s)`, j.reclaimed)
+          setAtts(a => [...a, { kind: 'file', name: f.name, path: j.path, bytes: j.bytes, reclaimed: j.reclaimed }])
         } catch (e) { alert('upload failed: ' + e.message) }
       }
     }
   }
+  const chips = useSelectionChips()
   const send = async () => {
     const images = []
     for (const a of atts.filter(x => x.kind === 'image')) images.push({ media_type: a.media_type, data: a.data || await a._p })
     const refs = atts.filter(x => x.kind === 'file' || x.kind === 'ref').map(x => `@${x.path || x.name}`).join('\n')
-    const text = [input.trim(), refs].filter(Boolean).join('\n')
+    // 077: editor selections ride along as chips. `chipsToPrompt` reports its own truncation
+    // inside the text it returns, so a clipped payload cannot look complete to the model.
+    const chipText = chips.toPrompt ? chips.toPrompt() : ''
+    const text = [input.trim(), refs, chipText].filter(Boolean).join('\n')
     if (!text && !images.length) return
     setInput(''); setAtts([]); setSug(null)
+    chips.clear?.()
     onSend(text || 'see attached', images)
   }
   const key = e => {
@@ -200,6 +99,8 @@ function InputBar({ cwd, ended, onSend, initial }) {
   }
   return (
     <div className="chat-inputwrap">
+      <SelectionChips packed={chips.packed} onRemove={chips.remove} onClear={chips.clear}
+        onToggleData={chips.toggleData} tabNotice={chips.tabNotice} onDismissNotice={chips.dismissNotice} />
       {sug && (
         <div className="chat-sug">
           {sug.items.map((it, i) => (
@@ -242,17 +143,20 @@ export default function ChatSection() {
   const [projects, setProjects] = useState([])
   const [cwd, setCwd] = useState('')
   const [sessions, setSessions] = useState([])
-  const [active, setActive] = useState([]) // live server-side chats
+  const [active, setActive] = useState([])
   const [pins, setPins] = useState([])
   const [chatId, setChatId] = useState(null)
   const [events, setEvents] = useState([])
   const [prefill, setPrefill] = useState('')
   const [model, setModel] = useState('')
+  const [permMode, setPermMode] = useState('skip')
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState('chat')
   const [ctxData, setCtxData] = useState(null)
   const [ctxHover, setCtxHover] = useState(null)
+  const [gap, setGap] = useState(null)
   const esRef = useRef(null)
+  const reconnectRef = useRef(null)
   const endRef = useRef(null)
 
   const loadPins = () => api.get('/api/pins').then(setPins).catch(() => {})
@@ -260,7 +164,7 @@ export default function ChatSection() {
     api.get('/api/projects').then(ps => { const ex = ps.filter(p => p.exists); setProjects(ex); if (ex[0]) setCwd(ex[0].path) })
     api.get('/api/chat').then(setActive).catch(() => {})
     loadPins()
-    const pre = sessionStorage.getItem('ctx-bundle-prompt') // feature 22 hand-off
+    const pre = sessionStorage.getItem('ctx-bundle-prompt')
     if (pre) { setPrefill(pre); sessionStorage.removeItem('ctx-bundle-prompt') }
   }, [])
   const togglePin = (s, pinned) => {
@@ -270,39 +174,71 @@ export default function ChatSection() {
   useEffect(() => { if (cwd) api.get('/api/chat/sessions?cwd=' + encodeURIComponent(cwd)).then(setSessions) }, [cwd])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events])
 
-  const attach = (id, chatCwd) => {
-    esRef.current?.close()
-    if (chatCwd) setCwd(chatCwd)
-    setEvents([]); setChatId(id); setView('chat'); setCtxData(null)
-    const es = new EventSource(`/api/chat/${id}/events`)
+  // The highest seq this client has actually applied. On a reconnect it is handed back as
+  // ?fromSeq so the server sends only what was missed — EventSource's own reconnect re-requests
+  // the same URL, which replays the entire retained log every time the network blips.
+  const seqRef = useRef(0)
+  const openStream = (id, fromSeq) => {
+    const url = `/api/chat/${id}/events` + (fromSeq > 0 ? `?fromSeq=${fromSeq}` : '')
+    const es = new EventSource(url)
     es.onmessage = m => {
-      const ev = JSON.parse(m.data)
+      let ev
+      try { ev = JSON.parse(m.data) } catch { return }
+      if (ev.type === 'replay_gap') {
+        // The server cannot serve the gap. Say so in the transcript rather than letting a
+        // silently truncated history read as the whole run.
+        setGap({ earliestSeq: ev.earliestSeq, from: ev.requestedFrom, dropped: ev.dropped })
+        seqRef.current = Math.max(seqRef.current, (ev.earliestSeq || 1) - 1)
+        return
+      }
+      // Native EventSource reconnects can re-deliver frames we already have; seq makes that
+      // detectable instead of duplicating the transcript.
+      if (ev.seq != null && ev.seq <= seqRef.current) return
+      if (ev.seq != null) seqRef.current = ev.seq
       setEvents(prev => [...prev, ev])
       if (ev.type === 'result' || ev.type === 'closed') setBusy(false)
     }
-    esRef.current = es
+    es.onerror = () => {
+      // Take over the retry so the reopened stream carries fromSeq. Left to EventSource, the
+      // reconnect would replay from the beginning.
+      if (es.readyState !== EventSource.CLOSED) return
+      es.close()
+      if (esRef.current !== es) return
+      reconnectRef.current = setTimeout(() => { esRef.current = openStream(id, seqRef.current) }, 1000)
+    }
+    return es
   }
-  useEffect(() => () => esRef.current?.close(), [])
+  const attach = (id, chatCwd) => {
+    esRef.current?.close()
+    clearTimeout(reconnectRef.current)
+    if (chatCwd) setCwd(chatCwd)
+    seqRef.current = 0
+    setEvents([]); setChatId(id); setView('chat'); setCtxData(null); setGap(null)
+    esRef.current = openStream(id, 0)
+  }
+  useEffect(() => () => { esRef.current?.close(); clearTimeout(reconnectRef.current) }, [])
+
+  // Every launch path goes through here. There are three of them — New session, the `chat-open`
+  // window event, and clicking a pin — and an option added to only one of them means "resumed
+  // from a pin" silently ignores the mode you picked.
+  const startBody = over => ({ cwd, model: model || undefined, permissionMode: permMode, ...over })
 
   const start = async resume => {
-    const { id } = await api.post('/api/chat', { cwd, resume, model: model || undefined })
+    const { id } = await api.post('/api/chat', startBody({ resume }))
     attach(id)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
-  // Deep link from another section: open a session here without making the user re-pick the project.
-  // Working Set uses this to close see → resume → fix inside the app, instead of handing over a
-  // `claude --resume <id>` string to paste into a terminal.
   useEffect(() => {
     const onOpen = e => {
       const { sessionId, cwd: c, prefill: pre } = e.detail || {}
       if (pre) setPrefill(pre)
-      api.post('/api/chat', { cwd: c || cwd, resume: sessionId || undefined, model: model || undefined })
+      api.post('/api/chat', startBody({ cwd: c || cwd, resume: sessionId || undefined }))
         .then(({ id }) => { attach(id, c); api.get('/api/chat').then(setActive).catch(() => {}) })
         .catch(err => alert(err.message))
     }
     window.addEventListener('chat-open', onOpen)
     return () => window.removeEventListener('chat-open', onOpen)
-  }, [cwd, model]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cwd, model, permMode]) // eslint-disable-line react-hooks/exhaustive-deps
   const send = async (text, images) => {
     if (!chatId) return
     setBusy(true)
@@ -310,7 +246,8 @@ export default function ChatSection() {
   }
   const detach = () => {
     esRef.current?.close()
-    setChatId(null); setEvents([]); setBusy(false)
+    clearTimeout(reconnectRef.current)
+    setChatId(null); setEvents([]); setBusy(false); setGap(null)
     api.get('/api/chat').then(setActive).catch(() => {})
   }
   const stop = async () => {
@@ -344,6 +281,12 @@ export default function ChatSection() {
             <option value="sonnet">sonnet</option>
             <option value="opus">opus</option>
           </select>
+          <select value={permMode} onChange={e => setPermMode(e.target.value)} title="how the agent asks before using tools — 'skip' is the historical default and asks for nothing">
+            <option value="skip">skip permissions</option>
+            <option value="default">ask (default)</option>
+            <option value="acceptEdits">auto-accept edits</option>
+            <option value="plan">plan only</option>
+          </select>
           <button className="primary" onClick={() => start()}>New session</button>
         </div>
         {active.filter(a => a.alive).length > 0 && (
@@ -351,7 +294,7 @@ export default function ChatSection() {
             <h3>Live now</h3>
             {active.filter(a => a.alive).map(a => (
               <div key={a.id} className="chat-session" onClick={() => attach(a.id, a.cwd)}>
-                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.model ? a.model + ' · ' : ''}{a.events} events · {a.cwd}</span>
+                <b>{a.cwd.split('/').pop()}</b> <span className="dim">{a.model ? a.model + ' · ' : ''}{a.permissionMode && a.permissionMode !== 'skip' ? a.permissionMode + ' · ' : ''}{a.events} events · {a.cwd}</span>
               </div>
             ))}
           </div>
@@ -360,7 +303,7 @@ export default function ChatSection() {
           <div className="chat-sessions">
             <h3>Pinned</h3>
             {pins.map(p => (
-              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', { cwd: p.cwd || cwd, resume: p.sessionId, model: model || undefined }).then(({ id }) => attach(id, p.cwd)) }}>
+              <div key={p.sessionId} className="chat-session" onClick={() => { if (p.cwd) setCwd(p.cwd); api.post('/api/chat', startBody({ cwd: p.cwd || cwd, resume: p.sessionId })).then(({ id }) => attach(id, p.cwd)) }}>
                 <b>★ {p.label || p.title || p.sessionId}</b>
                 <span className="dim">
                   {(p.cwd || '').split('/').pop()}{p.configVersion ? ` · cfg ${p.configVersion}` : ''}
@@ -397,6 +340,9 @@ export default function ChatSection() {
           <button className="mini" onClick={detach} title="back to session list (keeps session running)">‹ sessions</button>
           <b>{cwd.split('/').pop()}</b> <span className="dim">{cwd}</span>
           {liveModel && <span className="dim" style={{ border: '1px solid var(--border-default)', borderRadius: 6, padding: '1px 7px' }}>{liveModel}</span>}
+          {permMode !== 'skip' && <span className="pill" title="tool permissions are restricted for this session">{permMode}</span>}
+          <ContextPill events={events} />
+          <SessionCostPill blocks={blocks} />
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
           <button className="mini" style={{ marginTop: 0, color: view === 'plan' ? 'var(--accent)' : undefined }} disabled={!plan}
@@ -428,10 +374,7 @@ export default function ChatSection() {
         : view === 'activity'
         ? <div className="chat-log"><ActivityTimeline blocks={blocks} /></div>
         : <div className="chat-log">
-        {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
-          ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
-          : <Block key={i} b={b} />)}
-        {busy && <div className="chat-line dim">✦ working…</div>}
+        <MessageLog blocks={blocks} gap={gap} busy={busy} chatId={chatId} cwd={cwd} />
         <div ref={endRef} />
       </div>}
       <InputBar cwd={cwd} ended={ended} onSend={send} initial={prefill} />

@@ -2,9 +2,6 @@ import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, CardHead, Empty, H1, DataTable, PRLink, PrBadge, Checks, Kpi, miniBtn, primaryBtn, useCopy, fx, Legend } from './ui.jsx'
 import { MIN_N, stat, pctl, thin, spread } from './stats.js'
 
-// §4 — the review board is keyed on PERSON, not on PR. Deliberately NOT a slowest-reviewer leaderboard:
-// the unit of accountability is the team's review SLA. The two currently-invisible killers get their own
-// tables — requested-and-never-answered, and no reviewer requested at all.
 const cell = (v, n, u = 'd') => <span style={{ font: `600 12px ${MONO}`, color: v == null ? 'var(--bg-surface-active)' : n < MIN_N ? 'var(--text-secondary)' : HI }}>{v == null ? '—' : fx(v) + u}</span>
 
 export default function ReviewFlow({ snap, project }) {
@@ -19,10 +16,8 @@ export default function ReviewFlow({ snap, project }) {
     fetch(`/api/eng/pr/${p.num}/request-review?project=${p.project || project}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login }) })
       .then(r => r.json()).finally(() => setBusy(null))
   }
-  // least-loaded eligible reviewer — the default suggestion, never an auto-assign
   const lightest = R.reviewers.filter(r => r.given90 > 0).sort((a, b) => a.awaiting - b.awaiting)[0]
 
-  // §distribution — turn the two single-number KPI tiles above into shapes. Team-level only, no author split.
   const prs = snap.prs || []
   const pickup = stat(prs.filter(p => p.firstReviewFromRequestDays != null).map(p => p.firstReviewFromRequestDays))
   const pkBuckets = [['< 0.25d', GREEN], ['0.25–0.5d', BB], ['0.5–1d', GOLD], ['1–2d', PURPLE], ['> 2d', RED]]
@@ -52,7 +47,7 @@ export default function ReviewFlow({ snap, project }) {
 
     {conc.top2Share != null && <Card style={{ borderColor: conc.flagged ? 'var(--red-bg)' : undefined }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <span style={{ font: `700 18px ${HEAD}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
+        <span style={{ font: `600 18px ${MONO}`, color: conc.flagged ? RED : GREEN }}>{fx(conc.top2Share, 0)}%</span>
         <span style={{ font: `500 13px ${BODY}`, color: TXTC }}>of all reviews in 90d were done by 2 of {conc.reviewerCount} reviewers{conc.flagged ? ' — the two people reviewing everything are the two people who will quit.' : '. Load is spread.'}</span>
         <span style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: DIM }}>top-1 {fx(conc.top1Share, 0)}% · {conc.total90} reviews</span>
       </div>

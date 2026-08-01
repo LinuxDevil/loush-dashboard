@@ -2,24 +2,16 @@ import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, STEEL, DIM, HI } from './ui.jsx'
 import { Draw } from '../ui/anim.jsx'
 
-// Chart types the shared src/charts.jsx does not have (it has Bars / StackedBar / Ring / Treemap, all
-// reused as-is elsewhere). These four are the ones this dashboard needs and that one lacks:
-// Scatter (the tail), Lines (trend), StackedArea (mix), Split (one row's active-vs-waiting bar).
 
 const AX = 'var(--bg-surface-active)'
 const tip = { position: 'fixed', zIndex: 2147483647, padding: '7px 10px', borderRadius: 8, background: 'var(--bg-surface)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-md)', pointerEvents: 'none', font: `500 11px ${BODY}`, color: HI, maxWidth: 320 }
 
-// §2 THE artifact: one dot per ticket. x = completion date, y = cycle working-days, colour = type,
-// p85 line straight across. A bar chart of the mean would hide every one of the dots above the line.
 export function Scatter({ points, p85, p50, height = 260, onPick }) {
   const [hov, setHov] = useState(null)
   const W = 900, H = height, L = 38, R = 12, T = 14, B = 26
   if (!points.length) return <div style={{ padding: 24, textAlign: 'center', font: `400 12px ${BODY}`, color: DIM }}>No shipped tickets in this window.</div>
   const xs = points.map(p => p.x), ys = points.map(p => p.y)
   const x0 = Math.min(...xs), x1 = Math.max(...xs) || x0 + 1
-  // one 504-day zombie ticket would squash every real dot onto the axis and hide the p85 line. Clip the
-  // scale just above the p90 (or the top of the pack) and pin the off-scale dots to the ceiling with a
-  // triangle + a count — they are still visible, still clickable, and they no longer erase the chart.
   const sorted = [...ys].sort((a, b) => a - b)
   const p95 = sorted[Math.floor((sorted.length - 1) * 0.95)]
   const ymax = Math.max(1, Math.min(Math.max(...ys), Math.max(p95, (p85 || 0) * 1.6))) * 1.1
@@ -57,7 +49,6 @@ export function Scatter({ points, p85, p50, height = 260, onPick }) {
   </div>
 }
 
-// multi-series line chart (escape rate, say/do, lead vs cycle). series: [{label,color,values:[{x,y}]}]
 export function Lines({ series, labels, height = 190, yFmt = v => v, threshold }) {
   const [hov, setHov] = useState(null)
   const W = 640, H = height, L = 34, R = 10, T = 12, B = 22
@@ -89,7 +80,6 @@ export function Lines({ series, labels, height = 190, yFmt = v => v, threshold }
   </div>
 }
 
-// 100% stacked columns — the investment mix. keys in draw order, one column per period.
 export function StackedCols({ rows, keys, colors, labels, height = 200, valueOf, onPick, pctMode = true }) {
   const [hov, setHov] = useState(null)
   if (!rows.length) return <div style={{ padding: 22, textAlign: 'center', font: `400 12px ${BODY}`, color: DIM }}>No delivered work yet.</div>
@@ -122,13 +112,12 @@ export function StackedCols({ rows, keys, colors, labels, height = 200, valueOf,
   </div>
 }
 
-// §12 — MINE vs WAITING. Cycle time is presented everywhere as a property of the developer. It isn't.
 export function Split({ active, wait, height = 8, showLabels }) {
   const tot = (active || 0) + (wait || 0) || 1
   return <div>
     <div style={{ display: 'flex', height, borderRadius: 5, overflow: 'hidden', background: 'var(--bg-surface-hover)' }}>
-      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'linear-gradient(90deg,var(--green),var(--green))' }} />
-      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'linear-gradient(90deg,var(--amber),var(--amber))' }} />
+      <div title={`mine (In Progress): ${(active || 0).toFixed(1)}d`} style={{ width: `${(active || 0) / tot * 100}%`, background: 'var(--green)' }} />
+      <div title={`waiting (review / QA / release): ${(wait || 0).toFixed(1)}d`} style={{ width: `${(wait || 0) / tot * 100}%`, background: 'var(--amber)' }} />
     </div>
     {showLabels && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, font: `500 9px ${MONO}` }}>
       <span style={{ color: GREEN }}>mine {(active || 0).toFixed(1)}d</span>
@@ -137,7 +126,6 @@ export function Split({ active, wait, height = 8, showLabels }) {
   </div>
 }
 
-// tiny inline sparkline for table cells (project comparison)
 export function Spark({ values, color = BB, w = 64, h = 18 }) {
   const v = values.filter(x => x != null)
   if (v.length < 2) return <span style={{ font: `400 10px ${MONO}`, color: DIM }}>—</span>
@@ -145,7 +133,7 @@ export function Spark({ values, color = BB, w = 64, h = 18 }) {
   const rng = max - min || 1
   const pts = values.map((x, i) => x == null ? null : [(i / (values.length - 1)) * w, h - ((x - min) / rng) * (h - 2) - 1]).filter(Boolean)
   return <svg width={w} height={h} style={{ display: 'block' }}>
-    <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" strokeWidth="1.6" strokeLinejoin="round"  style={{ stroke: (color) }} />
+    <polyline points={pts.map(p => p.join(',')).join(' ')} fill="none" strokeWidth="2" strokeLinejoin="round"  style={{ stroke: (color) }} />
     <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="2"  style={{ fill: (color) }} />
   </svg>
 }

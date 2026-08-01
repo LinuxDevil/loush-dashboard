@@ -11,7 +11,7 @@ const T = [
 
 test('takes up to max tickets in the trigger stage, skips blocked + other stages', () => {
   const p = dispatchPlan({ tickets: T, stage: 'backlog', max: 5 })
-  assert.deepEqual(p, { held: null, ids: ['a', 'b'] }) // c (wrong stage) + d (blocked) excluded
+  assert.deepEqual(p, { held: null, ids: ['a', 'b'] })
 })
 
 test('maxDispatch caps per tick', () => {

@@ -3,11 +3,12 @@ import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { usePager } from '../ui/Pager.jsx'
 import { Stagger, CountUp, Draw } from '../ui/anim.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const Num = ({ value, ...rest }) =>
   typeof value === 'number' && Number.isFinite(value) ? <CountUp value={value} {...rest} /> : value
 
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const LANG_COLOR = { TypeScript: 'var(--blue)', JavaScript: 'var(--amber)', Python: 'var(--green)', Go: 'var(--blue)', Rust: 'var(--red)', Ruby: 'var(--red)', CSS: 'var(--violet)', Markdown: 'var(--text-secondary)', Shell: 'var(--green)', Vue: 'var(--green)', PHP: 'var(--violet)', Java: 'var(--accent-light)', Kotlin: 'var(--violet)', Swift: 'var(--accent-light)', Dart: 'var(--blue)' }
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n))
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 2 ? 'now' : m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
@@ -19,9 +20,20 @@ const sparkPts = (arr, h) => {
 
 function ResChips({ p }) {
   const groups = [['skills', p.skills], ['commands', p.commands], ['agents', p.agents], ['mcp', p.mcp]]
-  if (!groups.some(([, v]) => v.length)) return null
+  const test = p.test
+  if (!groups.some(([, v]) => v.length) && !test) return null
   return (
     <div className="proj-res">
+      {test && test.command && (
+        <details>
+          <summary><b>tests</b> {test.command}</summary>
+          <div className="chips">
+            <span className="chip">detected from {test.marker}</span>
+            <span className="chip">{test.confidence} confidence</span>
+            {test.note && <span className="chip">{test.note}</span>}
+          </div>
+        </details>
+      )}
       {groups.map(([label, names]) => names.length > 0 && (
         <details key={label}>
           <summary><b>{names.length}</b> {label}</summary>
@@ -32,7 +44,6 @@ function ResChips({ p }) {
   )
 }
 
-// feature 18: new-project harness scaffolder — dry-run preview, then real writes via /api/scaffold
 function Scaffolder({ projects, onClose, onDone }) {
   const [dir, setDir] = useState('')
   const [profiles, setProfiles] = useState([])
@@ -103,6 +114,51 @@ function Scaffolder({ projects, onClose, onDone }) {
   )
 }
 
+function Worktrees({ repo }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { setD(null); if (repo) api.get('/api/worktrees?repo=' + encodeURIComponent(repo)).then(setD).catch(e => setErr(e.message)) }, [repo])
+  if (!repo) return null
+  if (err) return <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>
+  if (!d) return null
+  if (d.status !== 'ok') {
+    return (
+      <div className="panel" style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)' }}>
+        <b style={{ color: 'var(--text-primary)' }}>Worktrees</b> — could not determine ({d.code}): {d.reason}
+      </div>
+    )
+  }
+  const unattributed = d.sessionCounts?.['(unattributed)'] || 0
+  return (
+    <div className="panel">
+      <h3>Worktrees <span className="muted">{d.worktrees.length} · {repo.split('/').pop()}</span></h3>
+      <table className="data" style={{ font: '400 11px var(--mono)', width: '100%' }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>path</th><th style={{ textAlign: 'left' }}>branch</th><th>sessions</th><th /></tr></thead>
+        <tbody>
+          {d.worktrees.map(w => (
+            <tr key={w.path}>
+              <td style={{ color: 'var(--text-primary)' }}>{w.path}</td>
+              <td style={{ color: w.detached ? 'var(--amber, #d79921)' : 'var(--violet)' }}>{w.detached ? 'detached' : (w.branchName || w.branch || '—')}</td>
+              <td className="num">{d.sessionCounts?.[w.path] || 0}</td>
+              <td>
+                {w.bare && <span className="chip">bare</span>}
+                {w.locked && <span className="chip" title={w.lockReason || 'locked'}>locked</span>}
+                {w.prunable && <span className="chip" title={w.prunableReason || 'prunable'} style={{ color: 'var(--red)' }}>prunable</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {unattributed > 0 && (
+        <p className="small" style={{ marginBottom: 0 }}>
+          {unattributed} session(s) recorded a cwd matching no worktree here — usually work in another
+          repo. They are reported rather than assigned to the nearest match.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function ProjectsSection() {
   const [projects, setProjects] = useState(null)
   const [scaffolding, setScaffolding] = useState(false)
@@ -111,7 +167,7 @@ export default function ProjectsSection() {
   useEffect(() => {
     load()
     const t = setInterval(load, 30_000)
-    const open = () => setScaffolding(true) // palette action
+    const open = () => setScaffolding(true)
     window.addEventListener('open-scaffolder', open)
     return () => { clearInterval(t); window.removeEventListener('open-scaffolder', open) }
   }, [])
@@ -136,6 +192,7 @@ export default function ProjectsSection() {
         <button className="primary" onClick={() => setScaffolding(true)}>+ Scaffold harness for a new repo</button>
       </div>
       {scaffolding && <Scaffolder projects={projects} onClose={() => setScaffolding(false)} onDone={load} />}
+      <Worktrees repo={(projects.find(p => p.current) || projects[0] || {}).path} />
       <div className="proj-stats">
         {stats.map(([label, value, color, sub], i) => (
           <div className="proj-stat" key={label} style={{ animationDelay: 0.05 * i + 's' }}>
@@ -147,7 +204,7 @@ export default function ProjectsSection() {
       </div>
       <Stagger className="proj-grid" step={40} max={360}>
         {slice.map((p, i) => {
-          const color = PROJ_COLORS[i % 6]
+          const color = PROJ_COLORS[i % PROJ_COLORS.length]
           const live = p.running + p.runningAgents > 0
           return (
             <div key={p.path} className="proj-card" style={{ '--pc': color }}>
@@ -181,7 +238,7 @@ export default function ProjectsSection() {
               <ResChips p={p} />
               <div className="proj-foot">
                 last active {p.usage ? ago(p.usage.last) : 'never'}
-                {p.usage?.topModel ? ` · mostly ${p.usage.topModel.replace(/^claude-/, '')}` : ''}
+                {p.usage?.topModel ? ` · mostly ${modelName(p.usage.topModel)}` : ''}
               </div>
             </div>
           )

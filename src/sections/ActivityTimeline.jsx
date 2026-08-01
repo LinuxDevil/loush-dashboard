@@ -1,9 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { toolName, shortArg } from '../lib/plan.js'
 
-// Per-session activity tree: what skills/rules/mcps fired, the model's own reasoning text, and which
-// files got edited — one flat chronological list (subagent calls nest their children) with a
-// play/pause/resume scrubber, same rAF-cursor idiom as the Context Window Explorer.
 const RULE_FILES = /(CLAUDE|AGENTS)\.md$|\.cursorrules$/
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const STYLE = {
@@ -16,7 +13,6 @@ const STYLE = {
   tool: { icon: '▸', color: 'var(--text-tertiary)', label: 'tool' },
 }
 
-// One block -> one (or more, for a subagent's children) timeline node(s).
 function classify(b) {
   if (b.kind === 'text' && b.text?.trim()) return { type: 'thought', text: b.text.trim(), ts: b.ts }
   if (b.kind !== 'tool' || !b.name) return null
@@ -56,7 +52,7 @@ function Node({ n, i, active, onHover }) {
 }
 
 export default function ActivityTimeline({ blocks }) {
-  const [cursor, setCursor] = useState(-1) // -1 = show all
+  const [cursor, setCursor] = useState(-1)
   const [playing, setPlaying] = useState(false)
   const [hover, setHover] = useState(null)
   const rafRef = useRef(null)

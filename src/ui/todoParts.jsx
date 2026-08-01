@@ -1,15 +1,9 @@
-// src/ui/todoParts.jsx — the pieces the full-screen board and the floating drawer BOTH render.
-//
-// The drawer is not a different to-do list with a smaller font: it is the same card, the same
-// checkbox and the same stage control at `compact` density. Sharing them here is what keeps a tick in
-// the drawer and a tick on the board from drifting into two behaviours.
 import React, { useState } from 'react'
 import { STATUSES, statusMeta, stepStatus, progressOf, todoApi, humanMs, timeInStages } from '../lib/todos.js'
 import { toast } from '../lib/api.js'
 
 const MONO = 'var(--mono)'
 
-/** The checkbox. Big enough to hit, labelled for screen readers, and it is the only thing that ticks. */
 export function Check({ checked, onChange, label, size = 16 }) {
   return (
     <button
@@ -34,7 +28,7 @@ export const StageChip = ({ status, small }) => {
   return (
     <span title={m.hint} style={{
       font: `600 ${small ? 9 : 10}px ${MONO}`, letterSpacing: '0.04em', padding: small ? '1px 5px' : '2px 7px',
-      borderRadius: 9999, color: m.color, background: 'var(--bg-surface-active)', whiteSpace: 'nowrap',
+      borderRadius: 6, color: m.color, background: 'var(--bg-surface-active)', whiteSpace: 'nowrap',
     }}>{small ? m.short : m.label}</span>
   )
 }
@@ -161,7 +155,6 @@ function JiraLink({ todo, config }) {
   )
 }
 
-/** Sub-tasks: checkable, addable, removable. The second level of "checkable" the request asked for. */
 function Subtasks({ todo }) {
   const [draft, setDraft] = useState('')
   const add = () => {
@@ -219,9 +212,7 @@ export function TodoCard({ todo, compact, onOpenFile, jiraConfig }) {
             textDecoration: todo.done ? 'line-through' : 'none', wordBreak: 'break-word',
           }}>{todo.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
-            {/* On a compact card the stage is already stated twice over — by the board column or the
-                drawer's group header, and by the short code in the picker. A third copy costs width
-                the title needs. */}
+            {}
             {!compact && <StageChip status={todo.status} />}
             <PathChip todo={todo} />
             {prog.total > 0 && (
@@ -235,8 +226,7 @@ export function TodoCard({ todo, compact, onOpenFile, jiraConfig }) {
                     style={{ font: `600 10px ${MONO}`, color: 'var(--text-link)' }}>{todo.jira.key}</a>
                 : <span style={{ font: `600 10px ${MONO}`, color: 'var(--text-secondary)' }}>{todo.jira.key}</span>
             )}
-            {/* Carried work is marked on the face of the card. Rolling it forward silently is how a
-                to-do list quietly accumulates a week of things nobody intends to do. */}
+            {}
             {todo.carriedDays > 0 && !todo.done && (
               <span title={`filed for ${todo.firstDate}, rolled forward ${todo.rollovers || 0}×`}
                 style={{ font: `500 10px ${MONO}`, color: todo.carriedDays >= 3 ? 'var(--red)' : 'var(--amber)' }}>
@@ -261,7 +251,7 @@ export function TodoCard({ todo, compact, onOpenFile, jiraConfig }) {
 
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-subtle)', paddingTop: 8 }}>
-          {/* the jump-anywhere control lives here on compact cards, where there is room for it */}
+          {}
           {compact && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)' }}>stage</span>

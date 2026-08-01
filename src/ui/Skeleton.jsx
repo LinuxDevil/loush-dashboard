@@ -1,6 +1,5 @@
 import React from 'react'
 
-// generic section-loading skeleton: a row of stat tiles + list rows, shimmering
 export default function Skeleton({ tiles = 3, rows = 5 }) {
   return (
     <div className="skel-wrap">

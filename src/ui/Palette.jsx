@@ -4,10 +4,6 @@ import { api, toast } from '../lib/api.js'
 const MONO = "var(--mono)"
 
 // ---------- 16: search my past self ----------
-// ⌘K used to index user PROMPTS only. It now searches assistant text, tool_use inputs (bash commands,
-// file paths touched) and Edit hunks — and carries the killer filter: `file:src/auth.ts` answers
-// "what has Claude ever done to this file", the query the IC most wants and literally could not express.
-// Plane B: this machine's own transcripts. No user/machine parameter exists on /api/search.
 const KINDS = [
   ['prompt', 'my prompts', '⌨', 'var(--accent)'],
   ['assistant', 'what Claude said', '✦', 'var(--violet)'],
@@ -21,7 +17,7 @@ export default function Palette({ sections, onNav }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [file, setFile] = useState('')
-  const [kinds, setKinds] = useState({})   // {} = all
+  const [kinds, setKinds] = useState({})
   const [idx, setIdx] = useState(0)
   const [items, setItems] = useState([])
   const [hits, setHits] = useState([])
@@ -55,7 +51,6 @@ export default function Palette({ sections, onNav }) {
     })
   }, [open])
 
-  // transcript search — debounced. `file:` narrows to sessions that touched that path.
   const kindQs = useMemo(() => { const on = Object.keys(kinds).filter(k => kinds[k]); return on.length ? on.join(',') : 'all' }, [kinds])
   useEffect(() => {
     if (!open || (q.length < 3 && !file)) { setHits([]); return }
@@ -69,7 +64,6 @@ export default function Palette({ sections, onNav }) {
 
   const results = useMemo(() => {
     const needle = q.toLowerCase()
-    // when a file filter is on, the transcript hits ARE the query — do not dilute them with section jumps
     const ranked = file ? [] : !needle ? items.slice(0, 10) :
       items.map(it => ({ it, at: it.label.toLowerCase().indexOf(needle) })).filter(x => x.at >= 0)
         .sort((a, b) => a.at - b.at || a.it.label.length - b.it.label.length).slice(0, 6).map(x => x.it)
@@ -83,7 +77,7 @@ export default function Palette({ sections, onNav }) {
   const exec = r => {
     if (!r) return
     if (r.run) { setOpen(false); return r.run() }
-    copyResume(r.hit)   // Enter on a transcript hit = get me back into that session
+    copyResume(r.hit)
   }
 
   return (

@@ -4,8 +4,6 @@ import Skeleton from '../ui/Skeleton.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 9: session forensics — failure signatures · context pressure · hook blast radius ----------
-// Three panels off the ONE extra parse that already lives in the failStats()/scanTranscripts() walkers.
-// Plane B: this machine's own transcripts, self-only. No user/machine parameter exists.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', DIM = 'var(--text-secondary)'
@@ -13,17 +11,6 @@ const fmtChars = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.
 const ago = t => { if (!t) return '—'; const d = Math.round((Date.now() - t) / 86400_000); return d < 1 ? 'today' : d + 'd ago' }
 const TREND = { up: ['▲', RED], down: ['▼', GREEN], flat: ['–', DIM] }
 
-// "Flag this tool": a PostToolUse hook that WARNS when a tool result is oversized.
-//
-// This used to be called "cap" and its message told the model the result had been "truncated to 20k
-// to protect the context window". It truncated nothing. A PostToolUse hook receives the tool result
-// and can add context; there is no supported way for it to replace or shorten the result the model
-// already received. So the old hook did the exact opposite of its name: it ADDED tokens to an
-// already-oversized context, and it told the model a truncation had happened that had not — which is
-// worse than useless, because the model then reasons about output it believes was cut short.
-//
-// The honest version warns, and says what to do instead. The message is kept to one short line
-// precisely because it costs context: a warning that bloats the window it is warning about is silly.
 const OVERSIZE_CHARS = 20000
 const oversizeWarnHook = tool => ({
   matcher: tool,
@@ -88,7 +75,7 @@ export default function ForensicsSection() {
         <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}><CountUp value={d.sessions} /> sessions parsed · plane: this machine only, always</span>
       </div>
 
-      {/* (a) failure signatures */}
+      {}
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
           <h3>Failure signatures <span className="muted"><CountUp value={d.failures.length} /> distinct · <CountUp value={biting.length} /> have bitten you ≥ 3 times</span></h3>
@@ -122,7 +109,7 @@ export default function ForensicsSection() {
         {biting.length > 0 && <p className="small">Anything at 3+ is not bad luck, it is a bug in your setup. The top signature has bitten you <b style={{ color: RED }}>{d.failures[0].count} times</b>.</p>}
       </div>
 
-      {/* (b) context pressure */}
+      {}
       <div className="grid-2" style={{ marginBottom: 0 }}>
         <div className="panel">
           <div className="panel-head">
@@ -130,8 +117,7 @@ export default function ForensicsSection() {
           </div>
           {worstTool && (
             <div style={{ font: "400 13px var(--body)", color: 'var(--text-secondary)', marginBottom: 12 }}>
-              {/* "of every byte pulled into your context" was wrong: the denominator is tool-result
-                  bytes, which excludes the system prompt, CLAUDE.md, user turns and assistant output. */}
+              {}
               <b style={{ color: 'var(--text-primary)' }}>{worstTool.name}</b> is <b style={{ color: worstTool.shareOfToolBytes > 0.4 ? RED : GOLD }}>{Math.round((worstTool.shareOfToolBytes || 0) * 100)}%</b> of all <span title={ctx.denominator} style={{ borderBottom: '1px dotted var(--text-secondary)', cursor: 'help' }}>tool-result bytes</span>.
             </div>
           )}
@@ -184,7 +170,7 @@ export default function ForensicsSection() {
         </div>
       </div>
 
-      {/* (c) hook blast radius */}
+      {}
       <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head"><h3>Hook blast radius <span className="muted">{d.hooks.length} hook{d.hooks.length === 1 ? '' : 's'} fired in {days}d</span></h3></div>
         {d.hooks.length === 0 ? <p className="small" style={{ marginTop: 0 }}>no hook activity recorded in this window</p> : (

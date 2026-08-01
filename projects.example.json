@@ -22,6 +22,9 @@
   "//Company_Tools": "Org-specific tool bundle: the Constitution reader (needs a .wakeel/constitution/ knowledge base in the repo) and Figma Capture (needs a component catalog extracted from your own design system, see designSystem below). Off by default because both are useless without that layout. Hidden from everyone unless this is set. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
   "Company_Tools": false,
 
+  "//Engineering": "Engineering metrics read from the JIRA/GitHub snapshot: escape rate (bugs that reached production, counted against the release they came from), area hotspots, and ownership concentration with bus factor. Off by default because every figure needs the snapshot — with no credentials configured the section is an empty frame. NOTE: the ownership panel names individuals and shows per-person ticket counts. It exists to answer 'what happens to this area if its main contributor is unavailable', which is a staffing-risk question about the codebase; ticket counts reflect what people were assigned, not how well they work. Accepts true, {enabled:true}, or {enabled:true, emails:[...]} to additionally require that the configured JIRA identity matches.",
+  "Engineering": false,
+
   "//designSystem": "Where the Figma Capture component picker gets its catalog. Nothing ships by default. Either a package — resolved from node_modules or a path, with components and variants read out of its .d.ts files — or a static Storybook build URL. Extract it from Setup -> Company tools, or run `npm run catalog:refresh`. The generated design-system-catalog.json is gitignored: it describes your design system, not this app.",
   "designSystem": { "package": "@your-org/design-system" },
 

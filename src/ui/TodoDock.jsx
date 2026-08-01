@@ -1,13 +1,3 @@
-// src/ui/TodoDock.jsx — the floating TODO button, mounted once in the app shell.
-//
-// TWO WAYS IN, ONE LIST
-//   * this button (every screen) → a drawer for capture and ticking off, without losing your place
-//   * the TODO tab in the sidebar → the full board, for planning the day
-// Both read `useTodoDay` and mutate through `todoApi`, so a tick here shows up there immediately and
-// the day selected in one is the day shown in the other.
-//
-// The badge is the day's OPEN count, polled from /api/todos/count — a deliberately tiny endpoint,
-// because this component is alive on every screen and must not drag a full day payload behind it.
 import React, { useEffect, useState } from 'react'
 import { toast } from '../lib/api.js'
 import { TodoCard } from './todoParts.jsx'
@@ -24,8 +14,6 @@ export default function TodoDock({ onNav }) {
   const [status, setStatus] = useState('draft')
   const { data } = useTodoDay(open ? date : null)
 
-  // Badge polling. Runs whether or not the drawer is open — that is the point of a dock: the number
-  // is visible from wherever you are. Paused while the tab is hidden, like the other pollers here.
   useEffect(() => {
     const load = () => todoApi.count(date).then(setCount).catch(() => {})
     load()
@@ -35,8 +23,6 @@ export default function TodoDock({ onNav }) {
     return () => { clearInterval(t); window.removeEventListener('todos-changed', onChange) }
   }, [date])
 
-  // Alt+T toggles the drawer — Cmd/Ctrl+Shift+T and Cmd+J are taken by the browser itself, and a
-  // shortcut the browser eats is worse than none. Escape closes, matching the command palette.
   useEffect(() => {
     const onKey = e => {
       if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 't') { e.preventDefault(); setOpen(o => !o) }

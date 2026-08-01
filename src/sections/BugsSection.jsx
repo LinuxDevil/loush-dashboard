@@ -4,7 +4,7 @@ import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const SEV = { critical: 'var(--red)', high: 'var(--accent-light)', medium: 'var(--amber)', low: 'var(--text-secondary)' }
 const STATUS = { open: 'var(--red)', 'in-session': 'var(--blue)', fixed: 'var(--green)', closed: 'var(--text-tertiary)' }
 const age = t => { const d = Math.floor((Date.now() - t) / 86400_000); return d === 0 ? 'today' : d + 'd' }
@@ -68,6 +68,66 @@ function Bisect({ bug, onRefresh }) {
   )
 }
 
+function SecurityFindings() {
+  const [file, setFile] = useState('')
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const run = () => {
+    setBusy(true); setErr(''); setD(null)
+    api.get('/api/security/findings?file=' + encodeURIComponent(file.trim()))
+      .then(setD).catch(e => setErr(e.message)).finally(() => setBusy(false))
+  }
+  const SEV = { HIGH: 'var(--red)', MEDIUM: 'var(--amber, #d79921)', LOW: 'var(--text-tertiary)' }
+  return (
+    <div className="panel">
+      <h3>Security findings <span className="muted">from a claudecode-results.json artifact</span></h3>
+      <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
+        <input value={file} onChange={e => setFile(e.target.value)} placeholder="/path/to/claudecode-results.json"
+          onKeyDown={e => { if (e.key === 'Enter' && file.trim() && !busy) run() }}
+          style={{ font: '400 12px var(--mono)', flex: 1 }} />
+        <button onClick={run} disabled={busy || !file.trim()}>{busy ? 'reading…' : 'load'}</button>
+      </div>
+      {err && <div style={{ font: '400 11px var(--mono)', color: 'var(--red)' }}>{err}</div>}
+      {d && (
+        <>
+          {}
+          {d.filterFailedOpen && (
+            <div style={{ font: '400 11px var(--mono)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 6, padding: 8, margin: '8px 0' }}>
+              ⚠ The upstream filter failed open — findings below were NOT filtered as the summary claims.
+              {d.failOpen?.kinds?.length ? ` (${d.failOpen.kinds.join(', ')})` : ''}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 16, font: '400 11px var(--mono)', flexWrap: 'wrap', marginBottom: 8 }}>
+            <span>{(d.findings || []).length} kept</span>
+            {}
+            <span style={{ color: 'var(--text-tertiary)' }}>hard-excluded: {d.filterStats?.hardExcluded ?? '—'}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}>claude-excluded: {d.filterStats?.claudeExcluded ?? '—'}</span>
+            <span style={{ color: 'var(--text-tertiary)' }}>avg confidence: {d.filterStats?.averageConfidence ?? '—'}</span>
+            {d.localFilter && <span title="what this machine's copy of the rules would drop, independent of what the vendor actually dropped">local rules would drop {d.localFilter.excluded?.length ?? 0}</span>}
+          </div>
+          <table className="data" style={{ font: '400 11px var(--mono)', width: '100%' }}>
+            <thead><tr><th>sev</th><th style={{ textAlign: 'left' }}>file</th><th style={{ textAlign: 'left' }}>category</th><th style={{ textAlign: 'left' }}>description</th></tr></thead>
+            <tbody>
+              {(d.findings || []).map((f, i) => (
+                <tr key={i}>
+                  <td style={{ color: SEV[f.severity] || 'var(--violet)' }}>{f.severity || 'unknown'}</td>
+                  <td>{f.file}{f.line != null ? ':' + f.line : ''}</td>
+                  <td style={{ color: 'var(--text-tertiary)' }}>{f.category || '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)' }} title={f.exploit_scenario || ''}>{String(f.description || '').slice(0, 120)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(d.malformed || []).length > 0 && (
+            <p className="small">{d.malformed.length} record(s) could not be parsed and are excluded from the counts above.</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function BugsSection() {
   const projects = useProjects()
   const [bugs, setBugs] = useState(null)
@@ -75,7 +135,7 @@ export default function BugsSection() {
   const [fProj, setFProj] = useState('')
   const [fStatus, setFStatus] = useState('')
   const load = () => api.get('/api/bugs').then(setBugs).catch(() => {})
-  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, []) // pause while tab hidden
+  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, [])
   if (!bugs) return <Skeleton tiles={0} rows={6} />
 
   const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => toast(e.message, 'error'))
@@ -95,6 +155,7 @@ export default function BugsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Intake projects={projects} onDone={load} />
+      <SecurityFindings />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <select value={fProj} onChange={e => setFProj(e.target.value)}><option value="">all projects</option>{projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)}><option value="">all statuses</option>{Object.keys(STATUS).map(s => <option key={s}>{s}</option>)}</select>
@@ -141,8 +202,7 @@ export default function BugsSection() {
           )}
         </div>
       ))}
-      {/* "no bugs recorded" is not "no bugs". A green tick over a store that has never been written
-          is the same failure as a dashboard reporting 0% because it could not read its source. */}
+      {}
       {shown.length === 0 && (bugs.length === 0
         ? <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-secondary)' }}>no bugs have been recorded here yet — this is an empty log, not a clean bill of health</div>
         : <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--green)' }}>✓ none of the {bugs.length} recorded bug{bugs.length === 1 ? '' : 's'} match this filter</div>)}

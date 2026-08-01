@@ -1,0 +1,95 @@
+/* compare feature styles — owned by the compare agent.
+   Separate file so four agents can add CSS in parallel without touching styles.css.
+   Tokens only, none invented here: --bg-*, --text-*, --border-*, --accent, --red, --red-bg,
+   --r-card, --r-ctl, --mono.
+
+   Written from the capability description and docs/compare.webm; no Odysseus source was read for
+   this file, so NOTICE clause 1 does not apply to it.
+
+   A failure is --red, not --accent: --accent is the one brand/interactive colour and means "link,
+   focus, primary action". An error drawn in it says the opposite of what happened. */
+
+.cmp textarea { width: 100%; resize: vertical; }
+.cmp-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.cmp-controls input { flex: 1; min-width: 160px; }
+.cmp-note { font: 400 11px var(--mono); color: var(--text-tertiary); }
+
+.cmp-err {
+  font: 400 11.5px/1.55 var(--mono);
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid var(--red-bg);
+  border-left: 2px solid var(--red);
+  border-radius: var(--r-ctl);
+  padding: 8px 10px;
+  margin-top: 10px;
+}
+
+.cmp-result { display: flex; flex-direction: column; gap: 10px; }
+.cmp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cmp-head button { margin-top: 0; }
+.cmp-prompt { flex: 1; min-width: 0; color: var(--text-primary); font-weight: 500; }
+
+.cmp-badge {
+  font: 500 10px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-ctl);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.cmp-badge.won { color: var(--accent); border-color: var(--accent); }
+
+/* --cmp-n is set inline by CompareSection: one column per contender, however many there are. */
+.cmp-panes { display: grid; gap: 12px; grid-template-columns: repeat(var(--cmp-n, 1), minmax(0, 1fr)); }
+
+.cmp-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.cmp-pane.won { border-color: var(--accent); }
+
+.cmp-pane-hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+.cmp-pane-hd button { margin-top: 0; }
+.cmp-label { font: 700 13px var(--mono); color: var(--accent); }
+.cmp-model { flex: 1; min-width: 0; font: 400 11px var(--mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cmp-stats {
+  display: flex;
+  gap: 14px;
+  padding: 6px 12px;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border-subtle);
+  font: 400 10.5px var(--mono);
+  color: var(--text-tertiary);
+}
+
+/* A pane's error is already inside a bordered card and is the pane's whole content, so it does not
+   want the top margin the form-level one needs. */
+.cmp-body { padding: 12px 14px; min-height: 120px; max-height: 460px; overflow-y: auto; }
+.cmp-body .cmp-err { margin-top: 0; }
+.cmp-synth { border-color: var(--accent); }
+
+.cmp-row { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px solid var(--border-subtle); }
+.cmp-row button { margin-top: 0; flex-shrink: 0; }
+.cmp-row .cmp-note { flex-shrink: 0; }
+.cmp-row-prompt { flex: 1; min-width: 0; color: var(--text-primary); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-row-prompt:hover { color: var(--accent); }
+
+/* Side by side is the point, so the tab bar only exists where the panes cannot fit next to each
+   other. Above this width the tabs are hidden and every pane is on screen at once. */
+.cmp-tabs { display: none; }
+
+@media (max-width: 900px) {
+  .cmp-tabs { display: block; }
+  .cmp-panes { grid-template-columns: 1fr; }
+  .cmp-pane { display: none; }
+  .cmp-pane.active { display: flex; }
+}

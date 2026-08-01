@@ -2,12 +2,6 @@ import React, { useState } from 'react'
 import { HEAD, BODY, MONO, BB, GREEN, GOLD, RED, PURPLE, DIM, HI, PANEL, Card, CardHead, Empty, H1, DataTable, TicketLink, Kpi, sel, miniBtn, useCopy, fdate, fx } from './ui.jsx'
 import { Lines } from './charts.jsx'
 
-// §5 — Quality REPLACES the per-person blame surface. What was here before: "Bug ratio — caused/tickets",
-// "Bugs owned — he caused", and an owner→fixer gossip board, all built on guessed attribution (fixer =
-// whoever happened to drag the card to QA-ready, which is routinely QA). All four personas cut them.
-// Bug LOAD by area is a capacity and hardening argument. Bug ratio by person teaches people to stop
-// linking bugs to their parent story, which destroys the very data the panel is built on.
-// The bug register survives — it is how you route a fix — relabelled, with every ratio removed.
 export default function Quality({ snap, issues, members, patch, reload }) {
   const [copy, copied] = useCopy()
   const [saving, setSaving] = useState(null)
@@ -87,7 +81,7 @@ export default function Quality({ snap, issues, members, patch, reload }) {
           {Q.ownership.map(o => <div key={o.area} style={{ padding: '9px 11px', borderRadius: 6, background: 'var(--bg-base)', border: `1px solid ${o.busFactor ? 'var(--red-bg)' : 'var(--bg-surface-hover)'}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ font: `600 12px ${BODY}`, color: HI, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.area}</span>
-              {/* tri-state: true = risk, false = measured and fine, null = too few tickets to judge */}
+              {}
               {o.busFactor === true && <span style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, background: 'var(--red-bg)', color: RED }}>BUS FACTOR 1</span>}
               {o.busFactor === null && <span title={`only ${o.total} ticket(s) — below the n≥${o.busFactorMinN} floor, so ownership concentration is not judged`} style={{ font: `700 8px ${MONO}`, letterSpacing: '0.05em', padding: '2px 6px', borderRadius: 4, color: 'var(--text-tertiary)', border: '1px solid var(--border-default)' }}>LOW n</span>}
               <span style={{ font: `500 10px ${MONO}`, color: DIM }}>{o.total} tickets · {o.contributors} people</span>
