@@ -1,0 +1,207 @@
+{
+  "head_sha": "0f8a09a1e09d57e755833db8863350e6b860c17a",
+  "branch": "claude/merge-md-output-files-wwp0k3",
+  "decision": "REQUEST_CHANGES",
+  "skills": { "graphify": "degraded", "ponytail": "degraded" },
+  "summary": "Strong, unusually well-reasoned work: each module carries a written security model, the licence audit is thorough, and the four briefs are implemented close to the letter with above-average test coverage. Not mergeable yet. The docs path guard has a proven escape — a dangling symlink inside the root passes every check because realpathSync throws ENOENT on it and the ancestor walk falls back to the lexical path, after which writeFileSync follows the link and creates a file outside the root (verified by executing resolveDocPath against a fixture). The research lifecycle has a second blocking hole: spawnAgent's timeout records no error and research.mjs discards the exit code, so a killed or non-zero-exit run that wrote a partial report is served as done. Four further blockers: deleting a running research run recreates its directory via writeMeta; a failed Compare pane's raw error string names its model before the vote, defeating the blind property; the ai-edit tool refusal is a denylist that MCP tools bypass; and a stale file-load response in DocsSection can save one document's text over another. Both blocking defects sit in the gap between what the tests construct and what production does — the symlink test only builds live links, and the cancelled-run test never drives finish().",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "Critical",
+      "axis": "security",
+      "scope": "file",
+      "file": "server/docs.mjs",
+      "files": [],
+      "line": 76,
+      "title": "A dangling symlink inside the docs root defeats the path guard, and PUT writes through it",
+      "body": "realOrNearest walks up to the deepest existing ancestor, and fs.realpathSync throws ENOENT for a symlink whose target does not exist. For root/note.md -> /outside/pwned.md (target absent) the walk falls back to root and returns the lexical path root/note.md, so isInside passes and resolveDocPath returns {ok:true}. PUT /api/docs/file then calls fs.writeFileSync, which opens with O_CREAT|O_WRONLY and follows the symlink, creating the file outside the root. Verified against the real export. Live symlinks are all correctly refused, which is why test/server/docs.test.mjs:59 passes and misses this — it only builds symlinks with existing targets. The ext check does not help: ext comes from the link name inside the root, so note.md -> ~/.zshenv passes. Overwriting a pre-existing outside file is not possible, but arbitrary file creation outside the root is, and creating ~/.zshenv where none exists is code execution on the next shell. Fix: lstat the resolved leaf and refuse isSymbolicLink() outright (listDocs already skips symlinks, so there is no legitimate case), and open the write with O_NOFOLLOW instead of writeFileSync. Add the dangling case to the symlink test."
+    },
+    {
+      "id": "F2",
+      "severity": "Required",
+      "axis": "correctness",
+      "scope": "cross-file",
+      "file": null,
+      "files": ["lib/agent.mjs", "server/research.mjs"],
+      "line": null,
+      "title": "A research run killed by timeout or exiting non-zero reports done",
+      "body": "spawnAgent's timeout handler (lib/agent.mjs:61) kills the child and records nothing, then the exit handler (lib/agent.mjs:77-80) calls finish({code, error: null}). server/research.mjs:212 discards code entirely (onExit: ({error}) => finish(r, {error})), so in finish (server/research.mjs:157-167) error is null and cancelled is false, giving status 'done'; only a missing report file downgrades it. A run killed at the 30-minute timeout, or one whose CLI died non-zero, that had already written even a partial report.md is served as done with a truncated report — precisely the failure mode brief 3 names. test/server/research.test.mjs:25 exercises researchView on a hand-built object and never reaches the finish transition. Fix: have spawnAgent's timeout pass error: 'timeout after ...' (as runAgent already does at lib/agent.mjs:21), take code in research.mjs's onExit, and treat non-zero/null exit codes as an error status. Add a test that drives finish through a non-zero exit with a report file present."
+    },
+    {
+      "id": "F3",
+      "severity": "Required",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "server/research.mjs",
+      "files": [],
+      "line": 274,
+      "title": "Deleting a running research run recreates the directory it just deleted",
+      "body": "DELETE /api/research/:id kills the child, drops the run from runs, rmSyncs the directory and answers {ok:true}. The killed child's exit still fires finish(r, ...), which calls writeMeta(r) — and writeMeta does fs.mkdirSync(p.dir, {recursive:true}) then writeFileSync(p.meta, ...) (server/research.mjs:85-95). The directory and meta.json return milliseconds after the delete succeeded, so GET /api/research lists the run again as cancelled and the user sees an entry they just deleted. Fix: set r.deleted = true before killing and have finish/writeMeta return early for a deleted run."
+    },
+    {
+      "id": "F4",
+      "severity": "Required",
+      "axis": "security",
+      "scope": "file",
+      "file": "server/compare.mjs",
+      "files": [],
+      "line": 73,
+      "title": "A failed pane's raw error text de-anonymises it before the vote",
+      "body": "view() correctly nulls model, cost, ms and turns until a vote exists, then ships error: p.error || null unconditionally. That string is whatever runAgent scraped off the CLI's stderr/stdout (lib/agent.mjs:31, a 1200-char slice), and CLI failures name the model they were invoked with. The UI prints it verbatim at src/sections/CompareSection.jsx:149 ('this model failed: {p.error}'), so one unavailable or typo'd model labels its pane before the user votes — defeating the property brief 2 says the feature exists for. test/server/compare.test.mjs:144 only asserts the errored pane exists. Fix: before the vote substitute a fixed non-identifying string (error: voted ? p.error : (p.error ? 'this model failed' : null)) and keep the real text for after the reveal. Extend the test to assert no model name appears anywhere in the pre-vote payload."
+    },
+    {
+      "id": "F5",
+      "severity": "Required",
+      "axis": "security",
+      "scope": "cross-file",
+      "file": null,
+      "files": ["server/docs.mjs", "lib/agent.mjs"],
+      "line": null,
+      "title": "The ai-edit tool refusal is a denylist over an extensible tool surface",
+      "body": "EDIT_TOOLS = ['Write','Edit','MultiEdit','NotebookEdit','Bash','Task'] (server/docs.mjs:50) is passed as --disallowedTools while the child still runs with --dangerously-skip-permissions (lib/agent.mjs:15-16). It covers the built-in write tools, but a denylist must enumerate everything that will ever exist: any configured MCP server exposes mcp__<server>__<tool> names that are not listed and can write files, and SlashCommand reaches arbitrary behaviour indirectly. The endpoint's guarantee is stated as absolute in three places (module header, the wrote:false field, ProposalReview.jsx) and the whole document is already in the prompt, so the agent needs no tools at all. Fix: add an allowedTools passthrough to runAgent and call ai-edit with an empty/near-empty allowlist — default-deny, no maintenance as the tool surface grows. Repoint the argv assertion at test/server/docs.test.mjs:149."
+    },
+    {
+      "id": "F6",
+      "severity": "Required",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "src/sections/DocsSection.jsx",
+      "files": [],
+      "line": 78,
+      "title": "Two quick clicks in the file list can save one document's text over another",
+      "body": "open() sets setSel(path) then resolves api.get('/api/docs/file?path=...') with no check that sel is still that path. Open a large doc A, click doc B while A is in flight, B resolves first, then A's response lands and calls setSaved(d.text); setBuf(d.text) — the editor shows A's text while sel is B and dirty is false. save() then PUTs buf to sel, writing A's content into B. This is the bug the file's own header says it exists to prevent, and the response already carries d.path to guard with. Fix: .then(d => { if (d.path !== path) return; ... }), or a request token in a ref compared on resolve."
+    },
+    {
+      "id": "F7",
+      "severity": "Optional",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "src/ui/chatBlocks.jsx",
+      "files": [],
+      "line": 36,
+      "title": "Tool results are still truncated to 400 chars, so the disclosure cannot show the full result",
+      "body": "Brief 1 item 4 exists because 'the remainder is unreachable'. The CSS clip is correctly gone (.chat-tool-result is now max-height:340px; overflow:auto), but b.result = short(c.content, 400) still caps the data at 400 characters before it reaches the <details> body, so opening a tool call still cannot show the thing you opened it for. The cap is pre-existing, carried over unchanged from ChatSection.jsx, so this is a half-fixed acceptance criterion rather than a regression. Fix: keep the 400-char form for the collapsed summary and store the full (or a far larger) string for the body, so the CSS scroll cap is the only limit the reader hits."
+    },
+    {
+      "id": "F8",
+      "severity": "Optional",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "server/research.mjs",
+      "files": [],
+      "line": 262,
+      "title": "A cancelled run's forced finish never escalates the kill, and drops the handle",
+      "body": "cancel sends one SIGTERM and force-finishes after 5s. A child that ignores SIGTERM keeps running — burning tokens and possibly still writing report.md — while the run is marked terminal, and finish's eviction (server/research.mjs:173-174) can then remove it from runs entirely, so nothing holds the handle and it can never be cancelled again. The comment acknowledges half of this but the remedy only fixes the label. Fix: child.kill('SIGKILL') in the 5s timer before finish, and skip eviction while the child is still alive."
+    },
+    {
+      "id": "F9",
+      "severity": "Optional",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "src/sections/ResearchSection.jsx",
+      "files": [],
+      "line": 59,
+      "title": "The research SSE retries a 404 once a second, forever",
+      "body": "GET /api/research/:id/events 404s when there is no live run (server/research.mjs:249). es.onerror treats every CLOSED state alike and reschedules after 1000ms with no cap and no status check, so attaching to an item the client's list still calls running but the server no longer holds (restart, eviction) becomes an endless 1Hz request loop for as long as the section is mounted. Fix: cap retries with a backoff and stop on a terminal response — re-fetch /api/research/:id on failure and give up once its status is not running."
+    },
+    {
+      "id": "F10",
+      "severity": "Optional",
+      "axis": "correctness",
+      "scope": "cross-file",
+      "file": null,
+      "files": ["src/sections/DocsSection.jsx", "server/docs.mjs"],
+      "line": null,
+      "title": "An AI edit against a dirty buffer proposes against the file on disk",
+      "body": "runAiEdit (src/sections/DocsSection.jsx:91-99) sends path plus selText taken from the buffer, while the server builds the prompt and the returned text from whole = readFileSync(t.abs) (server/docs.mjs:240-268). With unsaved edits the two disagree: a selection of freshly typed text gets a confusing 409 selection-not-in-file, and a whole-document edit returns disk-based text whose diff, if accepted, silently reverts everything unsaved. The diff does show it, but only to a reader who notices unrelated hunks. Fix: send the buffer as the document body and have the endpoint edit what it is given, or disable the AI-edit bar while dirty with a 'save first' reason."
+    },
+    {
+      "id": "F11",
+      "severity": "Optional",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "src/ui/chatBlocks.jsx",
+      "files": [],
+      "line": 48,
+      "title": "c.text.trim() is unguarded and can take the whole transcript down",
+      "body": "if (c.type === 'text' && c.text.trim()) throws TypeError on a text content block with a null/absent text — what a partial or malformed stream event looks like. buildBlocks runs during render in three sections, so one such event blanks the screen. The line immediately below guards exactly this for thinking (String(c.thinking ?? '').trim()), so the inconsistency looks accidental. Fix: String(c.text ?? '').trim()."
+    },
+    {
+      "id": "F12",
+      "severity": "Optional",
+      "axis": "performance",
+      "scope": "file",
+      "file": "server/compare.mjs",
+      "files": [],
+      "line": 128,
+      "title": "Compare blocks the HTTP request for up to 30 minutes with no cap on the prompt",
+      "body": "runAgent is called without timeoutMs, inheriting the 30-minute default, and six run concurrently under one Promise.all holding the response open. parseRequest validates model count, duplicates and cwd but never bounds prompt length, so an arbitrarily large prompt is multiplied by six spawns. Research and Docs both set explicit caps (MAX_QUESTION, MAX_INSTRUCTION_CHARS, AI_TIMEOUT_MS); Compare is the outlier. Fix: add a MAX_PROMPT bound in parseRequest and pass an explicit timeoutMs."
+    },
+    {
+      "id": "F13",
+      "severity": "Optional",
+      "axis": "performance",
+      "scope": "file",
+      "file": "server/research.mjs",
+      "files": [],
+      "line": 241,
+      "title": "The report is read whole into memory before being capped",
+      "body": "fs.readFileSync(p.report, 'utf8').slice(0, REPORT_CAP) reads the entire file first and only then applies the 2MB cap. The file is written by an agent, so its size is not bounded by anything this code controls. Fix: statSync first and refuse or stream-truncate past the cap, or read a bounded number of bytes with openSync/readSync."
+    },
+    {
+      "id": "F14",
+      "severity": "Optional",
+      "axis": "architecture",
+      "scope": "file",
+      "file": "server/docs.mjs",
+      "files": [],
+      "line": 230,
+      "title": "The ai-edit handler has no try/catch around its awaits",
+      "body": "It is an async Express 4 handler, so any rejection becomes an unhandled rejection rather than a 500 — fatal under Node's default. runAgent currently always resolves, so this is latent rather than live; server/compare.mjs wraps every async handler, which makes the omission look unintentional. Fix: wrap the body in try/catch and bad(res, 500, e.message), as Compare does."
+    },
+    {
+      "id": "F15",
+      "severity": "Nit",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "server/research.mjs",
+      "files": [],
+      "line": 185,
+      "title": "cwd in research is checked for existence but not for being a directory",
+      "body": "fs.existsSync(req.body.cwd) ? req.body.cwd : os.homedir() accepts a file path, which surfaces later as an async ENOTDIR on the spawn rather than a 400. server/compare.mjs:108-110 gets this right with isAbsolute plus statSync().isDirectory(). Fix: reuse Compare's two-line check."
+    },
+    {
+      "id": "F16",
+      "severity": "FYI",
+      "axis": "readability",
+      "scope": "global",
+      "file": null,
+      "files": [],
+      "line": null,
+      "title": "The NOTICE audit lists neither ResearchSection.jsx nor the two new stylesheets",
+      "body": "NOTICE enumerates the files where Odysseus source was read, then names the files that deliberately are not on that list (chatBlocks.jsx, CompareSection.jsx, compare.css). src/sections/ResearchSection.jsx, src/styles/research.css and src/styles/docs.css appear in neither list, although brief 3 permitted reading static/js/research/, and their headers claim no reading either way. For a document presenting itself as an audit, the silence is the gap. Fix: add them to the second list explicitly, as CompareSection.jsx does in its own header."
+    },
+    {
+      "id": "F17",
+      "severity": "FYI",
+      "axis": "security",
+      "scope": "file",
+      "file": "server/docs.mjs",
+      "files": [],
+      "line": 212,
+      "title": "TOCTOU between the path guard and the write",
+      "body": "resolveDocPath validates, then mkdirSync/writeFileSync act on the path string; a component swapped for a symlink in between is not re-checked. It needs a local writer inside the root, so it is far narrower than F1 — but the O_NOFOLLOW fix suggested there closes both, which is why it is worth doing that way."
+    },
+    {
+      "id": "F18",
+      "severity": "FYI",
+      "axis": "correctness",
+      "scope": "file",
+      "file": "server/compare.mjs",
+      "files": [],
+      "line": 92,
+      "title": "Comparison JSON writes are not atomic, and two votes can race",
+      "body": "write() truncates in place, so a crash mid-write leaves a half file (the list route does swallow it, at server/compare.mjs:149). vote does read then check then write with no lock, so two simultaneous votes both pass the 'already voted' check and the last write wins. Single local user, so a note rather than a defect. Fix: write to <id>.json.tmp and renameSync over the target."
+    }
+  ]
+}
