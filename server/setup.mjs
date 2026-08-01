@@ -1,25 +1,3 @@
-// server-setup.mjs — /api/setup/* — visual configuration for everything this app needs.
-//
-// WHY THIS EXISTS
-// Until now, configuring this dashboard meant hand-editing JSON on disk in three different places,
-// and the one thing that made it "work out of the box" was another company's production config
-// hardcoded into the source. Everything org-specific is now user config — which is only an
-// improvement if there is somewhere to actually enter it.
-//
-// SECRET HANDLING — the rules this module will not break:
-//   1. A secret VALUE is never returned by any endpoint here. Not masked, not partially, not once.
-//      The client is told `set: true|false` and where it came from, and nothing else. There is no
-//      GET that can echo a token back, so a token cannot leak through a screenshot, a cached
-//      response, or the browser devtools network tab.
-//   2. Secret files are written 0600 (owner read/write only) and are never routed through the
-//      dashboard-backups directory — a "helpful" backup of a credentials file is just a second
-//      plaintext copy of your token in a directory you forgot about.
-//   3. Every writable path is a fixed constant in this file. No endpoint accepts a path, so there
-//      is nothing to traverse.
-//   4. Secret files are checked against .gitignore on every read, and the UI shouts if one is
-//      committable. That check is why the emails in server-eng.mjs reached a public repo.
-//
-// It writes config; it does not read your transcripts. Plane-neutral.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -27,13 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, normalizeDesignSystem, DEFAULT_WORK, DEFAULT_SP_DAYS } from '../lib/eng-config.mjs'
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, GITIGNORE_FILE, CATALOG_FILE } from '../lib/paths.mjs'
 
-// From lib/paths.mjs, not from this file's own location. GITIGNORE especially: if it resolves to a
-// missing file, gitignoreText() returns '' and the "your token is committable" banner becomes a
-// permanent false alarm — a safety check that fails open and silently.
 const GITIGNORE = GITIGNORE_FILE
 
 // ---------------------------------------------------------------------------
-// pure — exported for test/setup-config.test.mjs
 // ---------------------------------------------------------------------------
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -41,7 +15,6 @@ const KEY_RE = /^[A-Z][A-Z0-9_]{0,19}$/
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/
 const HOST_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/i
 
-/** Validate one project entry. Returns [] when clean. Errors are user-facing strings. */
 export function validateProject(p = {}) {
   const e = []
   const key = String(p.key || '').toUpperCase()
@@ -54,7 +27,6 @@ export function validateProject(p = {}) {
   return e
 }
 
-/** Validate the work week. The most load-bearing setting in the app, so it is checked hard. */
 export function validateWork(w = {}) {
   const e = []
   const n = (v, lo, hi, label) => {
@@ -75,7 +47,6 @@ export function validateWork(w = {}) {
   return e
 }
 
-/** Story-point table: ascending points, positive days. */
 export function validateSpTable(rows) {
   const e = []
   if (!Array.isArray(rows) || !rows.length) return ['At least one points → days row is required']
@@ -109,7 +80,6 @@ export function mergeSecrets(existing = {}, patch = {}) {
   return out
 }
 
-/** Is `basename` covered by .gitignore? Deliberately literal — this is a warning, not a resolver. */
 export function isIgnored(gitignoreText, basename) {
   return String(gitignoreText || '').split('\n')
     .map(l => l.trim())
@@ -118,12 +88,10 @@ export function isIgnored(gitignoreText, basename) {
 }
 
 // ---------------------------------------------------------------------------
-// io helpers
 // ---------------------------------------------------------------------------
 
 const readJsonSafe = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) } catch { return d } }
 
-// 0600 + atomic replace. No backup copy: a spare plaintext token in another directory is a liability.
 function writeSecretFile(file, obj) {
   const tmp = file + '.tmp'
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 })
@@ -139,7 +107,6 @@ function writeConfigFile(file, obj) {
 
 const gitignoreText = () => { try { return fs.readFileSync(GITIGNORE, 'utf8') } catch { return '' } }
 
-/** Where a JIRA credential is coming from. Mirrors server-eng.mjs creds() precedence exactly. */
 function credState() {
   const gi = gitignoreText()
   const local = readJsonSafe(SECRETS_FILE, {})
@@ -153,8 +120,6 @@ function credState() {
   return {
     email: { set: !!pick('JIRA_EMAIL', 'jiraEmail', 'email'), source: pick('JIRA_EMAIL', 'jiraEmail', 'email') },
     token: { set: !!pick('JIRA_API_TOKEN', 'jiraToken', 'token', 'jiraAPIKey'), source: pick('JIRA_API_TOKEN', 'jiraToken', 'token', 'jiraAPIKey') },
-    // env wins over the file, so the UI must say so instead of letting someone "save" a value that
-    // is then silently ignored for the rest of the process's life.
     envOverride: !!(process.env.JIRA_EMAIL || process.env.JIRA_API_TOKEN),
     file: {
       path: SECRETS_FILE, exists: fs.existsSync(SECRETS_FILE),
@@ -175,7 +140,6 @@ function ghState() {
 }
 
 // ---------------------------------------------------------------------------
-// mount
 // ---------------------------------------------------------------------------
 
 export default function mountSetup(app, deps = {}) {
@@ -198,12 +162,11 @@ export default function mountSetup(app, deps = {}) {
           projects: cfg.projects,
           file: { path: PROJECTS_FILE, exists: fs.existsSync(PROJECTS_FILE), gitignored: isIgnored(gi, 'projects.json') },
         },
-        // Values are absent by construction — see the header. `set` is all the client gets.
         credentials: credState(),
         gh: ghState(),
         notify: {
           desktop: !!meta.notify?.desktop,
-          slackWebhookSet: !!meta.notify?.slackWebhook, // URL withheld: it is a bearer credential
+          slackWebhookSet: !!meta.notify?.slackWebhook,
         },
         defaults: { work: DEFAULT_WORK, storyPointDays: DEFAULT_SP_DAYS },
       })
@@ -227,15 +190,10 @@ export default function mountSetup(app, deps = {}) {
       if (work) base.work = normalizeWorkForStorage(work)
       if (storyPointDays) base.storyPointDays = storyPointDays
       if (defaultDevEmails) base.defaultDevEmails = defaultDevEmails.filter(Boolean).map(s => s.toLowerCase())
-      // Toggling this changes which server routes get MOUNTED, which only happens at boot — so the
-      // response says so rather than letting the UI imply the tab appears immediately.
       if (companyTools !== undefined) {
         base.Company_Tools = normalizeToolFlag(companyTools)
-        // never leave two spellings on disk — including the pre-rename `Almosafer_*` keys, which
-        // parseEngConfig still reads, so leaving one behind would let a stale key win a later edit.
         for (const k of ['companyTools', 'company_tools', 'Almosafer_Tools', 'almosaferTools', 'almosafer_tools']) delete base[k]
       }
-      // Unlike the tab flag this needs no restart: the catalog is read per request from disk.
       if (designSystem !== undefined) base.designSystem = normalizeDesignSystem(designSystem) || undefined
       writeConfigFile(PROJECTS_FILE, base)
       invalidateEngConfig()
@@ -245,12 +203,6 @@ export default function mountSetup(app, deps = {}) {
   })
 
   // --- design-system catalog -------------------------------------------------------
-  // Extract the component catalog from the user's OWN design system into CATALOG_FILE (gitignored,
-  // generated per machine — nothing ships). Takes the source from the body so the Setup UI can
-  // extract what is typed before it is saved; falls back to the saved config for a plain re-run.
-  //
-  // The body names a package or a URL, NOT a path this endpoint writes to — the only write target is
-  // the CATALOG_FILE constant, per rule 3 in this file's header.
   app.post('/api/setup/design-system/extract', async (req, res) => {
     try {
       const src = normalizeDesignSystem(req.body) || loadEngConfig(PROJECTS_FILE).designSystem
@@ -282,8 +234,6 @@ export default function mountSetup(app, deps = {}) {
         devEmails: (p.devEmails || []).filter(Boolean).map(s => s.toLowerCase()),
         qaEmails: (p.qaEmails || []).filter(Boolean).map(s => s.toLowerCase()),
         productEmails: (p.productEmails || []).filter(Boolean).map(s => s.toLowerCase()),
-        // Explicit opt-in. With this false the dashboard copies a line for a human to send instead
-        // of transitioning a ticket or commenting on a PR on your behalf.
         writes: p.writes === true,
       }
       const i = list.findIndex(x => String(x.key || x.jiraProjectKey || '').toUpperCase() === key)
@@ -323,7 +273,6 @@ export default function mountSetup(app, deps = {}) {
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
-  // Verifies against the real API using whatever creds are actually in effect. Never echoes them.
   app.post('/api/setup/test/jira', async (req, res) => {
     try {
       const cfg = loadEngConfig(PROJECTS_FILE)
@@ -356,7 +305,6 @@ export default function mountSetup(app, deps = {}) {
         return res.status(400).json({ error: 'Slack webhooks start with https://hooks.slack.com/' })
       meta.notify = {
         desktop: desktop === undefined ? !!cur.desktop : !!desktop,
-        // same three-case rule as credentials: absent leaves, '' clears, string sets
         slackWebhook: slackWebhook === undefined ? (cur.slackWebhook || '') : (slackWebhook || ''),
       }
       writeMeta(meta)
@@ -365,7 +313,6 @@ export default function mountSetup(app, deps = {}) {
   })
 }
 
-// storage shape only — drop the derived fields normalizeWork adds
 function normalizeWorkForStorage(w) {
   const n = normalizeWork(w)
   return { tzOffsetHours: n.tzOffsetHours, startHour: n.startHour, endHour: n.endHour, weekend: n.weekend, weekStartDay: n.weekStartDay }

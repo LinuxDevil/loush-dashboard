@@ -1,8 +1,6 @@
 import React, { useState } from 'react'
 import { Tabs } from './tabs.jsx'
 
-// Tabbed hub: mirrors App's keep-alive (lazy-mount visited tabs, hide inactive) so sub-section
-// state survives tab switches and hidden tabs don't poll until first opened.
 export default function Hub({ items }) {
   const [tab, setTab] = useState(items[0].label)
   const [seen, setSeen] = useState({ [items[0].label]: true })

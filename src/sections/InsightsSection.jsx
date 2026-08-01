@@ -2,17 +2,110 @@ import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
+import { modelName } from '../lib/modelName.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const A = 'var(--accent)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
-// null/undefined must not render as 0%. `Math.round((x || 0) * 100)` made "not measured" and
-// "measured, and it is zero" indistinguishable — the idiom that laundered every honest null.
 const pct = x => (x == null ? '—' : Math.round(x * 100) + '%')
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : m + 'm' }
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function Lessons() {
+  const [days, setDays] = useState(14)
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState(() => new Set())
+  useEffect(() => { setD(null); api.get('/api/lessons?days=' + days).then(setD).catch(e => setErr(e.message)) }, [days])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton />
+  const toggle = i => setOpen(s => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n })
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 6 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Lessons</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{d.lessons.length} proposals from {d.sessions.length} session(s)</span>
+        <select value={days} onChange={e => setDays(Number(e.target.value))} style={{ marginLeft: 'auto' }}>
+          {[7, 14, 30, 90].map(n => <option key={n} value={n}>{n} days</option>)}
+        </select>
+      </div>
+      <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.6 }}>
+        All proposed, none accepted — nothing here has been reviewed. Expand a row to see the
+        transcript records it came from before believing it.
+      </div>
+      {d.lessons.length === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>nothing derivable in this window — which is a good sign, not an empty screen</div>}
+      {d.lessons.map((l, i) => (
+        <div key={i} style={{ padding: '8px 4px', borderBottom: '1px solid var(--border-subtle)', font: `400 11px ${MONO}` }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span title="how much of this was observed rather than inferred" style={{ color: l.confidence >= 0.7 ? 'var(--green)' : 'var(--amber, #d79921)', width: 34 }}>{Math.round((l.confidence || 0) * 100)}%</span>
+            <span className="chip">{l.signal || 'derived'}</span>
+            <span style={{ color: 'var(--text-secondary)', flex: 1, minWidth: 220 }}>{l.mistake}</span>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => toggle(i)}>{open.has(i) ? 'hide' : 'evidence'}</button>
+          </div>
+          <div style={{ color: 'var(--text-primary)', marginTop: 3 }}>▸ {l.rule}</div>
+          {}
+          <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>fix: {l.fix === 'unknown' ? <em>not observed in the transcript</em> : l.fix}</div>
+          {open.has(i) && (
+            <div style={{ marginTop: 6, paddingLeft: 12, borderLeft: '2px solid var(--border-default)', color: 'var(--text-tertiary)' }}>
+              <div>session {l.sessionId}</div>
+              {(l.evidence || []).map((e, j) => <div key={j}>· {e.uuid || e.ts || JSON.stringify(e).slice(0, 90)}</div>)}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const TIER_COLOR = { simple: 'var(--text-tertiary)', standard: 'var(--accent-light)', complex: 'var(--amber, #d79921)', reasoning: 'var(--red)' }
+
+function Complexity() {
+  const [days, setDays] = useState(30)
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { setD(null); api.get('/api/complexity?days=' + days).then(setD).catch(e => setErr(e.message)) }, [days])
+  if (err) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
+  if (!d) return <Skeleton />
+  const dist = d.distribution || { counts: {} }
+  const total = dist.total || 0
+  return (
+    <div style={{ ...PANEL }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginBottom: 10 }}>
+        <div style={{ font: `600 14px ${HEAD}` }}>Prompt complexity</div>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{d.turns} turns scored</span>
+        <select style={{ marginLeft: 'auto' }} value={days} onChange={e => setDays(Number(e.target.value))}>
+          {[7, 14, 30, 90].map(n => <option key={n} value={n}>{n} days</option>)}
+        </select>
+      </div>
+      {total === 0 && <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>no scoreable turns in this window</div>}
+      {['simple', 'standard', 'complex', 'reasoning'].map(t => {
+        const n = dist.counts?.[t] || 0
+        return (
+          <div key={t} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '5px 0', font: `400 11px ${MONO}` }}>
+            <span style={{ width: 90, color: 'var(--text-secondary)' }}>{t}</span>
+            <div style={{ flex: 1, height: 6, background: 'var(--border-subtle)', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: total ? `${(n / total) * 100}%` : 0, height: '100%', background: TIER_COLOR[t] }} />
+            </div>
+            <span style={{ width: 70, textAlign: 'right', color: 'var(--text-secondary)' }}>{n} · {total ? Math.round((n / total) * 100) : 0}%</span>
+          </div>
+        )
+      })}
+      <div style={{ marginTop: 10, font: `400 10px ${MONO}`, color: 'var(--amber, #d79921)', lineHeight: 1.6 }}>
+        {}
+        {}
+        <div style={{ color: d.calibrated ? 'var(--text-tertiary)' : 'var(--amber, #d79921)' }}>
+          {d.calibrated ? '' : '⚠ '}{d.caveat}
+          {d.calibration && ` (n=${d.calibration.sampleSize})`}
+        </div>
+        {dist.unknown > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.unknown} turn(s) unscoreable — counted separately, not folded into simple</div>}
+        {dist.lowConfidence > 0 && <div style={{ color: 'var(--text-tertiary)' }}>{dist.lowConfidence} of {total} scored below the confidence threshold</div>}
+        {d.capped && <div style={{ color: 'var(--text-tertiary)' }}>capped at {d.turnCap} turns — older turns in this window were not scored</div>}
+      </div>
+    </div>
+  )
+}
 
 function useFilters() {
   const [scopes, setScopes] = useState([])
@@ -37,9 +130,11 @@ export default function InsightsSection() {
   const [tab, setTab] = useState('Stats')
   return (
     <div className="hx" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs tabs={['Stats', 'Duplicate prompts']} tab={tab} setTab={setTab} />
+      <Tabs tabs={['Stats', 'Duplicate prompts', 'Prompt complexity', 'Lessons']} tab={tab} setTab={setTab} />
       {tab === 'Stats' && <Stats />}
       {tab === 'Duplicate prompts' && <Dupes />}
+      {tab === 'Prompt complexity' && <Complexity />}
+      {tab === 'Lessons' && <Lessons />}
     </div>
   )
 }
@@ -48,7 +143,7 @@ function Kpi({ label, value, sub, color = 'var(--text-primary)' }) {
   return (
     <div style={{ ...PANEL, padding: '15px 17px' }}>
       <div style={{ font: `600 11px ${MONO}`, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>{label}</div>
-      <div style={{ marginTop: 7, font: `600 20px ${HEAD}`, color }}>{value}</div>
+      <div style={{ marginTop: 7, font: `600 26px ${MONO}`, color }}>{value}</div>
       <div style={{ marginTop: 2, font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{sub}</div>
     </div>
   )
@@ -62,7 +157,7 @@ const Bars = ({ data, fmt = fmtTok }) => {
         <div key={d.label} style={{ display: 'flex', alignItems: 'center', gap: 11, font: `500 11px ${MONO}` }}>
           <span style={{ width: 130, textAlign: 'right', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.label}</span>
           <div style={{ flex: 1, height: 9, borderRadius: 6, background: 'var(--bg-surface-hover)', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: (d.value / max) * 100 + '%', borderRadius: 6, background: `linear-gradient(90deg,${d.color || A},${d.color || A}bb)`, transformOrigin: 'left', animation: 'grow .7s cubic-bezier(.2,.8,.2,1) both' }} />
+            <div style={{ height: '100%', width: (d.value / max) * 100 + '%', borderRadius: 6, background: (d.color || A), transformOrigin: 'left', animation: 'grow .7s cubic-bezier(.2,.8,.2,1) both' }} />
           </div>
           <span style={{ width: 58, textAlign: 'right', color: 'var(--text-secondary)' }}>{fmt(d.value)}</span>
         </div>
@@ -114,7 +209,7 @@ function Stats() {
         </div>
         <div style={{ ...PANEL }}>
           <div style={{ font: `600 14px ${HEAD}`, marginBottom: 12 }}>Cost by model</div>
-          <Bars data={s.byModel.map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v, color: ['var(--violet)', 'var(--blue)', 'var(--green)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
+          <Bars data={s.byModel.map(([m, v], i) => ({ label: modelName(m), value: v, color: ['var(--violet)', 'var(--blue)', 'var(--green)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
           <div style={{ font: `600 14px ${HEAD}`, margin: '18px 0 12px' }}>Cost by project</div>
           <Bars data={s.byProj.map(([p, v], i) => ({ label: p.split('-').slice(-2).join('-'), value: v, color: ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', A, 'var(--violet)'][i] }))} fmt={v => '$' + v.toFixed(2)} />
         </div>
@@ -184,7 +279,7 @@ function Dupes() {
       {data?.clusters.map((c, i) => (
         <div key={i} style={{ ...PANEL, padding: '14px 18px' }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <span style={{ font: `600 14px ${HEAD}`, color: A, flexShrink: 0 }}>{c.count}×</span>
+            <span style={{ font: `600 14px ${MONO}`, color: A, flexShrink: 0 }}>{c.count}×</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ font: "400 13px var(--body)", color: 'var(--text-primary)', lineHeight: 1.5, cursor: 'pointer' }} onClick={() => setOpen(open === i ? null : i)}>{c.canonical.slice(0, 220)}{c.canonical.length > 220 ? '…' : ''}</div>
               <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', marginTop: 4 }}>

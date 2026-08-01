@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import FlowDiagram from '../ui/FlowDiagram.jsx'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const KIND = {
   entry: { color: 'var(--violet)', label: 'entry (prompt)' },
   skill: { color: 'var(--accent)', label: 'skill' },
@@ -16,8 +17,19 @@ const KIND = {
 const fmtN = n => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0))
 const ago = t => { if (!t) return 'never'; const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm ago' : m < 1440 ? Math.round(m / 60) + 'h ago' : Math.round(m / 1440) + 'd ago' }
 
-// per-column cap so 100+ skills don't become a hairball — top by usage, then defined-edge presence
 const COL_CAP = 14
+
+// 070: a real sankey of observed tool-to-tool flow, alongside the existing view. Node and link
+// counts are capped for legibility and the cap is printed on the diagram — a truncated graph that
+// looks complete is a lie about the data.
+function ObservedSankey({ data }) {
+  const seq = data?.sequences || data?.toolSequences || null
+  const links = data?.links || null
+  if (!seq && !links) {
+    return <p className="small muted">No tool-sequence data in this scan, so there is no flow to draw — this is missing input, not an empty graph.</p>
+  }
+  return <FlowDiagram title="Observed tool flow" sequences={seq} links={links} />
+}
 
 export default function FlowSection() {
   const [data, setData] = useState(null)
@@ -54,14 +66,12 @@ export default function FlowSection() {
     }
     const shown = new Set(Object.values(cols).flat().map(n => n.id))
     const vEdges = edges.filter(e => shown.has(e.from) && shown.has(e.to))
-    // layout: fixed columns, vertical spread
-    const X = { entry: 70, skill: 300, agent: 560, mcp: 800 } // command nodes merge into the skill column
+    const X = { entry: 70, skill: 300, agent: 560, mcp: 800 }
     const mid = [...cols.skill, ...cols.command]
     const H = Math.max(420, (Math.max(mid.length, cols.agent.length, cols.mcp.length) + 1) * 44)
     const pos = {}
     const place = (list, x) => list.forEach((n, i) => { pos[n.id] = { x, y: 40 + ((i + 0.5) / list.length) * (H - 80) } })
     place(cols.entry, X.entry); place(mid, X.skill); place(cols.agent, X.agent); place(cols.mcp, X.mcp)
-    // isolate: nodes reachable from/to the selected one over visible edges
     let lit = null
     if (sel && shown.has(sel)) {
       lit = new Set([sel])
@@ -87,7 +97,7 @@ export default function FlowSection() {
     const p = view.pos[n.id]
     if (!p) return null
     const c = KIND[n.kind].color
-    const r = 9 + Math.min(9, Math.sqrt(n.count || 0) * 1.6) // size by usage frequency
+    const r = 9 + Math.min(9, Math.sqrt(n.count || 0) * 1.6)
     const on = nodeOn(n)
     const isSel = sel === n.id
     return (
@@ -118,6 +128,12 @@ export default function FlowSection() {
           {nodes.length} nodes · {invocations} observed invocations{view.hidden > 0 ? ` · showing top ${COL_CAP}/type (${view.hidden} hidden — filter to find them)` : ''}
         </span>
       </div>
+
+      {mode === 'Observed flow' && (
+        <div style={{ ...PANEL, padding: 12 }}>
+          <ObservedSankey data={data} />
+        </div>
+      )}
 
       <div style={{ position: 'relative', ...PANEL, animation: 'fadeUp .5s ease both' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>

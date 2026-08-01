@@ -2,7 +2,7 @@ node_modules
 atoms/index.json
 atoms/reviewed.json
 
-# Delivery / Ticket JIRA creds (never commit)
+# Engineering Metrics dashboard JIRA creds (never commit)
 .eng.local.json
 config.json
 projects.json
@@ -34,3 +34,4 @@ docs/screenshots/*
 
 # design-system catalog — generated from YOUR design system (npm run catalog:refresh)
 design-system-catalog.json
+.loush/

@@ -1,19 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
-import { usePager } from '../ui/Pager.jsx'
+import { usePager, useTable } from '../ui/Pager.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 5: capability ROI ledger — fires × always-on cost ----------
-// This REPLACES Overview's Inventory static-score columns. A "perfect" 92-scored skill that has never
-// fired is worthless; a scruffy 41-scored skill invoked ten times a day is the most valuable file on
-// disk. So the metric is fires × cost, not frontmatter completeness.
-// Plane B (this machine's own transcripts), self-only by construction.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', BLUE = 'var(--blue)', DIM = 'var(--text-secondary)'
-// NEW exists so a capability installed this morning is not labelled DEAD alongside one abandoned a
-// year ago — it has not had a chance to fire yet, which is not the same as never firing.
 const VERDICT = {
   DEAD: { c: RED, hint: 'never fired, and old enough that it has had the chance — in your context every session, for nothing' },
   COLD: { c: GOLD, hint: 'fired at some point, but not in the last 30 days' },
@@ -32,11 +26,11 @@ const ARCHIVABLE = new Set(['skills', 'commands', 'agents'])
 
 export default function CapabilityLedger() {
   const [d, setD] = useState(null)
-  const [sel, setSel] = useState({})       // "kind:name:scope" -> item
+  const [sel, setSel] = useState({})
   const [verdicts, setVerdicts] = useState({ DEAD: true, COLD: true, NEW: true, HOT: true })
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'alwaysOnTokens', dir: -1 })
-  const [plan, setPlan] = useState(null)   // dry-run result awaiting confirmation
+  const [plan, setPlan] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const load = () => api.get('/api/capabilities').then(setD).catch(() => {})
@@ -52,7 +46,7 @@ export default function CapabilityLedger() {
       return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y)))
     })
   }, [d, verdicts, q, sort])
-  const pg = usePager(rows, 20)
+  const pg = useTable(rows, 20)
 
   if (!d) return <Skeleton tiles={3} rows={10} />
   const h = d.headline
@@ -83,7 +77,7 @@ export default function CapabilityLedger() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="panel" style={{ marginBottom: 0, background: 'linear-gradient(90deg, var(--red-bg), var(--bg-surface))', borderColor: 'var(--red)' }}>
+      <div className="panel callout danger" style={{ marginBottom: 0 }}>
         <div style={{ font: `600 16px ${HEAD}`, color: 'var(--text-primary)', lineHeight: 1.5 }}>
           You pay <b style={{ color: 'var(--accent)' }}><CountUp value={h.alwaysOnTokens} format={n => Math.round(n).toLocaleString()} /> tok</b> on every session for <b>{d.items.length}</b> capabilities —{' '}
           <b style={{ color: RED }}><CountUp value={h.deadCount} /> of them ({h.deadTokens.toLocaleString()} tok/session) have never fired.</b>
@@ -92,8 +86,8 @@ export default function CapabilityLedger() {
         <div style={{ display: 'flex', gap: 22, marginTop: 12, flexWrap: 'wrap' }}>
           {[['DEAD', h.deadCount, h.deadTokens], ['COLD', h.coldCount, h.coldTokens], ['NEW', h.newCount || 0, h.newTokens || 0], ['HOT', h.hotCount, h.alwaysOnTokens - h.deadTokens - h.coldTokens - (h.newTokens || 0)]].map(([v, n, tok]) => (
             <div key={v} title={VERDICT[v].hint}>
-              <div style={{ font: `700 18px ${HEAD}`, color: VERDICT[v].c }}><CountUp value={n} /></div>
-              <div style={{ font: `500 10px ${MONO}`, letterSpacing: '0.08em', color: DIM }}>{v} · {fmtTok(tok)} tok/session</div>
+              <div style={{ font: `600 26px ${MONO}`, lineHeight: 1, color: VERDICT[v].c }}><CountUp value={n} /></div>
+              <div style={{ font: `400 10.5px ${MONO}`, letterSpacing: '0.08em', color: DIM, marginTop: 6 }}>{v} · {fmtTok(tok)} tok/session</div>
             </div>
           ))}
           <div style={{ marginLeft: 'auto', font: `400 11px ${MONO}`, color: DIM, maxWidth: 340, lineHeight: 1.6 }}>
@@ -189,11 +183,37 @@ export default function CapabilityLedger() {
 }
 
 // ---------- the static frontmatter linter, DEMOTED out of Overview and reframed ----------
-// It used to be "Setup health: 68/100" on the landing page — three panels rendering one static heuristic,
-// a linter cosplaying as a metric. It is a perfectly good AUTHORING AID. It is not a measure of value.
-// That is now the ledger above.
 const LEVEL_COLOR = { poor: RED, good: GOLD, excellent: GREEN, perfect: 'var(--violet)' }
-const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.']]
+const INV_COLS = [['name', 'Name'], ['kind', 'Kind'], ['origin', 'From'], ['group', 'Group'], ['tags', 'Tags'], ['descTokens', 'Ctx: always'], ['fullTokens', 'On invoke'], ['score', 'Lint'], ['specificity', 'Spec.'], ['health', 'Health']]
+
+function HealthCell({ it }) {
+  const bad = (it.fm && it.fm.ok === false) ? it.fm.findings || [] : []
+  const missing = it.deps?.missing || []
+  if (!bad.length && !missing.length) return <span className="muted">—</span>
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {bad.map(f => (
+        <span key={f.code} className="chip" title={`${f.message}${f.fix ? ' — ' + f.fix : ''}`} style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+          frontmatter
+        </span>
+      ))}
+      {missing.length > 0 && (
+        <span className="chip" title={`declares MCP server(s) not installed: ${missing.join(', ')}`} style={{ color: 'var(--amber, #d79921)', borderColor: 'var(--amber, #d79921)' }}>
+          missing mcp
+        </span>
+      )}
+    </span>
+  )
+}
+
+function OriginCell({ origin }) {
+  if (!origin?.framework) return <span className="muted">—</span>
+  return (
+    <span className="chip" title={`${origin.confidence} confidence · ${(origin.basis || []).map(b => b.code).join(', ')}`}>
+      {origin.framework}{origin.confidence === 'low' ? '?' : ''}
+    </span>
+  )
+}
 
 export function Inventory() {
   const [data, setData] = useState(null)
@@ -212,7 +232,7 @@ export function Inventory() {
       return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y)))
     })
   }, [items, q, kind, sort])
-  const pg = usePager(filtered, 20)
+  const pg = useTable(filtered, 20)
   const editTags = it => {
     const t = prompt(`Tags for ${it.name} (comma-separated):`, it.tags.join(', '))
     if (t === null) return
@@ -237,6 +257,7 @@ export function Inventory() {
             <tr key={it.kind + ':' + it.name + ':' + it.scope}>
               <td className="mono" style={{ color: 'var(--text-primary)' }}>{it.name}</td>
               <td>{it.kind}</td>
+              <td><OriginCell origin={it.origin} /></td>
               <td><span className="chip">{it.group}</span></td>
               <td className="tags-cell" onClick={() => editTags(it)} title="click to edit tags">
                 {it.tags.length ? it.tags.map(t => <span className="chip tag" key={t}>{t}</span>) : <span className="muted">+ tag</span>}
@@ -249,6 +270,7 @@ export function Inventory() {
                   {it.level} · {it.score}%
                 </span>)}</td>
               <td className="num">{it.specificity === null ? '—' : it.specificity + '%'}</td>
+              <td><HealthCell it={it} /></td>
             </tr>
           ))}
         </tbody>

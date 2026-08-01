@@ -1,0 +1,54 @@
+import React, { useEffect, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
+import { marked } from 'marked'
+import { HEAD, BODY, MONO, BB, GREEN, DIM, HI, PANEL, Card, H1, miniBtn, primaryBtn, inp, useCopy } from './ui.jsx'
+import { PRESETS, report, toSlack } from './reports.js'
+
+export default function Export({ snap, win, me }) {
+  const [preset, setPreset] = useState('standup')
+  const [md, setMd] = useState('')
+  const [edited, setEdited] = useState(false)
+  const [copy, copied] = useCopy()
+  useEffect(() => { if (!edited) setMd(report(preset, { snap, win, me })) }, [preset, snap, win, me, edited])
+  const regen = () => { setEdited(false); setMd(report(preset, { snap, win, me })) }
+  const download = () => {
+    const b = new Blob([md], { type: 'text/markdown' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(b)
+    a.download = `${preset}-${new Date().toISOString().slice(0, 10)}.md`
+    a.click(); URL.revokeObjectURL(a.href)
+  }
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <H1 kicker="one generator · five documents" title="Export" right={<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <button style={miniBtn} onClick={regen} disabled={!edited}>Reset</button>
+      <button style={miniBtn} onClick={() => copy(md, 'md')}>{copied === 'md' ? '✓ copied' : 'Copy markdown'}</button>
+      <button style={miniBtn} onClick={() => copy(toSlack(md), 'slack')}>{copied === 'slack' ? '✓ copied' : 'Copy as Slack'}</button>
+      <button style={primaryBtn} onClick={download}>Download .md</button>
+    </div>} />
+
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {PRESETS.map(p => <button key={p.id} onClick={() => { setPreset(p.id); setEdited(false) }} style={{
+        padding: '8px 14px', borderRadius: 6, cursor: 'pointer', textAlign: 'left', border: `1px solid ${preset === p.id ? BB : 'var(--bg-surface-active)'}`,
+        background: preset === p.id ? 'var(--bg-surface-active)' : 'transparent',
+      }}>
+        <div style={{ font: `600 13px ${BODY}`, color: preset === p.id ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{p.label}</div>
+        <div style={{ font: `400 10px ${MONO}`, color: DIM }}>{p.who}</div>
+      </button>)}
+    </div>
+
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'start' }}>
+      <div style={{ ...PANEL, padding: '12px 14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ font: `600 12px ${HEAD}`, color: HI }}>Hand-edit</span>
+          <span style={{ font: `400 10px ${MONO}`, color: edited ? GREEN : DIM }}>{edited ? 'edited — Reset to regenerate' : 'generated from the snapshot'}</span>
+        </div>
+        <textarea value={md} onChange={e => { setMd(e.target.value); setEdited(true) }} rows={26}
+          style={{ ...inp, resize: 'vertical', fontFamily: MONO, fontSize: 12, lineHeight: 1.6 }} />
+      </div>
+      <div style={{ ...PANEL, padding: '12px 16px' }}>
+        <div style={{ font: `600 12px ${HEAD}`, color: HI, marginBottom: 8 }}>Preview</div>
+        <Markdown source={md || ''} style={{ maxHeight: 520, overflow: 'auto', color: 'var(--text-secondary)', font: `400 13px/1.65 ${BODY}` }} />
+      </div>
+    </div>
+  </section>
+}

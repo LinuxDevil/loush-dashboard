@@ -1,14 +1,11 @@
 import React, { useState } from 'react'
 
-// Schema-aware renderers for plan/activity steps — NO raw JSON is ever shown to the user.
-// Every value type gets a designed widget; the only JSON.stringify is the "copy raw" clipboard button.
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 export const KIND = { skill: 'var(--accent)', rule: 'var(--amber)', mcp: 'var(--green)', tool: 'var(--blue)', agent: 'var(--violet)' }
 export const STATUS = { ok: 'var(--green)', error: 'var(--accent)', running: 'var(--amber)', warn: 'var(--amber)', idle: 'var(--text-secondary)' }
 
-// ok / error / null — null means "no result captured yet"
 export function statusOf(step) {
   if (!step) return null
   if (step.isError) return 'error'
@@ -35,7 +32,6 @@ export const FilePathChip = ({ path, onClick }) => {
   )
 }
 
-// collapse long / multi-line text; expandable, horizontally scrollable, never widens the panel
 function Expandable({ text, lines = 2, mono = true, boxStyle }) {
   const [open, setOpen] = useState(false)
   const s = String(text ?? '')
@@ -52,7 +48,6 @@ const ShellBlock = ({ cmd }) => (
   <pre style={{ ...codeBox, maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><span style={{ color: STATUS.ok }}>❯ </span>{String(cmd || '')}</pre>
 )
 
-// structuredPatch hunks OR a synthesized old/new pair → colored diff, clamped
 function DiffView({ patch, oldStr, newStr }) {
   const [open, setOpen] = useState(false)
   let lines = []
@@ -75,7 +70,6 @@ function DiffView({ patch, oldStr, newStr }) {
   )
 }
 
-// recursive key/value table; nested objects collapse to a "{N keys}" pill (max depth 3)
 export function KVTable({ obj, depth = 0 }) {
   const [open, setOpen] = useState({})
   if (obj == null || typeof obj !== 'object') return <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{String(obj)}</span>
@@ -104,7 +98,6 @@ export function KVTable({ obj, depth = 0 }) {
   )
 }
 
-// dispatch params to a per-tool widget
 export function ParamView({ tool, params, onOpenFile }) {
   const p = params || {}
   const has = Object.keys(p).length > 0
@@ -132,7 +125,6 @@ export function ParamView({ tool, params, onOpenFile }) {
   }
 }
 
-// tool result: structuredPatch diff / stdout / stderr / plain text, error-highlighted
 export function ResultSection({ step }) {
   const r = step.toolResult, err = step.isError
   const hasAny = r != null || step.result != null

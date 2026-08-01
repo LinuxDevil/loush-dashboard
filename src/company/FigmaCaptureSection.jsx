@@ -1,19 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, tildify } from '../lib/api.js'
 
-// Figma Capture & Annotation — visual editor for Captures produced by the /figma-capture skill.
-// Creation happens in the skill (it has Figma MCP tool access this dashboard doesn't); this page
-// only reads/writes the on-disk convention: <repo>/.claude/figma-captures/<slug>/{capture.json,
-// screenshot.png, annotations.json, context.md}. See dashboard/CONTEXT.md for the glossary
-// (Capture, Annotation, Component catalog).
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12, minWidth: 0 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px', minWidth: 0 }
 const ACCENT = 'var(--blue)'
 const Dim = ({ children, style }) => <div style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', ...style }}>{children}</div>
 
-// smallest-area node whose rect contains (px,py) — "most specific" layer under the click
 function nodeAt(nodes, px, py) {
   let best = null
   for (const n of nodes || []) {
@@ -24,9 +18,6 @@ function nodeAt(nodes, px, py) {
   return best
 }
 
-// Figma-panel-style picker: collapsible categories -> components -> variants (Storybook story
-// names for that component). Clicking a component sets its fullTitle; clicking a variant appends
-// " / <variant>". The text field stays freeform underneath — the tree is a shortcut, not a cage.
 function ComponentPicker({ catalog, projectComponents, value, onChange }) {
   const [openCat, setOpenCat] = useState({})
   const [openComp, setOpenComp] = useState({})
@@ -113,15 +104,15 @@ function AnnotationForm({ initial, annotations, catalog, projectComponents, onSa
 function Editor({ repo, slug, catalog, onBack }) {
   const [capture, setCapture] = useState(null)
   const [annotations, setAnnotations] = useState(null)
-  const [draft, setDraft] = useState(null) // { id?, region, nodeId? } mid-edit
+  const [draft, setDraft] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [dirty, setDirty] = useState(false)
   const [contextMd, setContextMd] = useState(null)
-  const [liveRect, setLiveRect] = useState(null) // dashed preview while dragging out a brand-new box
+  const [liveRect, setLiveRect] = useState(null)
   const [projectComponents, setProjectComponents] = useState([])
-  const [imgSize, setImgSize] = useState(null) // set on <img> onLoad — the SVG viewBox needs a state, not a ref, so boxes re-render once the screenshot loads
+  const [imgSize, setImgSize] = useState(null)
   const imgRef = useRef(null)
-  const dragRef = useRef(null) // { mode: 'draw'|'move'|'resize', id?, handle?, start, startRegion?, moved }
+  const dragRef = useRef(null)
 
   useEffect(() => {
     api.get(`/api/figma-capture/${slug}?repo=${encodeURIComponent(repo)}`)
@@ -129,8 +120,6 @@ function Editor({ repo, slug, catalog, onBack }) {
       .catch(() => { setCapture({}); setAnnotations([]) })
   }, [repo, slug])
 
-  // components actually defined in the target repo itself — a real project component beats a
-  // docs-site guess when mapping a region, so it lives in the same picker as the catalog.
   useEffect(() => {
     api.get('/api/figma-capture/project-components?repo=' + encodeURIComponent(repo)).then(setProjectComponents).catch(() => setProjectComponents([]))
   }, [repo])
@@ -148,16 +137,14 @@ function Editor({ repo, slug, catalog, onBack }) {
 
   const xEdges = useMemo(() => nodes.flatMap(n => [n.x, n.x + n.w]), [nodes])
   const yEdges = useMemo(() => nodes.flatMap(n => [n.y, n.y + n.h]), [nodes])
-  const SNAP_PX = 8 // screen pixels, converted to image space per-axis below since the screenshot may be scaled
+  const SNAP_PX = 8
   const snapAxis = (edges, value, scale) => {
     let best = value, bestDist = SNAP_PX * scale
     for (const e of edges) { const d = Math.abs(e - value); if (d < bestDist) { bestDist = d; best = e } }
     return best
   }
-  // the bottom-right corner snaps to the nearest layer edge while dragging; the top-left stays exactly where you clicked
   const snappedCorner = cur => ({ x: snapAxis(xEdges, cur.x, cur.scaleX), y: snapAxis(yEdges, cur.y, cur.scaleY) })
 
-  // dragging a corner handle: 'w'/'e' adjust x+width, 'n'/'s' adjust y+height, clamped to a 4px minimum
   const resizeRegion = (start, handle, dx, dy) => {
     let { x, y, w, h } = start
     if (handle.includes('w')) { x = start.x + dx; w = start.w - dx }
@@ -167,9 +154,7 @@ function Editor({ repo, slug, catalog, onBack }) {
     return { x, y, w: Math.max(4, w), h: Math.max(4, h) }
   }
 
-  // starts on the raw canvas (rects/handles call stopPropagation before this bubbles up) — always a new box
   const onMouseDown = e => { dragRef.current = { mode: 'draw', start: toImageCoords(e), moved: false } }
-  // starts on an existing box or one of its resize handles
   const startDrag = (mode, a, handle) => e => {
     e.stopPropagation()
     setDraft(null); setEditingId(a.id)
@@ -200,15 +185,13 @@ function Editor({ repo, slug, catalog, onBack }) {
     setLiveRect(null)
     const cur = toImageCoords(e)
     if (!d.moved || (Math.abs(cur.x - d.start.x) < 4 && Math.abs(cur.y - d.start.y) < 4)) {
-      // click, no drag: snap to node under the point
       const n = nodeAt(nodes, d.start.x, d.start.y)
       if (!n) return
       setDraft({ id: crypto.randomUUID(), region: { x: n.x, y: n.y, w: n.w, h: n.h }, nodeId: n.id })
     } else {
-      // top-left is exactly where you clicked; bottom-right is the snapped drag corner
       const corner = snappedCorner(cur)
       const w = Math.max(0, corner.x - d.start.x), h = Math.max(0, corner.y - d.start.y)
-      if (w < 4 || h < 4) return // collapsed (dragged up/left of the start point) — not a usable box
+      if (w < 4 || h < 4) return
       setDraft({ id: crypto.randomUUID(), region: { x: d.start.x, y: d.start.y, w, h } })
     }
     setEditingId(null)
@@ -222,7 +205,6 @@ function Editor({ repo, slug, catalog, onBack }) {
     setDraft(null); setEditingId(null); setDirty(true)
   }
   const deleteAnnotation = id => { setAnnotations(prev => prev.filter(a => a.id !== id)); setDirty(true) }
-  // lock = click-through: the box stays visible but stops capturing the pointer, so you can draw a new box on top of it.
   const toggleLock = id => { setAnnotations(prev => prev.map(a => a.id === id ? { ...a, locked: !a.locked } : a)); setEditingId(cur => cur === id ? null : cur); setDirty(true) }
 
   const persist = () => {
@@ -258,7 +240,7 @@ function Editor({ repo, slug, catalog, onBack }) {
             viewBox={imgSize ? `0 0 ${imgSize.w} ${imgSize.h}` : '0 0 1 1'} preserveAspectRatio="none">
             {annotations.map(a => {
               const selected = a.id === editingId
-              const hs = Math.max(4, Math.min(a.region.w, a.region.h) * 0.12) // handle half-size, scales down on tiny boxes
+              const hs = Math.max(4, Math.min(a.region.w, a.region.h) * 0.12)
               const handles = selected && !a.locked ? [
                 { key: 'nw', cx: a.region.x, cy: a.region.y },
                 { key: 'ne', cx: a.region.x + a.region.w, cy: a.region.y },
@@ -316,6 +298,43 @@ function Editor({ repo, slug, catalog, onBack }) {
   )
 }
 
+function CreatePageCaptureForm({ repo, onCreated }) {
+  const [open, setOpen] = useState(false)
+  const [url, setUrl] = useState('')
+  const [scheme, setScheme] = useState('light')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const create = () => {
+    setBusy(true); setErr(null)
+    api.post('/api/page-capture/create', { repo, url: url.trim(), colorScheme: scheme })
+      .then(r => { setOpen(false); setUrl(''); onCreated(r.slug) })
+      .catch(e => setErr(e.message))
+      .finally(() => setBusy(false))
+  }
+
+  if (!open) return <button onClick={() => setOpen(true)}>+ capture a web page</button>
+  return (
+    <div style={{ ...PANEL, display: 'grid', gap: 8 }}>
+      <Dim>Loads the page in a headless browser and records what it is built from — colour, type and spacing ranked by real usage, CSS variables, breakpoints, and hover states. Takes a few seconds.</Dim>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://example.com"
+          onKeyDown={e => { if (e.key === 'Enter' && url.trim() && !busy) create() }}
+          style={{ font: `400 12px ${MONO}`, flex: 1 }} />
+        <select value={scheme} onChange={e => setScheme(e.target.value)}>
+          <option value="light">light</option>
+          <option value="dark">dark</option>
+        </select>
+        <button onClick={create} disabled={busy || !url.trim()}>{busy ? 'capturing…' : 'capture'}</button>
+        <button onClick={() => setOpen(false)}>cancel</button>
+      </div>
+      {}
+      <Dim>Public URLs only. To capture your own dev server, start the dashboard with PAGE_CAPTURE_ALLOW_LOCAL=1.</Dim>
+      {err && <div style={{ font: `400 12px ${MONO}`, color: 'var(--red)' }}>{err}</div>}
+    </div>
+  )
+}
+
 function CreateCaptureForm({ repo, onCreated }) {
   const [open, setOpen] = useState(false)
   const [link, setLink] = useState('')
@@ -353,7 +372,10 @@ function CaptureList({ repo, onOpen }) {
   if (captures === null) return <Dim>loading captures…</Dim>
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <CreateCaptureForm repo={repo} onCreated={onOpen} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <CreateCaptureForm repo={repo} onCreated={onOpen} />
+        <CreatePageCaptureForm repo={repo} onCreated={onOpen} />
+      </div>
       {captures.length === 0 ? (
         <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>
           No Captures found under <span style={{ color: ACCENT }}>.claude/figma-captures/</span> in this repo yet.
@@ -381,8 +403,6 @@ function BranchChip({ repo }) {
   return <Dim>⎇ {branch}</Dim>
 }
 
-// Figma personal-access-token setup — lets a new device set the key from the UI instead of the
-// server's env. The key is write-only over the API: status tells you if it's set, never the value.
 function FigmaTokenBar() {
   const [status, setStatus] = useState(null)
   const [val, setVal] = useState('')
@@ -417,8 +437,6 @@ export default function FigmaCaptureSection() {
   const [slug, setSlug] = useState(null)
   const [catalog, setCatalog] = useState([])
 
-  // Same project list as Workspaces > Projects (GET /api/projects) — any of them can get its
-  // first Capture via `/figma-capture <link>`, so we don't pre-filter to ones that already have one.
   useEffect(() => {
     api.get('/api/projects').then(ps => {
       const existing = ps.filter(p => p.exists)

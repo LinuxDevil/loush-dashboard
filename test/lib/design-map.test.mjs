@@ -12,13 +12,9 @@ test('harvestStories reads parameters.design.figma.url from every story', () => 
   const found = harvestStories(DS)
   const byComponent = Object.fromEntries(found.map(r => [r.component, r]))
 
-  // %3A decodes to a colon
   assert.deepEqual(byComponent.Button.figma, { fileKey: 'FILEKEY1', nodeId: '601:5' })
-  // the dashed form normalises to a colon, and the &t= tracking param is not swallowed
   assert.deepEqual(byComponent.Card.figma, { fileKey: 'FILEKEY1', nodeId: '646:2324' })
-  // the copy-pasted duplicate is harvested as-is; collision detection is a separate step
   assert.deepEqual(byComponent.IconButton.figma, { fileKey: 'FILEKEY1', nodeId: '601:5' })
-  // a story with no design param yields no row
   assert.equal(byComponent.Icons, undefined)
 
   assert.equal(found.length, 3)
@@ -53,10 +49,8 @@ test('markCollisions flags every component claiming a shared node', () => {
   const rows = markCollisions(harvestStories(DS))
   const by = Object.fromEntries(rows.map(r => [r.component, r]))
 
-  // Button and IconButton both claim FILEKEY1|601:5 — each names the other
   assert.deepEqual(by.Button.evidence.collisionWith, ['IconButton'])
   assert.deepEqual(by.IconButton.evidence.collisionWith, ['Button'])
-  // Card's node is claimed once, so no collision
   assert.deepEqual(by.Card.evidence.collisionWith, [])
 })
 
@@ -65,7 +59,6 @@ test('markCollisions keys on fileKey AND nodeId, not nodeId alone', () => {
     { component: 'A', figma: { fileKey: 'F1', nodeId: '1:1' }, source: 'story' },
     { component: 'B', figma: { fileKey: 'F2', nodeId: '1:1' }, source: 'story' },
   ])
-  // same node id in DIFFERENT files is not a collision
   assert.deepEqual(rows[0].evidence.collisionWith, [])
   assert.deepEqual(rows[1].evidence.collisionWith, [])
 })
@@ -76,9 +69,6 @@ test('markCollisions tolerates rows with no figma link', () => {
 })
 
 test('markCollisions names ALL other claimants on a 3+-way collision, not just one', () => {
-  // Mirrors the real ct-web-design-system case: node 601:5 is claimed by 7 components at once.
-  // A 2-member fixture can't catch a regression from `.filter(c => c !== r.component)` to
-  // `[claimants.find(...)]` — both would pass with only two claimants. This pins the full list.
   const shared = { fileKey: 'F1', nodeId: '601:5' }
   const rows = markCollisions([
     { component: 'Button', figma: shared, source: 'story' },
@@ -103,16 +93,13 @@ test('buildMap merges stories with the component list', () => {
   assert.equal(map.rows.length, 5)
 
   const by = Object.fromEntries(map.rows.map(r => [r.component, r]))
-  // a component with no story link is explicitly unmapped, not missing
   assert.equal(by.Tooltip.status, 'unmapped')
   assert.equal(by.Tooltip.figma, null)
   assert.equal(by.Tooltip.source, null)
-  // one with a link starts as proposed — never confirmed on harvest alone
   assert.equal(by.Button.status, 'proposed')
   assert.equal(by.Button.codePath, 'src/components/Button')
   assert.equal(by.Button.importFrom, '@your-org/design-system')
   assert.deepEqual(by.Button.evidence.collisionWith, ['IconButton'])
-  // rows are sorted by component name for a stable diff
   assert.deepEqual(map.rows.map(r => r.component), ['Button', 'Card', 'IconButton', 'Icons', 'Tooltip'])
 })
 

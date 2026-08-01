@@ -1,14 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import { modelName } from '../lib/modelName.js'
 
-// DEMOTED off the landing page (all four personas):
-//   · the 18-week output-token heatmap — a GitHub-green-squares clone measuring TOKEN VOLUME, i.e. a proxy
-//     for "was he typing". It is the first panel anyone would screenshot to judge someone. It survives here,
-//     on the harness page, where it is what it actually is: a record of your own machine's activity.
-//   · tool-usage-all-time bars and most-used-models bars — mildly interesting, never a landing-page question.
 const A = 'var(--accent)'
-const PROJ_COLORS = ['var(--blue)', 'var(--green)', 'var(--violet)', 'var(--accent-light)', 'var(--accent)', 'var(--violet)']
+const PROJ_COLORS = ['var(--blue)', 'var(--violet)', 'var(--green)']
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 
 function Bars({ data, unit }) {
@@ -18,7 +14,7 @@ function Bars({ data, unit }) {
       {data.map(d => (
         <div className="bar-row" key={d.label} title={`${d.label}: ${fmtTok(d.value)} ${unit}`}>
           <div className="bar-label">{d.label}</div>
-          <div className="bar-track"><div className="bar-fill" style={{ width: (d.value / max) * 100 + '%', background: `linear-gradient(90deg, ${d.color || A}, ${d.color || A}cc)` }} /></div>
+          <div className="bar-track"><div className="bar-fill" style={{ width: (d.value / max) * 100 + '%', background: (d.color || A) }} /></div>
           <div className="bar-value">{fmtTok(d.value)}</div>
         </div>
       ))}
@@ -27,6 +23,69 @@ function Bars({ data, unit }) {
 }
 
 const fmtCost = n => '$' + n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+
+// Cost by project AND branch, cache hit rate, and which subagent type costs the most — all from
+// /api/usage/report. The branch rollup has always been computed and never displayed.
+function UsageReport() {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/usage/report').then(setD).catch(e => setErr(e.message)) }, [])
+  if (err) return <div className="panel"><p className="small" style={{ color: 'var(--red)' }}>{err}</p></div>
+  if (!d) return null
+  const projects = d.byProjectBranch?.projects || []
+  const cache = d.cache?.session
+  const types = d.subagents?.types || []
+  const dl = anon => { window.location = `/api/usage/report?format=csv${anon ? '&anonymised=1' : ''}` }
+  return (
+    <div className="panel">
+      <h3>Cost by project &amp; branch
+        <span className="muted">
+          {/* null, not 0%: a session with no input has no hit rate, and 0% would read as
+              "the cache never helped". */}
+          {cache?.rate != null ? ` · ${(cache.rate * 100).toFixed(1)}% cache hit rate` : ' · cache hit rate unknown'}
+        </span>
+      </h3>
+      <table className="data" style={{ width: '100%', font: '400 11px var(--mono)' }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>project</th><th style={{ textAlign: 'left' }}>branch</th><th>cost</th><th>messages</th><th>output</th></tr></thead>
+        <tbody>
+          {projects.flatMap(p => (p.branches || []).map(b => (
+            <tr key={p.proj + '|' + b.label}>
+              <td>{p.label ?? p.proj}</td>
+              {/* branchKnown false means the collector recorded no branch at all, which is a
+                  different fact from an empty branch name on a detached HEAD. */}
+              <td style={{ color: b.branchKnown ? 'var(--violet)' : 'var(--text-tertiary)' }}>{b.label}</td>
+              <td className="num">${(b.cost ?? 0).toFixed(2)}</td>
+              <td className="num">{b.msgs ?? '—'}</td>
+              <td className="num" title={b.tokensComplete === false ? 'the collector stores only output tokens per branch, so this is not a full token count' : ''}>
+                {b.tokens?.out != null ? b.tokens.out.toLocaleString() : '—'}{b.tokensComplete === false ? '*' : ''}
+              </td>
+            </tr>
+          )))}
+        </tbody>
+      </table>
+      {projects.some(p => (p.branches || []).some(b => b.tokensComplete === false)) && (
+        <p className="small">* output tokens only — the per-branch rollup does not carry input or cache counts, so this is not a total.</p>
+      )}
+      {types.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 14 }}>Subagent cost by type <span className="muted">auto-compaction excluded</span></h3>
+          <table className="data" style={{ width: '100%', font: '400 11px var(--mono)' }}>
+            <thead><tr><th style={{ textAlign: 'left' }}>type</th><th>cost</th><th>runs</th></tr></thead>
+            <tbody>{types.map(t => (
+              <tr key={t.type}><td>{t.type}</td><td className="num">${(t.cost ?? 0).toFixed(2)}</td><td className="num">{t.runs ?? t.count ?? '—'}</td></tr>
+            ))}</tbody>
+          </table>
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button className="mini" onClick={() => dl(false)}>download CSV</button>
+        {/* Anonymised swaps project and branch names for per-export labels and emits no hash, so
+            there is nothing to match back against a candidate repo list. */}
+        <button className="mini" onClick={() => dl(true)}>download anonymised</button>
+      </div>
+    </div>
+  )
+}
 
 export default function UsagePanel() {
   const [usage, setUsage] = useState(null)
@@ -37,17 +96,17 @@ export default function UsagePanel() {
   }, [budget])
   if (!usage) return err ? <p className="small">{err}</p> : <Skeleton tiles={0} rows={8} />
   const max = Math.max(...usage.daily.map(d => d.out), 1)
-  const models = Object.entries(usage.perModel).map(([m, v], i) => ({ label: m.replace(/^claude-/, ''), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5)
+  const models = Object.entries(usage.perModel).map(([m, v], i) => ({ label: modelName(m), value: v.msgs, color: PROJ_COLORS[i % PROJ_COLORS.length] })).sort((a, b) => b.value - a.value).slice(0, 5)
   const GRADE_COLOR = { A: 'var(--green)', B: 'var(--green)', C: 'var(--accent-light)', D: 'var(--amber)', F: 'var(--red)' }
   const reg = usage.regression
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <UsageReport />
       {usage.health && (
         <div className="panel" style={{ marginBottom: 0 }}>
           <div className="panel-head"><h3>Harness health <span className="muted">usage efficiency, not config completeness — see Harness ▸ Config for that</span></h3></div>
           <div className="kpi-grid" style={{ margin: '0 16px 12px' }}>
-            {/* null grade is "not measured", never a letter. Below MIN_TURNS the factors are noise:
-                one turn scored 0/F and a single good day flipped it to A. */}
+            {}
             <div className="kpi"><div className="kpi-label"><span>score</span></div>
               <div className="kpi-value" style={{ color: usage.health.grade ? GRADE_COLOR[usage.health.grade] : 'var(--text-secondary)' }}>
                 {usage.health.grade

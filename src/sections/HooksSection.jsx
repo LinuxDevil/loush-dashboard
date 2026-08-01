@@ -7,7 +7,7 @@ import { Tabs } from '../ui/tabs.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
-const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 8, padding: 12 }
+const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SubagentStop', 'SessionStart', 'SessionEnd', 'PreCompact', 'Notification']
 
 export default function HooksSection() {
@@ -23,7 +23,6 @@ export default function HooksSection() {
   )
 }
 
-// matcher tester: same semantics Claude Code uses — empty = all, else anchored regex
 function MatcherTest() {
   const [matcher, setMatcher] = useState('Edit|Write')
   const [tool, setTool] = useState('Edit')
@@ -190,7 +189,7 @@ function Health() {
           <div key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0' }}>
             <span style={{ width: 150, font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{ev}</span>
             <div style={{ flex: 1, height: 9, borderRadius: 5, background: 'var(--bg-surface-hover)', overflow: 'hidden' }}>
-              <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: 'linear-gradient(90deg,var(--accent-light),var(--accent))', borderRadius: 5 }} />
+              <div style={{ width: `${(n / max) * 100}%`, height: '100%', background: 'var(--blue)', borderRadius: 5 }} />
             </div>
             <span style={{ width: 70, textAlign: 'right', font: `500 11px ${MONO}`, color: 'var(--text-secondary)' }}>{n.toLocaleString()}</span>
           </div>

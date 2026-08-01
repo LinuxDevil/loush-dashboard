@@ -8,7 +8,7 @@ export default function McpSection() {
   const [servers, setServers] = useState([])
   const [sel, setSel] = useState(null)
   const [text, setText] = useState('')
-  const [tests, setTests] = useState({}) // name -> {state:'testing'|'ok'|'fail', ...result}
+  const [tests, setTests] = useState({})
   const [status, setStatus] = useState('')
   const [drawer, setDrawer] = useState(null)
 
@@ -21,7 +21,6 @@ export default function McpSection() {
   const test = async s => {
     setTests(t => ({ ...t, [key(s)]: { state: 'testing' } }))
     const r = await api.post(`/api/mcp/${encodeURIComponent(s.name)}/test`, { config: s.config }).catch(e => ({ ok: false, error: e.message }))
-    // 401/403 = reachable but needs OAuth — not a healthy "connected"; show it distinctly, not green.
     const state = r.ok ? (r.status === 401 || r.status === 403 ? 'auth' : 'ok') : 'fail'
     setTests(t => ({ ...t, [key(s)]: { state, ...r } }))
   }
@@ -35,7 +34,7 @@ export default function McpSection() {
     const config = mcpConfigFrom(values)
     if (drawer.mode === 'create')
       return api.post('/api/mcp', { name: values.name, config }).then(() => { setDrawer(null); load() }).catch(e => flash('error: ' + e.message))
-    if (values.name && values.name !== sel.name) { // rename: server keys off :name, so recreate + delete old (user scope)
+    if (values.name && values.name !== sel.name) {
       if (sel.project) return flash('rename not supported for project-scoped servers')
       try {
         await api.post('/api/mcp', { name: values.name, config })

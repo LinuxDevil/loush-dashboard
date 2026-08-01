@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import Markdown from '../ui/Markdown.jsx'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { marked } from 'marked'
@@ -42,7 +43,7 @@ function Preview({ kind, detail }) {
           <div className="chips">{String(fm.tools).split(',').map(t => <span className="chip" key={t}>{t.trim()}</span>)}</div></>
       )}
       <h3>Rendered body</h3>
-      <div className="md" dangerouslySetInnerHTML={{ __html: marked.parse(body || '') }} />
+      <Markdown source={body || ''} />
       {detail.assets?.length > 0 && (
         <><h3>Supporting assets</h3>
           <ul>{detail.assets.map(a => <li key={a}><code>{a}</code></li>)}</ul></>
@@ -54,12 +55,12 @@ function Preview({ kind, detail }) {
 export default function ResourceSection({ kind, title }) {
   const [items, setItems] = useState([])
   const [q, setQ] = useState('')
-  const [sel, setSel] = useState(null) // {scope, name}
+  const [sel, setSel] = useState(null)
   const [detail, setDetail] = useState(null)
   const [content, setContent] = useState('')
   const [tab, setTab] = useState('edit')
   const [status, setStatus] = useState('')
-  const [drawer, setDrawer] = useState(null) // {mode:'create'|'edit'}
+  const [drawer, setDrawer] = useState(null)
 
   const load = () => api.get(`/api/res/${kind}`).then(setItems)
   useEffect(() => { load() }, [kind])
@@ -91,7 +92,6 @@ export default function ResourceSection({ kind, title }) {
       return api.post(`/api/res/${kind}`, { name: values.name, scope: 'user', content: fmBlock + '\n' + body })
         .then(() => { setDrawer(null); load(); setSel({ scope: 'user', name: values.name }) })
     }
-    // edit: swap only the frontmatter block, keep the (possibly unsaved) body from the editor
     const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(content)
     const newContent = fmBlock + (m ? content.slice(m[0].length) : content)
     return api.put(`/api/res/${kind}/item?scope=${sel.scope}&name=${encodeURIComponent(sel.name)}`, { content: newContent })

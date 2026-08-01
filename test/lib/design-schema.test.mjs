@@ -1,7 +1,3 @@
-// Tests for lib/design-schema.mjs — the riskiest code in the Ticket feature, and the only part of
-// it that is fully verifiable without a `claude` binary or JIRA credentials. Every case here is a
-// shape a model actually emits: prose around the document, a wrong example before the right one,
-// truncation, coordinates it was told not to invent, edges to components that do not exist.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,7 +5,6 @@ import { parseGraph, extractDoc, validateGraph, mergeGraph, layout, applyOps, pa
 
 const codes = w => w.map(x => x.code)
 
-// ── extraction ───────────────────────────────────────────────────────────────────────────────────
 test('a bare YAML document parses', () => {
   const { graph, warnings } = parseGraph(`nodes:\n  - id: api\n    label: Ticket API\n    type: process\n`)
   assert.equal(graph.nodes.length, 1)
@@ -25,7 +20,6 @@ test('prose around a fenced block is ignored', () => {
 })
 
 test('prose containing a closing brace does not break extraction — the JSON scanner bug', () => {
-  // A greedy /\{[\s\S]*\}/ (server/index.mjs:4105) swallows this. YAML never sees a brace.
   const raw = 'The handler closes with } and then returns.\n\n```yaml\nnodes:\n  - id: h\n    label: Handler\n```\n\nDone }'
   const { graph } = parseGraph(raw)
   assert.equal(graph.nodes.length, 1)
@@ -68,7 +62,6 @@ test('empty output is reported, not crashed on', () => {
   assert.equal(extractDoc(null).doc, null)
 })
 
-// ── validation ───────────────────────────────────────────────────────────────────────────────────
 test('an unknown node type is coerced AND the coercion is recorded', () => {
   const { graph, warnings } = validateGraph({ nodes: [{ id: 'a', label: 'A', type: 'lambda' }] })
   assert.equal(graph.nodes[0].type, 'process')
@@ -144,7 +137,6 @@ test('a document with no nodes key is reported rather than throwing', () => {
   assert.ok(codes(warnings).includes('no-nodes'))
 })
 
-// ── merge — regeneration must not destroy hand work ──────────────────────────────────────────────
 const G = (nodes, edges = []) => ({ nodes, edges })
 const N = (id, label, extra = {}) => ({ id, type: 'process', position: null, data: { label, note: '', files: [], origin: 'generated', ...extra } })
 
@@ -186,7 +178,6 @@ test('edges to nodes that no longer exist are pruned by the merge', () => {
   assert.equal(graph.edges.length, 0)
 })
 
-// ── layout ───────────────────────────────────────────────────────────────────────────────────────
 test('layout assigns coordinates by dependency depth', () => {
   const g = layout(G([N('a', 'A'), N('b', 'B')], [{ id: 'e', source: 'a', target: 'b', data: {} }]))
   assert.ok(g.nodes[0].position.x < g.nodes[1].position.x, 'b sits right of a')
@@ -203,8 +194,6 @@ test('layout terminates on a cyclic graph AND produces finite coordinates', () =
     { id: 'e1', source: 'a', target: 'b', data: {} },
     { id: 'e2', source: 'b', target: 'a', data: {} },
   ]))
-  // `assert.ok(n.position)` alone passed while y was NaN — {x:504, y:NaN} is truthy. NaN serializes
-  // to null, and the "already placed" guard then refuses to repair it, so this must assert finite.
   for (const n of g.nodes) {
     assert.ok(Number.isFinite(n.position.x), `${n.id} x is finite`)
     assert.ok(Number.isFinite(n.position.y), `${n.id} y is finite`)
@@ -212,14 +201,12 @@ test('layout terminates on a cyclic graph AND produces finite coordinates', () =
 })
 
 test('layout is finite when EVERY node has a predecessor — the sparse-layer case', () => {
-  // a 3-cycle: no node has depth 0, so the depth-indexed array has a hole at index 0.
   const g = layout(G([N('a', 'A'), N('b', 'B'), N('c', 'C')], [
     { id: 'e1', source: 'a', target: 'b', data: {} },
     { id: 'e2', source: 'b', target: 'c', data: {} },
     { id: 'e3', source: 'c', target: 'a', data: {} },
   ]))
   for (const n of g.nodes) assert.ok(Number.isFinite(n.position.y), `${n.id} y is finite`)
-  // and the columns start at the left edge rather than leaving an empty first column
   assert.equal(Math.min(...g.nodes.map(n => n.position.x)), 24)
 })
 
@@ -227,7 +214,6 @@ test('layout of an empty graph is a no-op, not a crash', () => {
   assert.deepEqual(layout(G([])).nodes, [])
 })
 
-// ── ops — the chat proposes, the user applies ────────────────────────────────────────────────────
 test('a valid op list applies', () => {
   const { graph, results } = applyOps(G([N('a', 'A')]), [
     { op: 'add-node', id: 'q', label: 'Queue', type: 'queue' },
@@ -269,7 +255,6 @@ test('applyOps does not mutate the input graph', () => {
   assert.equal(g.nodes.length, 1)
 })
 
-// ── parseOps — the chat proposal path ────────────────────────────────────────────────────────────
 test('an op list is extracted from a chat reply', () => {
   const reply = 'You are missing a dead-letter path.\n\n```yaml\nops:\n  - op: add-node\n    id: dlq\n    label: Dead letter queue\n    type: queue\n  - op: add-edge\n    source: api\n    target: dlq\n    label: on final failure\n```'
   const ops = parseOps(reply)
@@ -279,8 +264,6 @@ test('an op list is extracted from a chat reply', () => {
 })
 
 test('"no changes needed" is a valid answer, not an error', () => {
-  // The common case: the user asked a question and the honest reply proposes nothing. Returning []
-  // rather than an error is what lets the chat answer questions without inventing edits.
   assert.deepEqual(parseOps('The design already handles that — retries are bounded at the API layer.'), [])
   assert.deepEqual(parseOps(''), [])
   assert.deepEqual(parseOps(null), [])
@@ -303,14 +286,12 @@ test('op lists are capped', () => {
   assert.equal(parseOps('```yaml\nops:\n' + many + '\n```').length, 40)
 })
 
-// ── positions: rejected from a model, trusted from a hand edit ───────────────────────────────────
 test('trustPositions keeps user coordinates and emits no warning', () => {
   const doc = { nodes: [{ id: 'a', label: 'A', position: { x: 320, y: 140 } }] }
   const model = validateGraph(doc)
   assert.equal(model.graph.nodes[0].position, null)
   assert.ok(codes(model.warnings).includes('position-rejected'))
 
-  // Without this distinction, every hand edit sprayed a warning chip per node.
   const user = validateGraph(doc, { trustPositions: true })
   assert.deepEqual(user.graph.nodes[0].position, { x: 320, y: 140 })
   assert.deepEqual(codes(user.warnings), [])
@@ -321,7 +302,6 @@ test('trustPositions still rejects a non-finite coordinate', () => {
   assert.equal(graph.nodes[0].position, null)
 })
 
-// ── export ───────────────────────────────────────────────────────────────────────────────────────
 test('mermaid export uses the right shape per type and dashes inferred edges', () => {
   const g = G(
     [{ ...N('db', 'Store'), type: 'store' }, { ...N('d', 'Ready?'), type: 'decision' }],
@@ -331,7 +311,7 @@ test('mermaid export uses the right shape per type and dashes inferred edges', (
   assert.ok(m.startsWith('flowchart LR'))
   assert.ok(m.includes('db[("Store")]'), m)
   assert.ok(m.includes('d{"Ready?"}'), m)
-  assert.ok(m.includes('-.->'), m)   // inferred stays visually distinct in the export too
+  assert.ok(m.includes('-.->'), m)
 })
 
 test('mermaid export escapes quotes rather than producing broken syntax', () => {

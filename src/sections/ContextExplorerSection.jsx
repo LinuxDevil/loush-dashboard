@@ -1,15 +1,58 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import { modelName } from '../lib/modelName.js'
 
-// Context Window Explorer — replay of one real session's per-turn context occupancy.
-// e.in + e.cc + e.cr on a turn already IS the total prompt size the model saw for that turn
-// (Anthropic's usage block splits fresh/cache-write/cache-read of the SAME total) — no reconstruction
-// needed, unlike tools that only see raw token deltas. Ported concept from oh-my-hi's Context Explorer.
 const MONO = "var(--mono)"
 const FRESH = 'var(--accent)', CACHE = 'var(--blue)', COMPACT = 'var(--amber)', GRID = 'var(--bg-surface-active)'
 const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n)))
 const fmtDate = t => new Date(t).toLocaleString()
+
+// Which tools ate the window, for the selected session. Token figures are estimated from byte
+// counts — there is no tokenizer in this process — so the low/high range is shown rather than a
+// single number that would imply precision we do not have.
+function ContextByTool({ sessionId }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    if (!sessionId) return
+    setD(null); setErr('')
+    api.get(`/api/context/breakdown?session=${encodeURIComponent(sessionId)}`).then(setD).catch(e => setErr(e.message))
+  }, [sessionId])
+  if (!sessionId) return null
+  if (err) return <div className="panel"><p className="small" style={{ color: 'var(--red)' }}>{err}</p></div>
+  if (!d) return null
+  const tools = d.byTool?.tools || []
+  if (!tools.length) return null
+  const max = Math.max(1, ...tools.map(t => t.bytes || 0))
+  return (
+    <div className="panel">
+      <h3>Where the window went <span className="muted">by tool, this session</span></h3>
+      {tools.slice(0, 10).map(t => (
+        <div key={t.tool} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '3px 0', font: '400 11px var(--mono)' }}>
+          <span style={{ width: 120, color: 'var(--text-secondary)' }}>{t.tool}</span>
+          <div style={{ flex: 1, height: 6, background: 'var(--border-subtle)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ width: `${((t.bytes || 0) / max) * 100}%`, height: '100%', background: 'var(--accent-light)' }} />
+          </div>
+          <span style={{ width: 150, textAlign: 'right', color: 'var(--text-tertiary)' }}>
+            ~{(t.approxTokens || 0).toLocaleString()} tok
+            <span title={`estimate range ${(t.approxTokensLow || 0).toLocaleString()}–${(t.approxTokensHigh || 0).toLocaleString()}`}> ±</span>
+          </span>
+          <span style={{ width: 44, textAlign: 'right', color: 'var(--text-tertiary)' }}>{Math.round((t.shareOfBytes || 0) * 100)}%</span>
+          {t.errorResults > 0 && <span style={{ color: 'var(--red)', width: 60 }}>{t.errorResults} err</span>}
+        </div>
+      ))}
+      <p className="small" style={{ marginBottom: 0 }}>
+        {/* An approximation presented as exact is the failure mode here; the factor and its
+            error bar come from the API rather than being restated. */}
+        Tokens estimated at ~{d.estimation?.bytesPerToken} bytes/token
+        (range {d.estimation?.range?.low}–{d.estimation?.range?.high}). Tool results only —
+        the system prompt and tool schemas are re-sent every turn and appear in no transcript,
+        so they are not counted here.
+      </p>
+    </div>
+  )
+}
 
 export default function ContextExplorerSection() {
   const [list, setList] = useState(null)
@@ -18,7 +61,7 @@ export default function ContextExplorerSection() {
   const [data, setData] = useState(null)
   const [hover, setHover] = useState(null)
   const [playing, setPlaying] = useState(false)
-  const [cursor, setCursor] = useState(-1) // -1 = show all, else "played up to" index
+  const [cursor, setCursor] = useState(-1)
   const rafRef = useRef(null)
 
   useEffect(() => { api.get('/api/context/sessions').then(setList).catch(() => {}) }, [])
@@ -34,7 +77,6 @@ export default function ContextExplorerSection() {
     return f.slice(0, 40)
   }, [list, q])
 
-  // simple rAF-driven playback: advances `cursor` through entries at a fixed pace
   useEffect(() => {
     if (!playing || !data) return
     const n = data.entries.length
@@ -66,7 +108,7 @@ export default function ContextExplorerSection() {
                   <td className="mono">{s.project}</td>
                   <td className="num">{s.turns}</td>
                   <td className="num">{fmtTok(s.peak)}</td>
-                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{(s.model || '').replace('claude-', '')}</td>
+                  <td className="mono" style={{ color: 'var(--text-secondary)' }}>{modelName(s.model || '')}</td>
                   <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{new Date(s.last).toLocaleDateString()}</td>
                 </tr>
               ))}
@@ -79,6 +121,7 @@ export default function ContextExplorerSection() {
       {!sessionId && <div className="panel"><p className="small">pick a session above to replay its context-window timeline.</p></div>}
       {sessionId && !data && <Skeleton tiles={1} rows={4} />}
       {data && <ContextTimeline data={data} hover={hover} setHover={setHover} playing={playing} setPlaying={setPlaying} cursor={cursor} setCursor={setCursor} />}
+      <ContextByTool sessionId={sessionId} />
     </div>
   )
 }
@@ -99,7 +142,7 @@ export function ContextTimeline({ data, hover, setHover, playing, setPlaying, cu
   return (
     <div className="panel" style={{ marginBottom: 0 }}>
       <div className="panel-head">
-        <h3>{project} <span className="muted">{sessionId.slice(0, 8)}… · {(model || '').replace('claude-', '')}</span></h3>
+        <h3>{project} <span className="muted">{sessionId.slice(0, 8)}… · {modelName(model || '')}</span></h3>
         <button className="mini" onClick={() => setPlaying(p => !p)}>{playing ? '⏸ pause' : '▶ replay'}</button>
         {cursor >= 0 && <button className="mini" onClick={() => setCursor(-1)}>show all</button>}
       </div>

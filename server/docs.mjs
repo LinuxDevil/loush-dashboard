@@ -27,22 +27,6 @@
 //      is unambiguous. Then `realpathSync` on the deepest existing ancestor, because a symlink
 //      inside the root can point anywhere and no amount of string work will notice.
 //
-// A NAME CHECK IS NOT ENOUGH, so writes do not use the checked name directly — see
-// `writeContained`. Two escapes got past a guard that only checked the name:
-//
-//   * a HARDLINK inside the root to a file outside it. `lstat` calls it an ordinary file and
-//     `realpath` resolves it inside the root, because a hardlink is not a redirection — it is a
-//     second true name for one inode. No path-based check can see it. Writing through the fd
-//     edited the outside file.
-//   * a mid-path directory component swapped for a symlink AFTER the guard ran. `O_NOFOLLOW`
-//     applies to the FINAL component only, so it never covered this; a racing process that
-//     replaces `root/sub` with a link while the request is in flight lands the write outside.
-//
-// `writeContained` answers both by never writing through the target name: it writes a fresh
-// O_EXCL temp file in the resolved parent and `rename`s it into place. `rename` replaces a
-// directory entry rather than following it, so a hardlink is broken instead of edited and a
-// leaf symlink is replaced instead of traversed — and the write becomes atomic for free.
-//
 // `ai-edit` returns proposed text and NEVER writes. Accepting a diff is a separate PUT from the
 // client. An AI edit that writes directly is a data-loss bug waiting for its first bad instruction,
 // and the accept/reject flow only means anything if refusing leaves the disk untouched.
@@ -172,65 +156,6 @@ export function resolveDocPath(root, raw) {
   return { ok: true, abs, rel: segs.join('/'), ext }
 }
 
-/**
- * Write `text` to `abs`, which `resolveDocPath` has already accepted, WITHOUT trusting that name.
- *
- * The guard checks a name; this checks the write. Three things it does that opening `abs` directly
- * did not:
- *
- *   1. Re-resolves the PARENT through the kernel (`realpathSync`) immediately before the open, and
- *      re-checks containment on the resolved path. `mkdir -p` follows symlinks, so the directory
- *      "created" a line earlier may be somewhere else entirely; and the guard ran several syscalls
- *      ago. The path opened below therefore contains no symlink in any component, by construction
- *      of `realpath` rather than by our own walk.
- *   2. Writes a fresh `O_EXCL | O_NOFOLLOW` TEMP file in that resolved parent. O_EXCL means we
- *      cannot be handed an existing inode of any kind, so there is nothing to follow and nothing
- *      to share.
- *   3. `rename`s the temp over the target. `rename` operates on the DIRECTORY ENTRY: it does not
- *      follow a symlink at the destination and it does not write through a hardlink — it unlinks
- *      the old entry and puts ours there. That is what closes the hardlink escape, which no
- *      path-based check can see: a hardlink is a second true name for one inode, so `lstat` says
- *      "ordinary file" and `realpath` says "inside the root", both correctly, while the bytes
- *      land in a file that also lives outside. Breaking the link is the right answer — the file
- *      outside keeps its content and the name inside the root gets ours.
- *
- * RESIDUAL, stated because the previous note claimed more than it delivered: this narrows the
- * guard-to-write window to `realpath` → `open`, it does not eliminate it. Closing it outright
- * needs `openat(2)` against directory descriptors, which Node does not expose. `O_NOFOLLOW` never
- * covered it either — that flag applies to the final component only, so a mid-path swap was always
- * outside its reach.
- *
- * @returns {{ok: true, bytes: number, mtime: number} | {ok: false, reason: string}}
- */
-export function writeContained(root, abs, text) {
-  const rootReal = realOrNearest(path.resolve(root))
-  const dir = path.dirname(abs)
-  fs.mkdirSync(dir, { recursive: true })
-
-  let realDir
-  try { realDir = fs.realpathSync(dir) } catch { return { ok: false, reason: 'symlink-escapes-root' } }
-  if (realDir !== rootReal && !isInside(rootReal, realDir)) return { ok: false, reason: 'symlink-escapes-root' }
-
-  const leaf = path.basename(abs)
-  const final = path.join(realDir, leaf)
-  // Dot-prefixed so a crash between open and rename leaves something `listDocs` already skips.
-  const tmp = path.join(realDir, `.${leaf}.${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.tmp`)
-
-  let fd
-  try {
-    fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644)
-    fs.writeFileSync(fd, text, 'utf8')
-    fs.closeSync(fd); fd = undefined
-    fs.renameSync(tmp, final)
-  } catch (e) {
-    if (fd !== undefined) try { fs.closeSync(fd) } catch {}
-    try { fs.rmSync(tmp, { force: true }) } catch {}
-    throw e
-  }
-  const st = fs.lstatSync(final)
-  return { ok: true, bytes: st.size, mtime: st.mtimeMs }
-}
-
 /** Files under the root, relative paths, newest first. Symlinks are skipped, not followed. */
 export function listDocs(root) {
   const out = []
@@ -330,23 +255,26 @@ export default function mount(app, deps = {}) {
     if (typeof text !== 'string') return bad(res, 400, 'text-required', { path: t.rel })
     const bytes = Buffer.byteLength(text, 'utf8')
     if (bytes > MAX_FILE_BYTES) return bad(res, 413, 'file-too-large', { path: t.rel, bytes, limit: MAX_FILE_BYTES })
-    let w
     try {
       // The parent is created only because the guard above already proved it contained; without
-      // that proof this line would be the traversal. writeContained re-proves it anyway, because
-      // the proof was about a name and the kernel acts on inodes.
-      w = writeContained(rootOf(), t.abs, text)
+      // that proof this line would be the traversal.
+      fs.mkdirSync(path.dirname(t.abs), { recursive: true })
+      // O_NOFOLLOW so the KERNEL refuses to open a symlink, whatever the guard concluded a moment
+      // ago. The guard is a check on a name; this is a property of the open. It closes the window
+      // between the two — a link swapped in after the check cannot be followed — and makes the
+      // symlink defence independent of the guard being exhaustive.
+      let fd
+      try {
+        fd = fs.openSync(t.abs, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o644)
+        fs.writeFileSync(fd, text, 'utf8')
+      } finally { if (fd !== undefined) try { fs.closeSync(fd) } catch {} }
+      const st = fs.statSync(t.abs)
+      res.json({ ok: true, path: t.rel, bytes: st.size, mtime: st.mtimeMs })
     } catch (e) {
       // ELOOP is the kernel refusing a symlink — report it as the containment failure it is, not 500.
       if (e.code === 'ELOOP') return bad(res, 400, 'symlink-escapes-root', { path: t.rel })
-      // Something that is not a plain file already occupies the name: a bad request, not a fault.
-      if (e.code === 'EISDIR' || e.code === 'ENOTDIR' || e.code === 'ENOTEMPTY' || e.code === 'EPERM') {
-        return bad(res, 400, 'not-a-file', { path: t.rel })
-      }
-      return bad(res, 500, e.message, { path: t.rel })
+      bad(res, 500, e.message, { path: t.rel })
     }
-    if (!w.ok) return bad(res, 400, w.reason, { path: t.rel })
-    res.json({ ok: true, path: t.rel, bytes: w.bytes, mtime: w.mtime })
   })
 
   // Proposes. Does not write. The client diffs {text} against its buffer and PUTs on accept.

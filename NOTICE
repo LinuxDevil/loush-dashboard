@@ -1,0 +1,87 @@
+AI Dashboard
+Copyright (c) 2026 Ali Mohammad
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License, version 3, as published by the
+Free Software Foundation. See LICENSE for the full text.
+
+## Licence history
+
+Released under the MIT License up to and including the last commit before the
+relicense. Every commit from the relicense forward is AGPL-3.0-only. Copies
+obtained under MIT remain MIT — relicensing is not retroactive for anyone who
+already has a copy. All copyright in the pre-relicense code is held by Ali
+Mohammad, so no third-party consent was required.
+
+## Third-party code
+
+### Odysseus — https://github.com/odysseus-dev/odysseus
+Copyright (c) the Odysseus contributors. Licensed under AGPL-3.0.
+
+Portions of the Compare, Deep Research, and Documents features are derived from
+Odysseus. This project is AGPL-3.0 specifically so that such reuse is permitted.
+
+Audited 2026-07-31. Files where Odysseus source WAS read, each carrying its own
+clause 1 header and §5(a) modification notice:
+
+  server/compare.mjs               ← routes/compare/compare_routes.py
+  server/research.mjs              ← src/deep_research.py, routes/research/research_routes.py
+  server/docs.mjs                  ← routes/document_routes.py
+  src/sections/DocsSection.jsx     ← static/js/document.js
+  src/sections/docs/AiEditBar.jsx  ← static/js/document.js
+
+Files where Odysseus source was NOT read. These were written from its bundled demo
+recordings and from capability descriptions, so clause 1 does not attach to them;
+they carry the `lib/chat-protocol.mjs` wording instead. All are AGPL-3.0 anyway,
+because the whole program is.
+
+  src/ui/chatBlocks.jsx
+  src/sections/CompareSection.jsx
+  src/styles/compare.css
+  src/sections/ResearchSection.jsx
+  src/styles/research.css
+  src/styles/docs.css
+
+**Basis for the last three, stated plainly because it is weaker than the rest of
+this audit.** The first three say so in their own headers. The last three did not
+when this audit was written, and were briefly recorded here as unplaceable. They
+are placed on the statements of the agents that wrote them, given at completion:
+
+  · The author of `server/research.mjs`, `ResearchSection.jsx` and `research.css`
+    reported consulting Odysseus source for the server module ONLY — naming
+    `src/deep_research.py` and `routes/research/research_routes.py` — and stated
+    that the JSX and CSS were written without reading `static/js/research/` or the
+    demo recording.
+  · The author of `server/docs.mjs`, `DocsSection.jsx` and `docs.css` enumerated
+    exactly two consultations, `routes/document_routes.py` and
+    `static/js/document.js`. `docs.css` was not among them.
+
+That is testimony, not inspection: nobody diffed these files against Odysseus to
+confirm it. It is corroborated only by `server/research.mjs` citing the two Python
+files and not `static/js/research/`, which is consistent but proves nothing. The
+distinction does not affect distribution — AGPL-3.0 applies either way — but it
+would matter to anyone relicensing, so the strength of the evidence is recorded
+here rather than smoothed over.
+
+On that basis all three now carry the standard header wording in the files
+themselves, so this paragraph records why they say it rather than being the only
+place it is said.
+
+**Obligations that come with that — these are not optional:**
+
+1. Any file containing Odysseus-derived code carries a header naming Odysseus as
+   the source and stating the file is AGPL-3.0. Add it in the same commit as the
+   code, not later.
+2. State what was changed. AGPL §5(a): modified files must carry prominent notice
+   of modification and the date.
+3. **§13, the clause that makes this AGPL and not GPL:** if this program is ever
+   made available to users over a network, those users must be offered the
+   Corresponding Source of the running version. A local-only dev tool does not
+   trigger it; the moment it is hosted for anyone else, it does.
+4. The combined work is AGPL-3.0 in whole. Ali Mohammad may relicense his own
+   original code at will, but any file with Odysseus-derived content cannot be
+   made MIT again while that content remains.
+
+Where a feature was written from a capability description without reading
+Odysseus source, the file says so in its header and clause 1 does not apply to it
+— see `lib/chat-protocol.mjs` for the established wording.

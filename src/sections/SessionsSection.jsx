@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import SessionCards from '../ui/SessionCards.jsx'
 import { api, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Stagger, CountUp } from '../ui/anim.jsx'
 
 // ---------- 10: session ledger — real $, terminal escape hatches, keyboard layer ----------
-// The app's only previous "resume" spawned the session INSIDE the dashboard's chat pane, which is not
-// what a terminal-first dev wants. This copies `cd <cwd> && claude --resume <id>` and gets out of the way.
-// Plane B: this machine's own transcripts. There is no user/machine parameter and there never will be.
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const RED = 'var(--red)', GOLD = 'var(--amber)', GREEN = 'var(--green)', DIM = 'var(--text-secondary)'
@@ -14,12 +12,135 @@ const fmtTok = n => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 10
 const fmtDur = ms => { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
 const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd' }
 
+const NAME_SOURCE = {
+  custom: 'you titled this session (/rename, claude -n, or Ctrl+R in the picker)',
+  ai: 'auto-generated title from the conversation',
+  prompt: 'no title was ever set — this is the first thing you asked, truncated',
+}
+
 const COLS = [
+  ['name', 'Session', r => r.name || r.sessionId],
   ['project', 'Project', r => r.project], ['branch', 'Branch', r => r.branch || ''],
   ['cost', '$', r => r.cost], ['out', 'Out tok', r => r.out], ['cacheReadPct', 'Cache read', r => r.cacheReadPct],
   ['durationMs', 'Duration', r => r.durationMs], ['toolCalls', 'Tools', r => r.toolCalls],
   ['compactions', 'Compact', r => r.compactions], ['errors', 'Errors', r => r.errors], ['last', 'Last', r => r.last],
 ]
+
+function SessionEvents({ sessionId }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api.get('/api/session/events?session=' + encodeURIComponent(sessionId)).then(setD).catch(e => setErr(e.message)) }, [sessionId])
+  if (err) return <div style={{ font: '400 11px var(--mono)', color: 'var(--red)', padding: 8 }}>{err}</div>
+  if (!d) return <div style={{ font: '400 11px var(--mono)', color: 'var(--text-tertiary)', padding: 8 }}>reading transcript…</div>
+  const groups = d.groups || []
+  return (
+    <div style={{ padding: '6px 0 10px', font: '400 11px var(--mono)' }}>
+      <div style={{ color: 'var(--text-tertiary)', marginBottom: 6 }}>
+        {groups.length} rows
+        {}
+        {d.truncated?.omitted > 0 && ` · ${d.truncated.omitted} omitted by the ${d.truncated.limit} row cap`}
+        {d.counts?.sidechainUnlinked > 0 && ` · ${d.counts.sidechainUnlinked} subagent record(s) carry no parent link and could not be nested`}
+        {d.unparsableLines > 0 && ` · ${d.unparsableLines} unparsable line(s)`}
+      </div>
+      <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+        {groups.map((g, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 0', alignItems: 'baseline' }}>
+            <span style={{ color: g.status === 'error' ? 'var(--red)' : g.status === 'running' ? 'var(--amber, #d79921)' : 'var(--text-tertiary)', width: 58, flexShrink: 0 }}>{g.status || g.kind || ''}</span>
+            <span style={{ color: 'var(--text-secondary)', flex: 1 }}>
+              {g.title}{g.count > 1 && <span style={{ color: 'var(--text-tertiary)' }}> ×{g.count}</span>}
+              {g.enclosingContext && <span style={{ color: 'var(--violet)' }}> · in {g.enclosingContext}</span>}
+            </span>
+            {g.summary && <span style={{ color: 'var(--text-tertiary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.summary}>{g.summary}</span>}
+          </div>
+        ))}
+        {groups.length === 0 && <div style={{ color: 'var(--text-tertiary)' }}>no tool calls recorded in this session</div>}
+      </div>
+    </div>
+  )
+}
+
+// Search across EVERY transcript, not just the rows currently listed. Tool inputs are searched
+// because "which session ran that command" is the real question, but the server returns the tool
+// name and field path only — never the value, which could be a token.
+function TranscriptSearch() {
+  const [q, setQ] = useState('')
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const run = () => {
+    if (!q.trim()) return
+    setBusy(true); setErr(''); setD(null)
+    api.get(`/api/search/sessions?q=${encodeURIComponent(q.trim())}&days=90`)
+      .then(setD).catch(e => setErr(e.message)).finally(() => setBusy(false))
+  }
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <b style={{ font: '600 13px var(--head)' }}>Search all sessions</b>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="a phrase, a filename, a command…"
+          onKeyDown={e => { if (e.key === 'Enter') run() }} style={{ flex: 1, font: '400 12px var(--mono)' }} />
+        <button className="mini" style={{ marginTop: 0 }} onClick={run} disabled={busy || !q.trim()}>{busy ? 'searching…' : 'search'}</button>
+      </div>
+      {err && <p className="small" style={{ color: 'var(--red)' }}>{err}</p>}
+      {d && (
+        <>
+          <p className="small" style={{ margin: '8px 0 4px' }}>
+            {d.total} hit{d.total === 1 ? '' : 's'} across {d.sessionsScanned} session{d.sessionsScanned === 1 ? '' : 's'} in {d.days} days
+            {/* A capped list presented as complete is the failure mode this avoids. */}
+            {d.truncated && ` · showing the first ${d.cap}`}
+            {d.unparsableLines > 0 && ` · ${d.unparsableLines} unparsable line(s) skipped`}
+          </p>
+          <div style={{ maxHeight: 300, overflowY: 'auto', font: '400 11px var(--mono)' }}>
+            {d.hits.map((h, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, padding: '3px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                <span style={{ color: 'var(--text-tertiary)', width: 68, flexShrink: 0 }}>{h.role}</span>
+                <span style={{ color: 'var(--accent-light)', width: 74, flexShrink: 0, overflow: 'hidden' }} title={h.sessionId}>{String(h.sessionId).slice(0, 8)}</span>
+                <span style={{ color: 'var(--text-secondary)', flex: 1 }}>{h.snippet || h.text}</span>
+              </div>
+            ))}
+            {d.hits.length === 0 && <div style={{ color: 'var(--text-tertiary)' }}>no matches</div>}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Which sessions stopped mid-turn. `unknown` dominates here and that is correct: subagent
+// transcripts frequently record no terminal stop reason, and calling those crashed would be a
+// confident wrong answer about every one of them.
+function SessionHealth() {
+  const [d, setD] = useState(null)
+  useEffect(() => { api.get('/api/sessions/health?days=30').then(setD).catch(() => {}) }, [])
+  if (!d) return null
+  const abnormal = (d.sessions || []).filter(s => s.ended === 'abnormal')
+  const compactions = (d.sessions || []).reduce((n, s) => n + (s.compactions?.length || 0), 0)
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <h3>Session health <span className="muted">last {d.days} days</span></h3>
+      <p className="small" style={{ margin: '4px 0' }}>
+        {Object.entries(d.counts || {}).map(([k, v]) => `${v} ${k}`).join(' · ') || 'nothing recorded'}
+        {compactions > 0 && ` · ${compactions} compaction(s)`}
+      </p>
+      {abnormal.length > 0 && (
+        <div style={{ font: '400 11px var(--mono)' }}>
+          {abnormal.slice(0, 8).map(s => (
+            <div key={s.sessionId} style={{ display: 'flex', gap: 8, padding: '2px 0' }}>
+              <span style={{ color: 'var(--red)', width: 74 }}>{String(s.sessionId).slice(0, 8)}</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>{s.reason}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Only said when it is true, so it does not read as boilerplate. */}
+      {compactions === 0 && d.compactionFieldsVerified === false && (
+        <p className="small" style={{ color: 'var(--text-tertiary)' }}>
+          No compactions found. The field names for compaction records could not be verified against real data on this machine, so zero here means "none matched", not "none happened".
+        </p>
+      )}
+    </div>
+  )
+}
 
 export default function SessionsSection() {
   const [days, setDays] = useState(7)
@@ -27,36 +148,51 @@ export default function SessionsSection() {
   const [usage, setUsage] = useState(null)
   const [q, setQ] = useState('')
   const [sort, setSort] = useState({ col: 'last', dir: -1 })
+  const [view, setView] = useState('table')
   const [cur, setCur] = useState(0)
+  const [events, setEvents] = useState(null)
   const filterRef = useRef(null)
   const bodyRef = useRef(null)
 
-  useEffect(() => { setD(null); api.get(`/api/sessions?days=${days}&limit=200`).then(setD).catch(() => {}) }, [days])
+  const [qLive, setQLive] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setQLive(q), 300)
+    return () => clearTimeout(t)
+  }, [q])
+  const [pending, setPending] = useState(false)
+  useEffect(() => {
+    setPending(true)
+    api.get(`/api/sessions?days=${days}&limit=200&q=${encodeURIComponent(qLive)}`)
+      .then(setD).catch(() => {}).finally(() => setPending(false))
+  }, [days, qLive])
   useEffect(() => { api.get('/api/usage').then(setUsage).catch(() => {}) }, [])
 
   const rows = useMemo(() => {
     if (!d) return []
     const get = COLS.find(c => c[0] === sort.col)?.[2] || (r => r[sort.col])
-    const f = d.sessions.filter(s => !q || (s.project + ' ' + (s.branch || '') + ' ' + s.sessionId + ' ' + s.cwd).toLowerCase().includes(q.toLowerCase()))
-    return [...f].sort((a, b) => { const x = get(a), y = get(b); return sort.dir * (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) })
-  }, [d, q, sort])
+    // Unmeasured values sort to the end in BOTH directions rather than being treated as 0.
+    // `x - y` with a null yields NaN, and a NaN comparator leaves the array in an arbitrary order
+    // that looks sorted — so the rows a reader trusts most would be the ones placed at random.
+    return [...d.sessions].sort((a, b) => {
+      const x = get(a), y = get(b)
+      if (x == null && y == null) return 0
+      if (x == null) return 1
+      if (y == null) return -1
+      return sort.dir * (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)))
+    })
+  }, [d, sort])
 
-  // Resume IN-APP. This used to copy `claude --resume <id>` for you to paste into a terminal,
-  // while POST /api/chat {resume} — which does it properly — already existed and was used by Chat.
   const resumeHere = r => {
     window.dispatchEvent(new CustomEvent('chat-open', { detail: { sessionId: r.sessionId, cwd: r.cwd } }))
     toast(`resuming ${String(r.sessionId).slice(0, 8)} — opening Chat`, 'success')
     window.dispatchEvent(new Event('nav-chat'))
   }
-  // Kept for the terminal case. The old version swallowed the rejection and toasted success anyway,
-  // so a blocked clipboard reported "copied".
   const copyResume = r => navigator.clipboard.writeText(r.resume).then(
     () => toast('copied · paste into a terminal: ' + r.resume, 'success'),
     () => toast('clipboard blocked by the browser', 'error'))
   const reveal = r => api.post('/api/artifacts/reveal', { path: r.transcript }).catch(e => toast(e.message, 'error'))
   const openRaw = r => window.open('/api/artifacts/download?path=' + encodeURIComponent(r.transcript), '_blank')
 
-  // keyboard layer: `/` focus filter · j/k move · `y` copy the resume line · Enter open the raw transcript
   useEffect(() => {
     const onKey = e => {
       const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)
@@ -80,6 +216,8 @@ export default function SessionsSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <TranscriptSearch />
+      <SessionHealth />
       <div className="kpi-grid" style={{ marginBottom: 0 }}>
         <div className="kpi"><div className="kpi-label"><span>spend</span><span className="kpi-tag" style={{ background: 'var(--bg-surface-hover)', color: DIM }}>{days}d</span></div>
           <div className="kpi-value"><CountUp value={t.cost} prefix="$" decimals={2} /></div>
@@ -95,10 +233,30 @@ export default function SessionsSection() {
           <div className="kpi-sub">context overflow events · see Forensics</div></div>
       </div>
 
-      <div className="panel" style={{ marginBottom: 0 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        {['table', 'cards'].map(v => (
+          <button key={v} className="mini" style={{ marginTop: 0, color: view === v ? 'var(--accent)' : undefined }} onClick={() => setView(v)}>{v}</button>
+        ))}
+        {/* 092: the same sessions as kanban cards, with the files each one touched. A session
+            whose file activity was never recorded shows as unknown rather than "0 files" — the
+            board must not report an absence of data as an absence of work. */}
+      </div>
+      {view === 'cards' && (
+        <div className="panel" style={{ marginBottom: 12 }}>
+          <SessionCards sessions={d?.sessions || []} />
+        </div>
+      )}
+      {view === 'table' && <div className="panel" style={{ marginBottom: 0 }}>
         <div className="panel-head">
-          <h3>Session ledger <span className="muted">{rows.length} sessions · plane: this machine only</span></h3>
-          <input ref={filterRef} placeholder="filter project, branch, id… ( / )" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }} />
+          <h3>Session ledger <span className="muted">
+            {}
+            {d.total} session{d.total === 1 ? '' : 's'}{rows.length < d.total ? ` · showing ${rows.length}` : ''}
+            {d.named < d.total ? ` · ${d.total - d.named} never titled` : ''}
+            {d.q ? ` · matching “${d.q}”` : ''} · plane: this machine only
+            {pending && ' · searching…'}
+          </span></h3>
+          <input ref={filterRef} placeholder="search name, id, path… ( / )" value={q} onChange={e => setQ(e.target.value)} style={{ width: 230 }}
+            title="searched on the server across the whole window, not just the rows on screen" />
           <select value={days} onChange={e => setDays(Number(e.target.value))}>
             <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
           </select>
@@ -114,28 +272,57 @@ export default function SessionsSection() {
               <th>Actions</th>
             </tr></thead>
             <Stagger tag="tbody" step={14} max={300}>
-              {rows.map((r, i) => (
+              {rows.map((r, i) => [
                 <tr key={r.sessionId} data-cur={i === cur ? '1' : '0'} onClick={() => setCur(i)}
                   style={{ background: i === cur ? 'var(--accent-bg)' : undefined, cursor: 'pointer' }}>
+                  {}
+                  <td style={{ maxWidth: 260 }} title={r.name ? `${NAME_SOURCE[r.nameSource] || ''}\n${r.cwd}` : `this session was never titled\n${r.cwd}`}>
+                    <span style={{
+                      display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      color: r.name ? (r.nameSource === 'custom' ? 'var(--text-primary)' : 'var(--text-secondary)') : 'var(--text-tertiary)',
+                      font: r.name ? '500 12px sans-serif' : `400 11px ${MONO}`,
+                    }}>
+                      {r.name || r.sessionId.slice(0, 8)}
+                    </span>
+                  </td>
                   <td className="mono" style={{ color: 'var(--text-primary)' }} title={r.cwd}>{r.project}</td>
                   <td className="mono" style={{ color: r.branch ? 'var(--violet)' : DIM }}>{r.branch || '—'}</td>
                   <td className="num" style={{ color: r.cost > 20 ? GOLD : 'var(--text-primary)' }}>${r.cost.toFixed(2)}</td>
                   <td className="num">{fmtTok(r.out)}</td>
-                  <td className="num" title="share of input tokens served from the prompt cache">{Math.round(r.cacheReadPct * 100)}%</td>
+                  {/* null means the session had no cached tokens at all, so there is no ratio.
+                      `Math.round(null * 100)` is 0, which would claim the cache was offered and
+                      missed — a different and worse-looking fact than "not applicable". */}
+                  <td className="num" title={r.cacheReadPct == null ? 'this session had no cache-eligible input, so there is no ratio to report' : 'share of input tokens served from the prompt cache'}
+                    style={r.cacheReadPct == null ? { color: DIM } : undefined}>
+                    {r.cacheReadPct == null ? '—' : Math.round(r.cacheReadPct * 100) + '%'}
+                  </td>
                   <td className="num">{fmtDur(r.durationMs)}</td>
                   <td className="num">{r.toolCalls}</td>
-                  <td className="num" style={{ color: r.compactions ? GOLD : DIM }}>{r.compactions || '—'}</td>
-                  <td className="num" style={{ color: r.errors ? RED : DIM }}>{r.errors || '—'}</td>
+                  {/* Three states, not two: a measured 0, a real count, and "forensics never ran
+                      for this session" — which used to render as 0 and read as a clean session. */}
+                  <td className="num" title={r.compactions == null ? 'not measured — no forensics record for this session' : undefined}
+                    style={{ color: r.compactions ? GOLD : DIM }}>{r.compactions == null ? '?' : r.compactions || '—'}</td>
+                  <td className="num" title={r.errors == null ? 'not measured — no forensics record for this session' : undefined}
+                    style={{ color: r.errors ? RED : DIM }}>{r.errors == null ? '?' : r.errors || '—'}</td>
                   <td className="mono" style={{ color: 'var(--text-tertiary)' }}>{ago(r.last)} ago</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="mini" style={{ marginTop: 0 }} title="resume this session inside the dashboard" onClick={e => { e.stopPropagation(); resumeHere(r) }}>r · resume</button>
                     <button className="mini" style={{ marginTop: 0 }} title={r.resume} onClick={e => { e.stopPropagation(); copyResume(r) }}>y · copy</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); reveal(r) }}>reveal</button>
                     <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} onClick={e => { e.stopPropagation(); openRaw(r) }}>raw</button>
+                    <button className="mini" style={{ marginTop: 0, marginLeft: 4 }} title="readable rows for this session's tool calls"
+                      onClick={e => { e.stopPropagation(); setEvents(x => x === r.sessionId ? null : r.sessionId) }}>
+                      {events === r.sessionId ? 'hide' : 'events'}
+                    </button>
                   </td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={11} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
+                </tr>,
+                events === r.sessionId ? (
+                  <tr key={r.sessionId + ':events'}>
+                    <td colSpan={12} style={{ background: 'var(--bg-base)' }}><SessionEvents sessionId={r.sessionId} /></td>
+                  </tr>
+                ) : null,
+              ]).flat().filter(Boolean)}
+              {rows.length === 0 && <tr><td colSpan={12} style={{ font: `400 11px ${MONO}`, color: DIM, padding: 12 }}>no sessions in this window</td></tr>}
             </Stagger>
           </table>
         </div>
@@ -144,7 +331,7 @@ export default function SessionsSection() {
           <code style={{ color: GREEN }}>cd &lt;cwd&gt; && claude --resume &lt;id&gt;</code> — the dashboard does not
           re-host your terminal.
         </p>
-      </div>
+      </div>}
     </div>
   )
 }

@@ -41,6 +41,5 @@ test('still running (no terminal, no failure) → null', () => {
 })
 
 test('blocking finding without an explicit REQUEST_CHANGES still withholds PASSING', () => {
-  // a done run carrying an unresolved Critical finding must not read as PASSING
   assert.equal(verdictFrom({ terminalDone: true, review: { decision: 'COMMENT', findings: [{ severity: 'Critical' }] } }), null)
 })
