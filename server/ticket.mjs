@@ -5,7 +5,8 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { ticketDetail, cfgFor, loadProjects, artifactsFor, reqHash, readArtifacts as readTicketArtifacts, writeArtifacts as writeTicketArtifacts } from './eng.mjs'
+import { ticketDetail, cfgFor, loadProjects, artifactsFor, reqHash, confluencePage, readArtifacts as readTicketArtifacts, writeArtifacts as writeTicketArtifacts } from './eng.mjs'
+import { extractLinks, keyFromInput } from '../lib/links.mjs'
 import { listLocalProjects } from '../lib/clone.mjs'
 import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
@@ -226,6 +227,51 @@ function repoFor(ws) {
 
 // ---------------------------------------------------------------------------------------------
 // ---------------------------------------------------------------------------------------------
+/**
+ * Frames Figma Capture has already pulled into this repo. The screenshot is what makes a design
+ * check cheap — comparing against a PNG on disk costs nothing, where re-reading the frame out of
+ * Figma costs a large fraction of a context window every single time.
+ */
+function capturesFor(repoDir) {
+  const dir = path.join(repoDir, '.claude', 'figma-captures')
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).slice(0, 40)
+      .map(e => path.join(dir, e.name))
+  } catch { return [] }
+}
+
+/**
+ * The copy deck, fetched — but only if the sheet is actually shared.
+ *
+ * Google answers a request for a private sheet with 200 and a sign-in PAGE, so the status code
+ * proves nothing. What is written to the repo is checked to be a CSV first; a sign-in page saved as
+ * `content.csv` would be worse than no file at all, because design QA would then check every string
+ * against it and report a pass.
+ */
+async function saveSheetCsv(csvUrl, repoDir, key) {
+  try {
+    const r = await fetch(csvUrl, { redirect: 'follow' })
+    if (!r.ok) return null
+    const body = await r.text()
+    const looksLikeHtml = /^\s*<(!doctype|html)/i.test(body)
+    if (looksLikeHtml || !body.trim()) return null
+    const dir = path.join(repoDir, 'docs', key)
+    fs.mkdirSync(dir, { recursive: true })
+    const out = path.join(dir, 'content.csv')
+    fs.writeFileSync(out, body)
+    return out
+  } catch { return null }
+}
+
+/** The copy deck, by convention. Absent is normal — most tickets do not have one. */
+function contentCsvFor(repoDir, key) {
+  for (const rel of [`docs/${key}/content.csv`, `docs/${key}/content.tsv`]) {
+    const p = path.join(repoDir, rel)
+    if (fs.existsSync(p)) return p
+  }
+  return null
+}
+
 const runs = new Map()
 const KEEP_FINISHED = 8
 function pruneRuns() {
@@ -713,6 +759,84 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
   })
 
   // ---- hand the ticket to the Task Board pipeline ----
+  /**
+   * Paste a JIRA link, get a board ticket with everything the ticket points at already followed:
+   * the tickets it references, the Confluence pages it cites, the copy deck pulled into the repo,
+   * and the Figma frames recorded as design refs.
+   *
+   * Anything that could not be followed is reported rather than dropped — a Confluence page behind
+   * a permission or a sheet that is not link-shared has to be visible as a gap, because the whole
+   * point of the card is that an agent reading it is not missing half the requirement.
+   */
+  app.post('/api/ticket/intake', async (req, res) => {
+    const dir = path.resolve(String(req.body?.project || ''))
+    const key = keyFromInput(req.body?.input)
+    if (!key) return res.status(400).json({ error: 'nothing in that looked like a JIRA ticket — paste a browse or board link, or just the key' })
+    if (!fs.existsSync(dir)) return res.status(400).json({ error: `${dir} is not on disk` })
+    const ws = workspaceById(workspaceId(dir))
+    if (!ws?.jira) return res.status(400).json({ error: `${path.basename(dir)} is not linked to a JIRA board — link it in the Ticket section first` })
+    const cfg = cfgFor(ws.jira.key)
+    if (!cfg) return res.status(404).json({ error: `the board "${ws.jira.key}" is no longer configured` })
+
+    let d
+    try { d = await ticketDetail(cfg, key) }
+    catch (e) { return res.status(502).json({ error: `could not read ${key} from JIRA: ${e.message}` }) }
+
+    const knownPrefixes = loadProjects().map(p => p.jiraProjectKey || p.key).filter(Boolean)
+    const links = extractLinks(d.description, key, knownPrefixes)
+    const unresolved = []
+
+    const linked = []
+    for (const k of links.jira.slice(0, 5)) {
+      try {
+        const o = await ticketDetail(cfg, k)
+        linked.push({ key: k, summary: o.summary, status: o.status, description: (o.description || '').slice(0, 1500) })
+      } catch (e) { unresolved.push(`${k} — ${e.message}`) }
+    }
+
+    const pages = []
+    for (const p of links.confluence.slice(0, 3)) {
+      const page = await confluencePage(cfg, p.id)
+      if (page) pages.push(page)
+      else unresolved.push(`Confluence page ${p.id} — not readable with this token`)
+    }
+
+    let contentCsv = contentCsvFor(dir, key)
+    let sheet = contentCsv ? 'in-repo' : 'none'
+    if (!contentCsv && links.sheets[0]?.csv) {
+      contentCsv = await saveSheetCsv(links.sheets[0].csv, dir, key)
+      if (contentCsv) sheet = 'fetched'
+      else { sheet = 'link-only'; unresolved.push('the content sheet is not link-shared — export it to docs/' + key + '/content.csv by hand') }
+    }
+
+    const parts = [
+      `JIRA: ${cfg.jiraHost ? `https://${cfg.jiraHost}/browse/${key}` : key}`,
+      '', d.description || '(no description)',
+    ]
+    if (links.figma.length) parts.push('', '## Figma', links.figma.join('\n'))
+    if (contentCsv) parts.push('', '## Agreed copy', contentCsv)
+    else if (links.sheets.length) parts.push('', '## Agreed copy', `${links.sheets[0].url}\n(not fetched — the sheet is not shared by link)`)
+    for (const p of pages) parts.push('', `## Confluence: ${p.title}`, p.text + (p.truncated ? '\n(truncated)' : ''))
+    for (const l of linked) parts.push('', `## Linked ticket ${l.key} — ${l.summary} (${l.status})`, l.description || '(no description)')
+    if (unresolved.length) parts.push('', '## Referenced but not readable', unresolved.map(u => `- ${u}`).join('\n'))
+
+    const sources = { jira: linked.map(l => l.key), confluence: pages.map(p => p.title), sheet, unresolved }
+    const designRefs = { figma: links.figma, captures: capturesFor(dir), contentCsv }
+
+    try {
+      const r2 = await fetch(`http://127.0.0.1:${DASH_PORT}/api/board/tickets`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          project: dir, title: `${key} — ${d.summary}`, desc: parts.join('\n'), jiraKey: key,
+          designRefs, sources, type: 'feature', team: req.body?.team || null, model: req.body?.model || null,
+        }),
+      })
+      if (!r2.ok) throw new Error(`board ${r2.status}: ${(await r2.text()).slice(0, 200)}`)
+      const t = await r2.json()
+      res.json({ ok: true, id: t.id, key, title: t.title, sources, designRefs, capped: t.capped || null })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.post('/api/ticket/:key/board', async (req, res) => {
     const r = resolve(req, res); if (!r) return
     const repo = repoFor(r.ws)
@@ -728,12 +852,26 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       '', d.description || '(no description)',
     ]
     if (art.ac?.md) parts.push('', '## Acceptance criteria', art.ac.md)
+    if (art.tests?.md) parts.push('', '## Test cases', art.tests.md)
     if (s.doc?.rel) parts.push('', `## Design`, `See \`${s.doc.rel}\` in this repository.`)
+
+    // What the agents downstream need to check the work against the design rather than against
+    // their own reading of the ticket. Everything here is a pointer, not a copy: the links are
+    // the ticket's own, the captures are whatever Figma Capture has already pulled into the repo,
+    // and the copy deck is a file the team drops in. Absent is a normal state — design QA simply
+    // does not run, rather than running against nothing and reporting a pass.
+    const designRefs = {
+      figma: [...new Set((d.description || '').match(/https:\/\/www\.figma\.com\/[^\s)\]]+/g) || [])],
+      captures: capturesFor(repo.dir),
+      contentCsv: contentCsvFor(repo.dir, r.key),
+    }
+    if (designRefs.figma.length) parts.push('', '## Figma', designRefs.figma.join('\n'))
+    if (designRefs.contentCsv) parts.push('', '## Agreed copy', designRefs.contentCsv)
 
     try {
       const r2 = await fetch(`http://127.0.0.1:${DASH_PORT}/api/board/tickets`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ project: repo.dir, title: `${r.key} — ${d.summary}`, desc: parts.join('\n'), jiraKey: r.key, designDoc: s.doc?.rel || null, type: 'feature' }),
+        body: JSON.stringify({ project: repo.dir, title: `${r.key} — ${d.summary}`, desc: parts.join('\n'), jiraKey: r.key, designDoc: s.doc?.rel || null, designRefs, type: 'feature' }),
       })
       if (!r2.ok) throw new Error(`board ${r2.status}: ${(await r2.text()).slice(0, 200)}`)
       const t = await r2.json()

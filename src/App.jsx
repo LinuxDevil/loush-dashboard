@@ -259,6 +259,10 @@ const sectionsFor = (features) => {
   if (features?.companyTools) out.push(COMPANY_SECTION);
   return out;
 };
+// Every id that may legally appear in `?dash=`, including the flag-gated one — the flag has not
+// loaded yet when the URL is first read, and refusing `company` on that basis would send someone
+// with a bookmark to Overview.
+const KNOWN_SECTION_IDS = new Set([...BASE_SECTIONS, COMPANY_SECTION].map((s) => s.id));
 
 function SidebarFoot() {
   const [h, setH] = useState(null);
@@ -316,11 +320,22 @@ export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [navOpen, setNavOpen] = useState(false);
   const initial = new URLSearchParams(window.location.search).get('dash') || 'claude';
-  const [section, setSection] = useState(initial === 'eng' ? 'delivery' : 'overview');
+  // `?dash=` is the section. It was only ever read for `eng`, so a refresh anywhere else dropped
+  // you back on Overview and the address bar said nothing about where you were — which also made
+  // every section unlinkable. `eng` keeps its meaning (Delivery, on the Engineering dashboard)
+  // because links to it exist in the wild.
+  const [section, setSection] = useState(
+    initial === 'eng' ? 'delivery' : KNOWN_SECTION_IDS.has(initial) ? initial : 'overview',
+  );
   const [inboxCount, setInboxCount] = useState(0);
   const [stale, setStale] = useState(null);
   const [tick, setTick] = useState(0);
-  const [visited, setVisited] = useState(initial === 'eng' ? { overview: true, delivery: true } : { overview: true });
+  // Sections mount lazily on first visit, so the section named in the URL has to count as visited
+  // — otherwise a deep link selects it in the sidebar and renders an empty pane, which is exactly
+  // what happened the first time `?dash=` accepted anything other than `eng`.
+  const [visited, setVisited] = useState(
+    initial === 'eng' ? { overview: true, delivery: true } : { overview: true, [initial]: true },
+  );
   const [toasts, setToasts] = useState([]);
   const [features, setFeatures] = useState({});
   useEffect(() => {
@@ -367,6 +382,24 @@ export default function App() {
     setVisited((v) => (v[id] ? v : { ...v, [id]: true }));
     setSection(id);
   };
+  // Written on navigation, not on mount: a pasted `?dash=eng&route=members` must survive long
+  // enough for the Engineering dashboard to read `route` off it. Leaving a section drops that
+  // section's own params, which belong to it and mean nothing anywhere else. replaceState, not
+  // push — the sidebar is not a history stack, and Back should leave the app, not walk it.
+  const firstNav = React.useRef(true);
+  useEffect(() => {
+    if (firstNav.current) { firstNav.current = false; return; }
+    window.history.replaceState(null, '', `${window.location.pathname}?dash=${section}`);
+  }, [section]);
+  useEffect(() => {
+    const onPop = () => {
+      const d = new URLSearchParams(window.location.search).get('dash');
+      const id = d === 'eng' ? 'delivery' : d;
+      if (id && KNOWN_SECTION_IDS.has(id)) nav(id);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const staleMin = stale ? Math.floor((Date.now() - stale) / 60000) : 0;
   useEffect(() => {
     const navChat = () => nav('chat');

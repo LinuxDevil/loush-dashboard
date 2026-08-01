@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { runAgent } from '../lib/agent.mjs'
 import { verdictFrom } from '../lib/run-verdict.mjs'
+import { boardRuns } from './board.mjs'
 
 let collectUsage
 
@@ -78,11 +79,18 @@ function scanRuns() {
       const events = fs.existsSync(evF) ? readEvents(evF) : []
       const term = [...events].reverse().find(e => e.type === 'run.completed' || e.type === 'run.failed')
       const ticket = dir === root ? (state.ticket_id || '(current)') : path.basename(dir)
-      const status = term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed')
+      // For a board flow the board itself knows whether an agent is alive, and it is the only
+      // thing that does: a ticket rests between steps for hours, and inferring "running" from
+      // "has events and no terminal event" reported every ticket that had ever run one as live.
+      const flow = state.flow || events[0]?.data?.flow || null
+      const liveNow = flow === 'board' && boardRuns.has(ticket)
+      const status = liveNow ? 'running'
+        : term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed')
         : state.phase_status === 'blocked' ? 'blocked' : state.phase_status === 'failed' ? 'failed'
+        : flow === 'board' ? (state.phase_status === 'passed' ? 'idle' : state.phase_status || 'idle')
         : (events.length || state.phase) ? 'running' : 'unknown'
       runs.push({
-        proj, projName: path.basename(proj), ticket, flow: state.flow || events[0]?.data?.flow || null,
+        proj, projName: path.basename(proj), ticket, flow, live: liveNow, liveKind: liveNow ? boardRuns.get(ticket)?.kind || null : null,
         phase: state.phase || null, phaseStatus: state.phase_status || null, retries: state.retries || null,
         headSha: state.head_sha || null, updatedAt: asMs(state.updated_at) || (fs.existsSync(evF) ? fs.statSync(evF).mtimeMs : null),
         events: events.length, startedAt: asMs(events[0]?.t), endedAt: asMs(term?.t), status,

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api, fmtDate, toast } from '../lib/api.js'
+import { buildBlocks, MessageLog } from '../ui/chatBlocks.jsx'
 import Skeleton from '../ui/Skeleton.jsx'
 
 const MONO = "var(--mono)"
@@ -34,6 +35,35 @@ const H2 = ({ children }) => <div style={{ font: `600 12px ${HEAD}`, marginBotto
 const Meta = ({ children, color = 'var(--text-tertiary)' }) => <span style={{ font: `400 11px ${MONO}`, color }}>{children}</span>
 const ModelInput = props => (<><input list="board-models" placeholder="model (blank = default)" {...props} /><datalist id="board-models">{MODELS.map(m => <option key={m} value={m} />)}</datalist></>)
 
+/** Paste a JIRA link; intake follows what it points at and reports what it could not reach. */
+function JiraIntake({ project, teams, model, team, onDone }) {
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const go = () => {
+    setBusy(true); setResult(null)
+    api.post('/api/ticket/intake', { project, input: input.trim(), team: team || null, model: model || null })
+      .then(r => { setResult(r); setInput(''); onDone() })
+      .catch(e => setResult({ error: e.message })).finally(() => setBusy(false))
+  }
+  const s = result?.sources
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && input.trim() && !busy) go() }}
+          placeholder="paste a JIRA link — https://…/browse/AIR-10817, a board URL, or just the key" style={{ flex: 1 }} />
+        <button className="primary" onClick={go} disabled={busy || !input.trim()}>{busy ? 'fetching…' : 'Fetch & file'}</button>
+      </div>
+      <Meta>follows what the ticket points at: linked tickets, Confluence pages, the content sheet, and the Figma frames</Meta>
+      {result?.error && <Meta color="var(--red)">{result.error}</Meta>}
+      {s && <Meta color="var(--green)">
+        filed {result.key} · {result.designRefs?.figma?.length || 0} figma · sheet {s.sheet} · {s.confluence.length} confluence · {s.jira.length} linked
+        {s.unresolved?.length ? ` · ${s.unresolved.length} not readable: ${s.unresolved.join('; ')}` : ''}
+      </Meta>}
+    </div>
+  )
+}
+
 function Intake({ project, teams, onDone }) {
   const [title, setTitle] = useState(''); const [desc, setDesc] = useState(''); const [team, setTeam] = useState(''); const [model, setModel] = useState('')
   const submit = () => api.post('/api/board/tickets', { project, title, desc, team: team || null, model: model || null })
@@ -41,6 +71,8 @@ function Intake({ project, teams, onDone }) {
   return (
     <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ font: `600 14px ${HEAD}` }}>New ticket</div>
+      <JiraIntake project={project} teams={teams} team={team} model={model} onDone={onDone} />
+      <div style={{ borderTop: '1px solid var(--bg-surface-hover)', paddingTop: 10, font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>or write one by hand</div>
       <div style={{ display: 'flex', gap: 8 }}>
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="title" style={{ flex: 1 }} />
         <select value={team} onChange={e => setTeam(e.target.value)}><option value="">no team (general agent)</option>{teams.map(t => <option key={t.id} value={t.id}>{t.name} v{t.version}</option>)}</select>
@@ -50,6 +82,39 @@ function Intake({ project, teams, onDone }) {
       <button className="primary" style={{ alignSelf: 'flex-start' }} onClick={submit} disabled={!title.trim()}>Create ticket</button>
     </div>
   )
+}
+
+/** A title that is just the URL the ticket came from tells you nothing a card has room for. */
+const cardTitle = t => {
+  const s = String(t.title || '').trim()
+  if (!/^https?:\/\//.test(s)) return s
+  const key = (/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i.exec(s) || /[?&]selectedIssue=([A-Z][A-Z0-9_]*-\d+)/i.exec(s) || [])[1]
+  return key ? `${key.toUpperCase()} — untitled (created from a link, not fetched)` : s
+}
+
+const CHIP = tone => ({
+  font: '600 9px var(--mono)', padding: '1px 5px', borderRadius: 3, whiteSpace: 'nowrap',
+  color: `var(--${tone})`, background: `var(--${tone}-bg, var(--bg-surface-hover))`,
+})
+
+/**
+ * What the ticket carries with it. The point of these is the NEGATIVE case: "sheet ↗" means the
+ * copy deck was linked and could not be read, which is exactly the thing that silently produces an
+ * implementation with invented strings.
+ */
+function SourceChips({ t }) {
+  const s = t.sources || {}
+  const figma = t.designRefs?.figma?.length || 0
+  const chips = []
+  if (figma) chips.push(<span key="f" style={CHIP('accent-light')} title={t.designRefs.figma.join('\n')}>◇ figma{figma > 1 ? ` ×${figma}` : ''}</span>)
+  if (t.designRefs?.captures?.length) chips.push(<span key="c" style={CHIP('accent-light')} title={t.designRefs.captures.join('\n')}>▣ captures ×{t.designRefs.captures.length}</span>)
+  if (t.designRefs?.contentCsv) chips.push(<span key="s" style={CHIP('green')} title={t.designRefs.contentCsv}>▤ sheet</span>)
+  else if (s.sheet === 'link-only') chips.push(<span key="s" style={CHIP('amber')} title="linked but not shared — export it by hand">▤ sheet ↗</span>)
+  if (s.confluence?.length) chips.push(<span key="w" style={CHIP('blue')} title={s.confluence.join('\n')}>❐ confluence ×{s.confluence.length}</span>)
+  if (s.jira?.length) chips.push(<span key="j" style={CHIP('blue')} title={s.jira.join('\n')}>⇄ {s.jira.length} linked</span>)
+  if (s.unresolved?.length) chips.push(<span key="u" style={CHIP('red')} title={s.unresolved.join('\n')}>⚠ {s.unresolved.length} unread</span>)
+  if (!chips.length) return null
+  return <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{chips}</div>
 }
 
 function Card({ t, all, onOpen, selected }) {
@@ -68,7 +133,15 @@ function Card({ t, all, onOpen, selected }) {
         {t.conflictRisk?.length > 0 && <span title={t.conflictRisk.map(c => c.title + ': ' + c.files.join(', ')).join('\n')} style={{ font: `600 9px ${MONO}`, color: 'var(--accent-light)' }}>⚠ overlap</span>}
         {t.depBlocked?.length > 0 && <span style={{ font: `600 9px ${MONO}`, color: 'var(--text-secondary)' }}>🔒 deps</span>}
       </div>
-      <div style={{ font: "500 12px var(--body)", color: 'var(--text-primary)' }}>{t.title}</div>
+      {/* A pasted JIRA URL used to be the whole title, wrapping to three lines of hostname. The key
+          is the part anyone reads, so it leads, and the title is clamped rather than allowed to set
+          the card's height. */}
+      {t.jiraKey && <span style={{ font: `600 10px ${MONO}`, color: 'var(--accent-light)' }}>{t.jiraKey}</span>}
+      <div title={t.title} style={{
+        font: '500 12px var(--body)', color: 'var(--text-primary)', overflowWrap: 'anywhere',
+        display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+      }}>{cardTitle(t)}</div>
+      <SourceChips t={t} />
       <Meta>{t.model || 'default'}{t.team ? ' · team' : ''}{kids.length ? ` · ${doneKids}/${kids.length} subs` : ''} · {age(t.createdAt)}</Meta>
     </div>
   )
@@ -90,7 +163,144 @@ function QaForm({ t, onRun }) {
   )
 }
 
-function Detail({ t, all, teams, onRefresh, onClose }) {
+/**
+ * The ticket panel, as a drawer over the board rather than a block pushed in above it.
+ *
+ * Inline, opening a ticket moved every lane down the page — you clicked a card and the board you
+ * were reading jumped. A drawer leaves the columns where they are, which matters most when the
+ * thing you opened the ticket to do is drag it somewhere else afterwards.
+ */
+function Drawer({ onClose, children }) {
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.38)', zIndex: 60 }} />
+      <aside role="dialog" aria-modal="true" style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(720px, 94vw)', zIndex: 61,
+        background: 'var(--bg-surface)', borderLeft: '1px solid var(--bg-surface-hover)',
+        boxShadow: '-18px 0 46px rgba(0,0,0,0.28)', overflowY: 'auto', padding: 16,
+      }}>{children}</aside>
+    </>
+  )
+}
+
+const elapsed = ms => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
+
+/**
+ * What the agent is doing, right now, tailed from its transcript.
+ *
+ * It polls while a run is live and stops when it is not — a finished ticket keeps its last session
+ * visible because "what did it actually do" is the question you ask after a run, not during it.
+ * Auto-scroll follows the tail only while you are already at the bottom, so reading back through
+ * what it did ten tool calls ago does not get yanked away on the next poll.
+ */
+function LiveLog({ t }) {
+  const [log, setLog] = useState({ events: [], file: null, offset: 0, running: null, note: null })
+  const [now, setNow] = useState(Date.now())
+  const boxRef = React.useRef(null)
+  const stick = React.useRef(true)
+  const cursor = React.useRef({ file: null, offset: 0 })
+
+  useEffect(() => { cursor.current = { file: null, offset: 0 }; setLog({ events: [], file: null, offset: 0, running: null, note: null }) }, [t.id])
+  useEffect(() => {
+    let alive = true
+    const poll = () => {
+      const { file, offset } = cursor.current
+      const q = new URLSearchParams({ offset: String(offset), ...(file ? { file } : {}) })
+      api.get(`/api/board/tickets/${t.id}/live?${q}`).then(d => {
+        if (!alive) return
+        cursor.current = { file: d.file, offset: d.offset }
+        setLog(prev => ({ ...d, events: [...(d.file === prev.file ? prev.events : []), ...d.events].slice(-400) }))
+        setNow(Date.now())
+      }).catch(() => {})
+    }
+    poll()
+    // Only a live run needs a 2s heartbeat; a finished ticket's transcript is not moving.
+    const ms = t.running ? 2000 : 15000
+    const id = setInterval(poll, ms)
+    return () => { alive = false; clearInterval(id) }
+  }, [t.id, t.running?.kind, t.running?.startedAt])
+
+  useEffect(() => { if (stick.current && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight }, [log.events.length])
+
+  const run = t.running || log.running
+  // The same builder the Chat section uses, so a board agent reads exactly like a chat: prompt,
+  // thinking, tool calls with their results expandable, cost. Reimplementing a second, worse
+  // transcript viewer here was the alternative.
+  const blocks = React.useMemo(() => buildBlocks(log.events), [log.events])
+  const tools = blocks.filter(b => b.kind === 'tool').length
+  const stop = () => api.post(`/api/board/tickets/${t.id}/stop`)
+    .then(r => toast(r.resumeSessionId ? 'stopped — resumable' : 'stopped', 'success'))
+    .catch(e => alert(e.message))
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <H2>{run ? `◐ ${run.kind} agent — live` : 'last agent session'}</H2>
+        {run && <Meta color="var(--blue)">{elapsed(now - run.startedAt)} · {tools} tool call{tools === 1 ? '' : 's'}</Meta>}
+        {run && <button className="mini" style={{ marginTop: 0, color: 'var(--red)' }} onClick={stop} title="kills the agent process — the session id is kept so it can be resumed">■ stop</button>}
+        {log.file && <Meta>{log.file.split('/').pop().replace('.jsonl', '')}</Meta>}
+      </div>
+      {log.note && <Meta>{log.note}</Meta>}
+      {!!blocks.length && (
+        <div ref={boxRef}
+          onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24 }}
+          style={{ maxHeight: 420, overflow: 'auto', background: 'var(--bg-inset)', borderRadius: 6, padding: '8px 10px' }}>
+          <MessageLog blocks={blocks} busy={!!run} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Branch and base, per ticket.
+ *
+ * Only editable before the worktree is cut, which is also the only time the answer can still
+ * change anything — so once it exists this collapses to a read-only line rather than an input that
+ * looks live and is refused by the server.
+ */
+function BranchEditor({ t, cfg, parent, onSave }) {
+  const [open, setOpen] = useState(false)
+  const [branch, setBranch] = useState(t.branch || '')
+  const [base, setBase] = useState(t.base || '')
+  const cut = !!t.worktree
+  const defaultBranch = `${cfg?.branchPrefix ?? 'ticket/'}${t.branchKey || t.jiraKey || t.id}`
+  // A sub-ticket's default base is its parent's branch, created when the first child starts.
+  const parentBranch = parent ? parent.branch || `${cfg?.branchPrefix ?? 'ticket/'}${parent.branchKey || parent.jiraKey || parent.id}` : null
+  const defaultBase = parentBranch || cfg?.base || 'main'
+  useEffect(() => { setBranch(t.branch || ''); setBase(t.base || '') }, [t.id, t.branch, t.base])
+
+  if (cut) return <Meta>branch <b>{t.branch}</b> off <b>{t.basedOn || t.base || defaultBase}</b> · fixed once the worktree exists</Meta>
+  if (!open) {
+    return (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Meta>will branch <b>{branch || defaultBranch}</b> off <b>{base || defaultBase}</b></Meta>
+        <button className="mini" style={{ marginTop: 0 }} onClick={() => setOpen(true)}>change</button>
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><Meta>branch</Meta>
+        <input value={branch} onChange={e => setBranch(e.target.value)} placeholder={defaultBranch} style={{ width: 260 }} />
+      </label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}><Meta>base — branches from it, merges back into it</Meta>
+        <input value={base} onChange={e => setBase(e.target.value)} placeholder={defaultBase} style={{ width: 200 }} />
+      </label>
+      {parentBranch && !base && <Meta color="var(--accent-light)">stacked on its parent · only the parent branch merges to {cfg?.base || 'main'}</Meta>}
+      <button className="primary" onClick={() => { onSave({ branch: branch.trim() || null, base: base.trim() || null }); setOpen(false) }}>save</button>
+      <button onClick={() => { setBranch(t.branch || ''); setBase(t.base || ''); setOpen(false) }}>cancel</button>
+      <Meta>blank = the project default</Meta>
+    </div>
+  )
+}
+
+function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
   const [reply, setReply] = useState('')
   const [escModel, setEscModel] = useState('')
   const [subs, setSubs] = useState(null)
@@ -98,19 +308,42 @@ function Detail({ t, all, teams, onRefresh, onClose }) {
   const act = (action, body) => call('post', `/api/board/tickets/${t.id}/${action}`, body || {})
   const patch = body => call('patch', '/api/board/tickets/' + t.id, body)
   const kids = all.filter(x => x.parent === t.id)
+  // Named consequences, not "are you sure": what is destroyed (worktrees, sub-tickets) and what
+  // survives (the branch and its commits) are the two things you actually need before answering.
+  const del = () => {
+    const lines = [`Delete "${t.title}"?`, '']
+    if (kids.length) lines.push(`· its ${kids.length} sub-ticket${kids.length === 1 ? '' : 's'} go too`)
+    if (t.worktree) lines.push('· the worktree is removed')
+    if (t.branch) lines.push(`· the branch ${t.branch} and its commits are KEPT`)
+    if (!window.confirm(lines.join('\n'))) return
+    api.del('/api/board/tickets/' + t.id)
+      .then(r => { onClose(); onRefresh(); if (r.branchesKept?.length) toast(`deleted · ${r.branchesKept.join(', ')} kept`, 'success') })
+      .catch(e => alert(e.message))
+  }
   const lastQa = t.qaResults?.slice(-1)[0]
   const proposal = subs ?? t.proposal
+  // Inline, the description had to be a 140px scroll box or it pushed the whole board down the
+  // page. In the drawer it can run its full length — but then it goes LAST, because a 10k-character
+  // JIRA description between you and the "Start dev agent" button is its own kind of broken.
+  const desc = t.desc ? (
+    <pre style={{ margin: 0, font: `400 11px/1.6 ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: bare ? 'none' : 140, overflow: bare ? 'visible' : 'auto' }}>{t.desc}</pre>
+  ) : null
   return (
-    <div style={{ ...PANEL, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ font: `600 9px ${MONO}`, color: TYPE_C[t.type] || 'var(--text-secondary)' }}>{(t.type || 'feature').toUpperCase()}</span>
-        <span style={{ font: `600 14px ${HEAD}`, flex: 1 }}>{t.title}</span>
+    <div style={{ ...(bare ? {} : PANEL), display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ font: `600 9px ${MONO}`, color: TYPE_C[t.type] || 'var(--text-secondary)', marginTop: 4 }}>{(t.type || 'feature').toUpperCase()}</span>
+        <span style={{ font: `600 14px ${HEAD}`, flex: 1, minWidth: 200, overflowWrap: 'anywhere' }}>{cardTitle(t)}</span>
+        <button className="mini" style={{ marginTop: 0, color: 'var(--red)' }} onClick={del} title="removes the ticket and its worktree — the branch and its commits are kept">🗑 delete</button>
+        <button className="mini" style={{ marginTop: 0 }} onClick={onClose}>✕</button>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Meta color={STAGE_C[t.stage] || 'var(--text-secondary)'}>● {lbl(t.stage)}</Meta>
         {t.branch && <Meta>{t.branch}{t.basedOn && t.basedOn !== 'main' ? ` (stacked on ${t.basedOn})` : ''}</Meta>}
         <Meta>{t.pipelineVersion}</Meta>
-        <button className="mini" style={{ marginTop: 0 }} onClick={onClose}>✕</button>
+        <SourceChips t={t} />
       </div>
-      {t.desc && <pre style={{ margin: 0, font: `400 11px/1.5 ${MONO}`, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', maxHeight: 140, overflow: 'auto' }}>{t.desc}</pre>}
+      <BranchEditor t={t} cfg={cfg} parent={t.parent ? all.find(x => x.id === t.parent) : null} onSave={patch} />
+      {!bare && desc}
 
       {t.blocked && (
         <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -143,11 +376,26 @@ function Detail({ t, all, teams, onRefresh, onClose }) {
         </div>
       )}
 
-      {t.running ? <Meta color="var(--blue)">◐ {t.running.kind} agent running since {fmtDate(t.running.startedAt)} — watch live in Reliability → Traces once the session appears</Meta> : !t.blocked && (
+      {/* The old copy here pointed at Reliability → Traces "once the session appears", which is a
+          different screen, a different mental model, and only true after the fact. The transcript
+          is tailable from the moment the agent starts, so the answer to "what is it doing" belongs
+          on the ticket doing it. */}
+      {(t.running || t.worktree || t.runs?.length > 0) && <LiveLog t={t} />}
+
+      {t.running ? null : !t.blocked && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {t.resumeSessionId && !t.running && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="primary" onClick={() => act('start', { resume: t.resumeSessionId, ...(escModel ? { model: escModel } : {}) })} title="picks the stopped session back up with its context intact">▸ Resume stopped agent</button>
+              <Meta>stopped session {t.resumeSessionId.slice(0, 8)} · resuming keeps what it had already worked out</Meta>
+            </div>
+          )}
           {t.stage === 'backlog' && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="primary" onClick={() => act('start', escModel ? { model: escModel } : {})} disabled={t.depBlocked?.length > 0} title={t.depBlocked?.length ? 'blocked by unfinished dependencies' : 'creates an isolated worktree branch and starts the dev agent'}>▸ Start dev agent</button>
+              <button className="primary" onClick={() => act('start', escModel ? { model: escModel } : {})} disabled={t.depBlocked?.length > 0}
+                title={t.depBlocked?.length ? 'blocked by unfinished dependencies' : kids.length ? 'starts each sub-ticket in its own worktree — the parent itself runs no agent' : 'creates an isolated worktree branch and starts the dev agent'}>
+                {kids.length ? `▸ Start ${kids.length} sub-ticket${kids.length === 1 ? '' : 's'}` : '▸ Start dev agent'}
+              </button>
               <button onClick={() => act('analyze')} title="agent proposes an independently-workable sub-ticket breakdown">✂ Analyze into sub-tickets</button>
               <ModelInput value={escModel} onChange={e => setEscModel(e.target.value)} style={{ width: 150 }} />
             </div>
@@ -156,6 +404,12 @@ function Detail({ t, all, teams, onRefresh, onClose }) {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button className="primary" onClick={() => act('review')}>▶ Run code review</button>
               {t.findings?.some(f => ['critical', 'high'].includes(f.severity)) && <button onClick={() => act('fix')} title="dev agent auto-fixes the findings, then you re-run review — capped at 3 loops">⚒ Auto-fix findings</button>}
+            </div>
+          )}
+          {t.stage === 'ready-for-qa' && (t.designRefs?.figma?.length || t.designRefs?.captures?.length || t.designRefs?.contentCsv) && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="primary" onClick={() => act('designqa')} title="compares the running branch against the Figma frames and the agreed copy — failures come back as review findings, not bugs">◧ Run design QA</button>
+              <Meta>{t.designQa?.pass ? `design QA passed · ${t.designQa.cases?.length || 0} checks` : 'not checked against the design yet'}</Meta>
             </div>
           )}
           {t.stage === 'ready-for-qa' && <QaForm t={t} onRun={q => act('qa', q)} />}
@@ -209,6 +463,11 @@ function Detail({ t, all, teams, onRefresh, onClose }) {
         </details>
       )}
 
+      {bare && desc && <details open>
+        <summary style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', cursor: 'pointer' }}>ticket description</summary>
+        <div style={{ marginTop: 8 }}>{desc}</div>
+      </details>}
+
       <details>
         <summary style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)', cursor: 'pointer' }}>timeline · admin</summary>
         {(t.history || []).map((h, i) => <div key={i} style={{ font: `400 11px ${MONO}`, color: h.to.startsWith('blocked') ? 'var(--red)' : 'var(--text-secondary)', padding: '1px 0' }}>{fmtDate(h.at)} — {h.from || '·'} → {h.to}{h.note ? ' · ' + h.note : ''}</div>)}
@@ -216,7 +475,6 @@ function Detail({ t, all, teams, onRefresh, onClose }) {
           <select value={t.stage} onChange={e => patch({ stage: e.target.value })} title="manual move">{(t.stages || []).map(s => <option key={s}>{s}</option>)}</select>
           <select value={t.team || ''} onChange={e => patch({ team: e.target.value || null })}><option value="">no team</option>{teams.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
           <ModelInput value={t.model || ''} onChange={e => patch({ model: e.target.value || null })} style={{ width: 140 }} title="escalate mid-flight — next run uses this model, state kept" />
-          <button className="mini danger" style={{ marginTop: 0, marginLeft: 'auto' }} onClick={() => confirm('Delete ticket (removes its worktree)?') && call('del', '/api/board/tickets/' + t.id)}>delete</button>
         </div>
       </details>
     </div>
@@ -313,9 +571,11 @@ function Setup({ project, board, onRefresh }) {
             <select value={cfg.mergeMethod || 'merge'} onChange={e => setCfg({ ...cfg, mergeMethod: e.target.value })}><option value="merge">merge commit</option><option value="squash">squash</option><option value="rebase">rebase (ff-only)</option></select>
           </label>
           {F({ label: 'default model', k: 'defaultModel', ph: 'sonnet', w: 110 })}
-          <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.requirePr} onChange={e => setCfg({ ...cfg, requirePr: e.target.checked })} />release via human-approved PR (never auto-merge)</label>
+          <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.requirePr} onChange={e => setCfg({ ...cfg, requirePr: e.target.checked })} title="the board never pushes and never opens a PR. With this on, Release stops merging locally and copies a push + gh pr create command for you to run." />never merge locally — copy a push + PR command instead</label>
           <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.qaSeesFindings} onChange={e => setCfg({ ...cfg, qaSeesFindings: e.target.checked })} title="context handoff opt-in: by default QA tests behavior unbiased by implementation detail" />QA sees review findings</label>
+          <label style={{ font: `400 11px ${MONO}`, color: cfg.autopilot ? 'var(--accent-light)' : 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.autopilot} onChange={e => setCfg({ ...cfg, autopilot: e.target.checked })} title="every 20s, advance each ticket to its next stage. Stops at: a blocked ticket, QA-reported bugs, and the release gate — those stay yours." />autopilot</label>
         </div>
+        {cfg.autopilot ? <Meta>autopilot advances tickets on its own: analyze → breakdown → dev → review → fix → design QA → QA. It stops and waits for you on a <b>blocked</b> ticket (an agent asked a question), on <b>QA-reported bugs</b>, and at the <b>release gate</b> — it never merges.</Meta> : null}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           {F({ label: 'preview env command (plug-in point: docker compose / vercel / your CI script — $BRANCH $TICKET $WORKTREE env vars; first URL printed becomes the QA base URL)', k: 'previewCmd', ph: 'docker compose -p $TICKET up', w: 520 })}
           {F({ label: 'stop command (optional)', k: 'previewStopCmd', ph: 'docker compose -p $TICKET down', w: 240 })}
@@ -427,8 +687,14 @@ export default function BoardSection() {
         : (
         <>
           <Intake project={project} teams={board.teams} onDone={load} />
-          {open && board.tickets.find(t => t.id === open) && <Detail t={board.tickets.find(t => t.id === open)} all={board.tickets} teams={board.teams} onRefresh={load} onClose={() => setOpen(null)} />}
+          {open && board.tickets.find(t => t.id === open) && <Drawer onClose={() => setOpen(null)}>
+            <Detail bare t={board.tickets.find(t => t.id === open)} all={board.tickets} teams={board.teams} cfg={board.config} onRefresh={load} onClose={() => setOpen(null)} />
+          </Drawer>}
           <div style={{ display: 'flex', gap: 10, overflowX: 'auto', alignItems: 'flex-start', paddingBottom: 6 }}>
+            {/* Nine lanes at a 200px floor is 1800px of board, and on a ticket that has not started
+                yet eight of them are empty — so the one column with anything in it sat off the left
+                edge behind a horizontal scrollbar. Empty lanes keep their label and stay drop
+                targets, at a width that fits the word rather than a card. */}
             {stages.map(s => {
               const col = board.tickets.filter(t => t.stage === s && (!fAttention || t.blocked || (!t.running && ['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage))))
               return (
@@ -436,8 +702,15 @@ export default function BoardSection() {
                   onDragOver={e => { e.preventDefault(); if (dragOver !== s) setDragOver(s) }}
                   onDragLeave={() => setDragOver(o => (o === s ? null : o))}
                   onDrop={e => { e.preventDefault(); setDragOver(null); const id = e.dataTransfer.getData('text/plain'); if (id) move(id, s) }}
-                  style={{ minWidth: 200, flex: '1 0 200px', display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 6, outline: dragOver === s ? '1px dashed var(--blue)' : 'none', outlineOffset: 4 }}>
-                  <div style={{ font: `600 10px ${MONO}`, color: STAGE_C[s] || 'var(--violet)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{lbl(s)} <span style={{ color: 'var(--text-tertiary)' }}>{col.length}</span></div>
+                  style={{
+                    // A lane holding cards is a fixed 248px — wide enough for a title, and it never
+                    // stretches to swallow the row. Empty lanes are the slack: they shrink first
+                    // when the board runs out of width, so the columns with work in them keep it.
+                    flex: col.length ? '0 0 248px' : '0 1 84px', minWidth: col.length ? 248 : 44,
+                    opacity: col.length ? 1 : 0.55, display: 'flex', flexDirection: 'column', gap: 8,
+                    borderRadius: 6, outline: dragOver === s ? '1px dashed var(--blue)' : 'none', outlineOffset: 4,
+                  }}>
+                  <div title={`${lbl(s)} — ${col.length}`} style={{ font: `600 10px ${MONO}`, color: STAGE_C[s] || 'var(--violet)', textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lbl(s)} <span style={{ color: 'var(--text-tertiary)' }}>{col.length}</span></div>
                   {col.map(t => (
                     <div key={t.id} draggable onDragStart={e => e.dataTransfer.setData('text/plain', t.id)} style={{ cursor: 'grab' }}>
                       <Card t={t} all={board.tickets} onOpen={id => setOpen(id === open ? null : id)} selected={open === t.id} />
@@ -447,7 +720,7 @@ export default function BoardSection() {
               )
             })}
           </div>
-          <p className="small">board lives in ~/.claude/taskboard.json (every write versioned) · dev agents run headless claude in isolated git worktrees under ~/.claude/board-worktrees · review & QA are always manual triggers · release is a human gate with a per-repo merge queue · blocked ≠ idle: blocked cards surface in Inbox as errors, idle-waiting as info</p>
+          <p className="small">board lives in ~/.claude/taskboard.json (every write versioned) · dev agents run headless claude in isolated git worktrees under ~/.claude/board-worktrees · review, design QA & QA are manual triggers unless <b>autopilot</b> is on for this project (setup tab) · release is always a human gate with a per-repo merge queue · blocked ≠ idle: blocked cards surface in Inbox as errors, idle-waiting as info</p>
         </>
       )}
     </div>

@@ -56,6 +56,7 @@ import { sseReplay } from '../lib/chat-protocol.mjs'
 import { planUpload, MAX_UPLOAD_BYTES } from '../lib/upload-guard.mjs'
 import mountLoushRuns, { projectDirs, scanRuns } from './loush-runs.mjs'
 import mountBoard, { boardRuns, projCfg, readBoard, tkt, writeBoard } from './board.mjs'
+import mountAutopilot from './autopilot.mjs'
 import mountDrift, { designDrift, reviewData } from './drift.mjs'
 import mountAgentTeams from './agent-teams.mjs'
 import mountInventory, { KINDS, OFF, SETTINGS_FILES, itemFile, itemRoot, listItemNames, scopeDir } from './inventory.mjs'
@@ -2029,6 +2030,7 @@ mountWave4(app, { projectDirs: (...a) => projectDirs(...a), sessionRows: insight
 
 // ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
 mountBoard(app)
+mountAutopilot()
 
 // ---------- loush runs: .loush/<ticket>/ across known repos (contract §12–16) ----------
 mountLoushRuns(app, { collectUsage: (...a) => collectUsage(...a) })

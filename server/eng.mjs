@@ -1195,6 +1195,29 @@ function claudeMarkdown(prompt) { // ponytail: spawnSync blocks the handler — 
 export { snapshotAll, snapshot, snapFor, loadProjects, projectList, cfgFor, triage, readTriage, reviewFlow, quality, investment, sprintStats, epicRollup, loadStats, ciFor, workMs, workDays, addWorkTime, recFor, pctl, median, offHours, isWeekend, weekKey, GQL }
 export { ticketDetail, cfgForTicket, firstProject, artifactsFor, reqHash, readArtifacts, writeArtifacts, genPrompt }
 
+/**
+ * A Confluence page's title and text, or null if it cannot be read.
+ *
+ * It lives here, next to `creds()`, because a second place that assembles an Atlassian
+ * Authorization header is a second place that can get the credential precedence wrong — and
+ * Confluence is the same host and the same token as the JIRA calls above it.
+ */
+export async function confluencePage(cfg, id) {
+  const { email, token } = creds()
+  if (!email || !token || !cfg?.jiraHost) return null
+  try {
+    const r = await fetch(`https://${cfg.jiraHost}/wiki/api/v2/pages/${id}?body-format=storage`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`, Accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    // Storage format is XHTML with Confluence macros in it. The macros are structure, not content —
+    // an agent reading `<ac:structured-macro>` learns nothing — so only the text survives.
+    const text = String(j.body?.storage?.value || '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim()
+    return { id, title: j.title || `page ${id}`, text: text.slice(0, 6000), truncated: text.length > 6000 }
+  } catch { return null }
+}
+
 // ---------- routes ----------
 function warmBoot() {
   const warm = loadDisk()

@@ -444,6 +444,25 @@ function CriteriaTab({ t, onUpdate }) {
     api.post(url, { kind })
       .then(a => setArt(kind, a)).catch(e => setErr({ message: e.message, detail: e.detail })).finally(() => setBusy(''))
   }
+  // One button for the whole front half: criteria, test cases, then onto the board. Everything
+  // after that — branch, worktree, dev, review, design QA, QA — is the board's autopilot, which is
+  // per-project and off unless you turned it on, so this deliberately stops at the handover rather
+  // than pretending to start work the board may not be configured to do.
+  const runAll = async () => {
+    setErr(null)
+    let acc = { ...(t.artifacts || {}) }
+    try {
+      for (const kind of ['ac', 'tests']) {
+        if (acc[kind]) continue
+        setBusy(kind)
+        acc = { ...acc, [kind]: await api.post(`/api/ticket/${t.key}/generate?workspace=${t.workspace.id}`, { kind }) }
+        onUpdate({ ...t, artifacts: acc })
+      }
+      setBusy('board')
+      await api.post(`/api/ticket/${t.key}/board?workspace=${t.workspace.id}`, {})
+      toast(`${t.key} is on the board — enable autopilot on the project to run it unattended`, 'success')
+    } catch (e) { setErr({ message: e.message, detail: e.detail }) } finally { setBusy('') }
+  }
   const save = (kind, md) => api.put(`/api/eng/ticket/${t.key}/artifact?project=${t.project.key}`, { kind, md })
     .then(a => { setArt(kind, a); setEdit(null) }).catch(e => setErr({ message: e.message, detail: e.detail }))
   const post = (kind, md) => {
@@ -463,6 +482,12 @@ function CriteriaTab({ t, onUpdate }) {
       {err && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '8px 10px', font: `400 11px ${MONO}`, color: 'var(--red)', marginBottom: 12 }}>
         {err.message}
         {err.detail && <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{err.detail}</div>}
+      </div>}
+      {grounded && <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+        <button className="primary" disabled={!!busy} onClick={runAll}>
+          {busy === 'board' ? 'pushing to the board…' : busy ? `generating ${busy}…` : '▶▶ Criteria, tests, then onto the board'}
+        </button>
+        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>skips anything already generated · the board creates the branch and worktree from {t.key}</span>
       </div>}
       {GEN_ORDER.map(kind => {
         const a = arts[kind]

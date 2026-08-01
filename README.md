@@ -362,7 +362,9 @@ cards rather than a fabricated proxy), and **1:1 prep**.
 Team Overview, Review flow (PR pickup-time and PR-size distributions), Quality, Investment,
 Predictability, Epics, CI, Projects, Load, Board, Members, OKRs, Export. Each one is a real route —
 `?dash=eng&route=members` is bookmarkable and pasteable into Slack, and it is the only part of the
-app whose state lives in the URL rather than in React.
+app that puts its _inner_ state in the URL. Every section now names itself there — `?dash=workflows`,
+`?dash=ticket` — so a refresh lands where you were instead of on Overview, and any section can be
+linked. Sections mount lazily on first visit, and the one named in the URL counts as visited.
 
 CI failures now have a **re-run failed** button. (`POST /api/ci/rerun` shells `gh run rerun`, was
 documented, and had zero callers anywhere in the UI — the panel that showed you the red run could not
@@ -382,7 +384,7 @@ re-run it.)
 | **Chat**                       | Talk to Claude Code from the browser; resume any session; per-turn memory grounding with `[memory:<name>]` citations; ✓/✗ review trail written to disk                                                 | Steering agent work without a terminal, with "a human checked this" recorded rather than assumed      |
 | **Chat Insights**              | One-shot rate, cost/chat, day×hour heatmap; duplicate-prompt clustering (exact + Jaccard) with **save as command**                                                                                     | You retype the same prompt weekly — this finds it and turns it into a `/command`                      |
 | **Workflows → Quick Actions**  | One-shot `claude -p "/command"` against a chosen project, streamed live, result dropped in the Inbox                                                                                                   | Running `/code-review` or `/security-review` without leaving what you're doing                        |
-| **Workflows → Task Board**     | Agentic kanban: isolated git worktree per ticket, headless dev agent, manual review/QA/release gates, merge queue, first-class **Blocked** state you can reply to inline                               | Supervising several agent tasks at once without them colliding in one working tree                    |
+| **Workflows → Task Board**     | Agentic kanban: isolated git worktree per ticket branched from its JIRA key, headless dev agent, review/**design QA**/QA/release gates, merge queue, first-class **Blocked** state you can reply to inline. **Autopilot** (per project, off by default) advances a ticket through every stage on its own and stops only where a human is actually needed | Supervising several agent tasks at once without them colliding in one working tree                    |
 | **Workflows → Loush Runs**     | Every loush flow run across your projects with an aggregated PASSING / BLOCKED / NEEDS-HUMAN verdict, per-run cost, artifacts and file diffs; batch-approve the converged ones                                          | Seeing which agent runs actually landed without opening each one                                      |
 | **Workflows → Bugs**           | Paste a trace; file paths and stack frames auto-extracted; **auto-bisect** runs real `git bisect` against your repro command and names the culprit commit                                              | Finding the offending commit without babysitting a bisect                                             |
 | **Workflows → Quality**        | Analytics-event registry + taxonomy lint; **design drift** vs a manifest; `/review` history parsed from transcripts with a recurring-finding detector                                                  | Catching bad event names and prop drift before they land                                              |
