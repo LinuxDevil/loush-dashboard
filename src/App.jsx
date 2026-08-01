@@ -23,7 +23,8 @@ import PromptStudio from './sections/PromptStudio.jsx';
 import PromptQuality from './sections/PromptQuality.jsx';
 import FlowSection from './sections/FlowSection.jsx';
 import RunsSection from './sections/RunsSection.jsx';
-import Hub from './ui/Hub.jsx';
+import Hub, { paneUrl } from './ui/Hub.jsx';
+import WorkScopeBar from './ui/WorkScopeBar.jsx';
 import InsightsSection from './sections/InsightsSection.jsx';
 import InboxSection from './sections/InboxSection.jsx';
 import BugsSection from './sections/BugsSection.jsx';
@@ -102,8 +103,21 @@ const BASE_SECTIONS = [
     label: 'Ticket',
     icon: '◨',
     kicker: 'Delivery',
-    title: 'Ticket — open a key, plan the work',
-    el: <TicketSection />,
+    title: 'Ticket — open a key, then run the work on it',
+    // Every pane here operates on the same (repo, ticket) pair, which is what makes them one tab
+    // rather than four bookmarks. Project analytics that never mention a ticket live in Harness —
+    // they were here briefly, and a bugs table under the heading "open a key" reads as filler.
+    el: (
+      <Hub
+        head={<WorkScopeBar />}
+        items={[
+          { label: 'Ticket', el: <TicketSection /> },
+          { label: 'Task Board', el: <BoardSection /> },
+          { label: 'Loush Runs', el: <RunsSection /> },
+          { label: 'Commands', el: <QuickActions /> },
+        ]}
+      />
+    ),
   },
   { id: 'projects', label: 'Projects', icon: '⊞', kicker: 'Workspaces', title: 'Projects', el: <ProjectsSection /> },
   {
@@ -120,26 +134,6 @@ const BASE_SECTIONS = [
           { label: 'Deep Research', el: <ResearchSection /> },
           { label: 'Documents', el: <DocsSection /> },
           { label: 'Insights', el: <InsightsSection /> },
-        ]}
-      />
-    ),
-  },
-  {
-    id: 'workflows',
-    label: 'Workflows',
-    icon: '▦',
-    kicker: 'Workflows',
-    title: 'Agent work — board, runs, quality & bugs',
-    el: (
-      <Hub
-        items={[
-          { label: 'Quick Actions', el: <QuickActions /> },
-          { label: 'Task Board', el: <BoardSection /> },
-          { label: 'Loush Runs', el: <RunsSection /> },
-          { label: 'Quality', el: <QualitySection /> },
-          { label: 'Bugs', el: <BugsSection /> },
-          { label: 'Reliability', el: <ReliabilitySection /> },
-          { label: 'Agent Teams', el: <TeamsSection /> },
         ]}
       />
     ),
@@ -171,18 +165,22 @@ const BASE_SECTIONS = [
     label: 'Harness',
     icon: '⚙',
     kicker: 'Harness engineering',
-    title: 'Harness — sessions, forensics, usage & config',
+    title: 'Harness — sessions, quality, reliability & config',
     el: (
       <Hub
         items={[
           { label: 'Sessions', el: <SessionsSection /> },
           { label: 'Context Explorer', el: <ContextExplorerSection /> },
           { label: 'Forensics', el: <ForensicsSection /> },
+          { label: 'Quality', el: <QualitySection /> },
+          { label: 'Reliability', el: <ReliabilitySection /> },
+          { label: 'Bugs', el: <BugsSection /> },
           { label: 'Usage', el: <UsagePanel /> },
           { label: 'Usage detail', el: <UsageDetail /> },
           { label: 'Health', el: <HealthSection /> },
           { label: 'Config', el: <HarnessSection /> },
           { label: 'Team baseline', el: <TeamBaseline /> },
+          { label: 'Live agent teams', el: <TeamsSection /> },
         ]}
       />
     ),
@@ -239,7 +237,7 @@ const COMPANY_SECTION = {
   ),
 };
 const NAV_GROUPS = [
-  { label: 'WORK', ids: ['overview', 'live', 'workingset', 'todos', 'inbox', 'delivery', 'ticket', 'projects', 'chat', 'workflows'] },
+  { label: 'WORK', ids: ['overview', 'live', 'workingset', 'todos', 'inbox', 'delivery', 'ticket', 'projects', 'chat'] },
   { label: 'INTELLIGENCE', ids: ['capabilities', 'harness', 'authoring', 'hooks', 'artifacts'] },
   { label: 'ADMIN', ids: ['governance', 'setup', 'company'] },
 ];
@@ -263,6 +261,11 @@ const sectionsFor = (features) => {
 // loaded yet when the URL is first read, and refusing `company` on that basis would send someone
 // with a bookmark to Overview.
 const KNOWN_SECTION_IDS = new Set([...BASE_SECTIONS, COMPANY_SECTION].map((s) => s.id));
+// Ids that are no longer sections but still arrive from bookmarks, `?dash=`, and the server — the
+// inbox tags items `section: 'workflows'` (server/index.mjs). Resolved at every point a section id
+// is read: an unresolved legacy id falls through to Overview with no explanation of why.
+const LEGACY_SECTION_IDS = { eng: 'delivery', workflows: 'ticket' };
+const resolveSection = (id) => LEGACY_SECTION_IDS[id] || id;
 
 function SidebarFoot() {
   const [h, setH] = useState(null);
@@ -319,23 +322,19 @@ function useTheme() {
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [navOpen, setNavOpen] = useState(false);
-  const initial = new URLSearchParams(window.location.search).get('dash') || 'claude';
+  const initial = resolveSection(new URLSearchParams(window.location.search).get('dash') || 'claude');
   // `?dash=` is the section. It was only ever read for `eng`, so a refresh anywhere else dropped
   // you back on Overview and the address bar said nothing about where you were — which also made
-  // every section unlinkable. `eng` keeps its meaning (Delivery, on the Engineering dashboard)
-  // because links to it exist in the wild.
-  const [section, setSection] = useState(
-    initial === 'eng' ? 'delivery' : KNOWN_SECTION_IDS.has(initial) ? initial : 'overview',
-  );
+  // every section unlinkable. `eng` keeps its meaning (Delivery, on the Engineering dashboard) and
+  // `workflows` now means Ticket, because links to both exist in the wild.
+  const [section, setSection] = useState(KNOWN_SECTION_IDS.has(initial) ? initial : 'overview');
   const [inboxCount, setInboxCount] = useState(0);
   const [stale, setStale] = useState(null);
   const [tick, setTick] = useState(0);
   // Sections mount lazily on first visit, so the section named in the URL has to count as visited
   // — otherwise a deep link selects it in the sidebar and renders an empty pane, which is exactly
   // what happened the first time `?dash=` accepted anything other than `eng`.
-  const [visited, setVisited] = useState(
-    initial === 'eng' ? { overview: true, delivery: true } : { overview: true, [initial]: true },
-  );
+  const [visited, setVisited] = useState({ overview: true, [initial]: true });
   const [toasts, setToasts] = useState([]);
   const [features, setFeatures] = useState({});
   useEffect(() => {
@@ -378,7 +377,13 @@ export default function App() {
     setVisited({ [section]: true });
     setTick((t) => t + 1);
   };
-  const nav = (id) => {
+  // `pane` names a tab inside the target section's Hub. It is written to the URL BEFORE the section
+  // is shown, because a Hub reads its pane from the URL when it mounts — which is the only moment a
+  // caller from outside can steer it. Navigating to an already-visited section keeps whichever pane
+  // that Hub is on; deep links and inbox items are first visits, which is the case that matters.
+  const nav = (rawId, pane) => {
+    const id = resolveSection(rawId);
+    if (pane) window.history.replaceState(null, '', paneUrl(pane));
     setVisited((v) => (v[id] ? v : { ...v, [id]: true }));
     setSection(id);
   };
@@ -386,15 +391,19 @@ export default function App() {
   // enough for the Engineering dashboard to read `route` off it. Leaving a section drops that
   // section's own params, which belong to it and mean nothing anywhere else. replaceState, not
   // push — the sidebar is not a history stack, and Back should leave the app, not walk it.
+  // `pane` is the exception: it is not owned by a section, and it is set by `nav(id, pane)` in the
+  // same tick as the section change — wiping it here would erase the instruction that caused it.
   const firstNav = React.useRef(true);
   useEffect(() => {
     if (firstNav.current) { firstNav.current = false; return; }
-    window.history.replaceState(null, '', `${window.location.pathname}?dash=${section}`);
+    const pane = new URLSearchParams(window.location.search).get('pane');
+    const q = `?dash=${section}${pane ? `&pane=${encodeURIComponent(pane)}` : ''}`;
+    window.history.replaceState(null, '', window.location.pathname + q);
   }, [section]);
   useEffect(() => {
     const onPop = () => {
       const d = new URLSearchParams(window.location.search).get('dash');
-      const id = d === 'eng' ? 'delivery' : d;
+      const id = d && resolveSection(d);
       if (id && KNOWN_SECTION_IDS.has(id)) nav(id);
     };
     window.addEventListener('popstate', onPop);

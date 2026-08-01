@@ -8,6 +8,17 @@ import { boardRuns } from './board.mjs'
 
 let collectUsage
 
+// Two hours, not two minutes: a single dev or QA step can legitimately run for a long time without
+// writing an event, and calling a slow run dead is worse than showing an abandoned one for a while.
+const STALE_AFTER_MS = 2 * 3600_000
+const lastTouch = dir => {
+  let newest = 0
+  for (const f of ['state.json', 'events.jsonl']) {
+    try { newest = Math.max(newest, fs.statSync(path.join(dir, f)).mtimeMs) } catch {}
+  }
+  return newest
+}
+
 function projectDirs() {
   const s = new Set([PROJECT])
   try { for (const d of Object.keys(readClaudeJson().projects || {})) s.add(path.resolve(d)) } catch {}
@@ -87,8 +98,16 @@ function scanRuns() {
       const status = liveNow ? 'running'
         : term ? (term.type === 'run.completed' ? (term.data?.status || 'completed') : 'failed')
         : state.phase_status === 'blocked' ? 'blocked' : state.phase_status === 'failed' ? 'failed'
-        : flow === 'board' ? (state.phase_status === 'passed' ? 'idle' : state.phase_status || 'idle')
-        : (events.length || state.phase) ? 'running' : 'unknown'
+        // `boardRuns` above already said no agent is alive. A board state.json claiming 'running'
+        // is therefore a record left by a process that has since exited — the board owns liveness,
+        // and the file is only trusted for how the last step ENDED.
+        : flow === 'board' ? (['running', 'passed'].includes(state.phase_status) ? 'idle' : state.phase_status || 'idle')
+        // A non-board flow writes its own log, and nothing here can ask its process whether it
+        // lives — but a run that has not written a byte in hours is not running, whatever its
+        // state file says. TRN-309 sat at "running · 0 steps · 0 tool calls" for six days.
+        : !events.length && !state.phase ? 'unknown'
+        : (Date.now() - (asMs(state.updated_at) || lastTouch(dir)) > STALE_AFTER_MS) ? 'stale'
+        : 'running'
       runs.push({
         proj, projName: path.basename(proj), ticket, flow, live: liveNow, liveKind: liveNow ? boardRuns.get(ticket)?.kind || null : null,
         phase: state.phase || null, phaseStatus: state.phase_status || null, retries: state.retries || null,
@@ -138,6 +157,26 @@ app.get('/api/runs', (req, res) => {
     allProjects: [...projectDirs()].map(p => ({ name: path.basename(p), path: p })).sort((a, b) => a.name.localeCompare(b.name)),
     dispatchFlows: LOUSH_FLOWS,
   })
+})
+
+/**
+ * Discard a run's log directory.
+ *
+ * The only way an abandoned run leaves the list. It deletes `.loush/<ticket>/` — the run's own
+ * record, not the work: branches, worktrees and commits are somewhere else entirely and are not
+ * touched. Refused while an agent is actually running, because deleting the log out from under a
+ * live run is how you get a run that exists but can never be found again.
+ */
+app.delete('/api/runs', (req, res) => {
+  const { proj, ticket } = req.query
+  if (!proj || !ticket) return res.status(400).json({ error: 'proj and ticket are required' })
+  if (boardRuns.has(String(ticket))) {
+    return res.status(409).json({ error: 'an agent is running on this ticket', detail: 'stop it first — discarding the log of a live run loses the only record of it' })
+  }
+  let dir
+  try { dir = runDir(proj, ticket) } catch (e) { return res.status(e.status || 400).json({ error: e.message }) }
+  try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { return res.status(500).json({ error: e.message }) }
+  res.json({ ok: true, discarded: dir })
 })
 
 app.get('/api/runs/events', (req, res) => {

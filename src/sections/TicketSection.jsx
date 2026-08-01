@@ -8,6 +8,9 @@ import DesignCanvas, { TYPES } from '../ticket/DesignCanvas.jsx'
 import RederivePreview from '../ticket/RederivePreview.jsx'
 import DesignChat from '../ticket/DesignChat.jsx'
 import { useGraphEditor } from '../ticket/useGraphEditor.js'
+import { useWorkScope } from '../ui/WorkScopeBar.jsx'
+import { useFreshest } from '../lib/hooks.js'
+import { workScope } from '../lib/workScope.js'
 
 
 const MONO = 'var(--mono)', HEAD = 'var(--head)', BODY = 'var(--body)'
@@ -61,9 +64,13 @@ const NotReady = ({ reason, detail, onNav, to = 'setup', cta = 'Open Setup →' 
   </div>
 )
 
-export default function TicketSection({ onNav }) {
+export default function TicketSection({ onNav, onGo }) {
   const [idx, setIdx] = useState(null)
-  const [ws, setWs] = useState(() => { try { return localStorage.getItem('ticket.workspace') } catch { return null } })
+  // The workspace is derived from the section scope rather than owned here. A workspace id exists
+  // only for folders you have opened a session in, so it cannot be the shared key — the folder can,
+  // and this is the one place that has the table to translate between them.
+  const scopePath = useWorkScope().path
+  const ws = (idx?.workspaces || []).find(w => w.dir === scopePath)?.id || null
   const [raw, setRaw] = useState('')
   const [key, setKey] = useState(null)
   const [t, setT] = useState(null)
@@ -72,23 +79,35 @@ export default function TicketSection({ onNav }) {
   const [tab, setTab] = useState('Ticket')
   const inputRef = useRef(null)
 
-  const loadIdx = useCallback(w => api.get(`/api/ticket/index${w ? `?workspace=${encodeURIComponent(w)}` : ''}`)
-    .then(setIdx).catch(() => setIdx({ available: false, workspaces: [], boards: [], saved: [] })), [])
+  // Both fetches below are keyed on something the user can change again before they land: the
+  // workspace (whose saved-ticket list is per project) and the ticket key itself. Opening ABC-1 then
+  // ABC-2 quickly could otherwise render ABC-1's description under ABC-2's header.
+  const latestIdx = useFreshest(setIdx)
+  const latestTicket = useFreshest(setT)
+  const loadIdx = useCallback(w => latestIdx(api.get(`/api/ticket/index${w ? `?workspace=${encodeURIComponent(w)}` : ''}`))
+    .catch(() => setIdx({ available: false, workspaces: [], boards: [], saved: [] })), [latestIdx])
   useEffect(() => { loadIdx(ws) }, [ws, loadIdx])
   useEffect(() => { if (ws && !key && inputRef.current) inputRef.current.focus() }, [ws, key])
-  const pickWorkspace = w => { setWs(w); setKey(null); setT(null); setRaw(''); setErr(null); try { localStorage.setItem('ticket.workspace', w) } catch {} }
+  // Changing the project drops the open ticket everywhere, not just here: a key belongs to one
+  // repo, and leaving it in the scope would aim the board and the runs at work that does not exist
+  // in the folder now selected. `workScope.set` enforces that; this only clears the local view.
+  useEffect(() => { setKey(null); setT(null); setRaw(''); setErr(null) }, [scopePath])
+  const pickWorkspace = dir => workScope.set({ path: dir })
 
   const open = useCallback((k, fresh) => {
     const norm = normalizeKey(k)
     if (!norm) { setErr({ reason: `"${k}" is not a JIRA key — expected something like ABC-1234` }); return }
     if (!ws) { setErr({ reason: 'select a project first — it decides the folder agents read and the JIRA host' }); return }
     setBusy(true); setErr(null); setKey(norm)
+    // The sibling panes are keyed on the same ticket — point them at it now rather than making you
+    // retype the key you just opened.
+    workScope.set({ ticket: norm })
     if (!fresh) { setT(null); setTab('Ticket') }
-    api.get(`/api/ticket/${norm}?workspace=${encodeURIComponent(ws)}${fresh ? '&fresh=1' : ''}`)
-      .then(d => { setT(d); loadIdx(ws) })
+    latestTicket(api.get(`/api/ticket/${norm}?workspace=${encodeURIComponent(ws)}${fresh ? '&fresh=1' : ''}`))
+      .then(() => loadIdx(ws))
       .catch(e => setErr({ reason: e.message, detail: e.detail }))
       .finally(() => setBusy(false))
-  }, [ws, loadIdx])
+  }, [ws, loadIdx, latestTicket])
 
   const saved = idx?.saved || []
   const cur = (idx?.workspaces || []).find(w => w.id === ws) || null
@@ -105,13 +124,20 @@ export default function TicketSection({ onNav }) {
       {/* ---- 1. pick the project (a folder), 2. open a ticket in it ---- */}
       <div style={{ ...PANEL, padding: '14px 16px', marginBottom: 12 }}>
         <div style={{ font: `600 10px ${MONO}`, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 6 }}>
-          1 · Project
+          1 · Project <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— sets it for every pane in this section</span>
         </div>
+        {}
+        {scopePath && !ws && (
+          <div style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', marginBottom: 10 }}>
+            {tildify(scopePath)} has no Claude Code session, so no JIRA host or agent folder resolves for it.
+            Tickets need one of the folders below.
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
           {(idx?.workspaces || []).map(w => {
             const on = ws === w.id
             return (
-              <button key={w.id} onClick={() => pickWorkspace(w.id)} aria-pressed={on}
+              <button key={w.id} onClick={() => pickWorkspace(w.dir)} aria-pressed={on}
                 title={[w.dir, w.slug, w.jira ? `JIRA: ${w.jira.key}` : 'not linked to a JIRA board'].filter(Boolean).join('\n')}
                 style={{ ...mini, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '7px 11px',
                   ...(on ? { borderColor: 'var(--border-active)', background: 'var(--bg-surface-active)' } : {}) }}>
@@ -198,12 +224,13 @@ export default function TicketSection({ onNav }) {
 
       {t?.available && (
         <>
-          <TicketRail t={t} busy={busy} onRefresh={() => open(t.key, true)} onClose={() => { setKey(null); setT(null); setRaw('') }} />
+          <TicketRail t={t} busy={busy} onRefresh={() => open(t.key, true)}
+            onClose={() => { setKey(null); setT(null); setRaw(''); workScope.set({ ticket: null }) }} />
           <Tabs tabs={['Ticket', 'Criteria', 'Design', 'Files']} tab={tab} setTab={setTab} />
           <div style={{ marginTop: 12 }}>
             {tab === 'Ticket' && <TicketTab t={t} />}
-            {tab === 'Criteria' && <CriteriaTab t={t} onUpdate={setT} />}
-            {tab === 'Design' && <DesignTab t={t} onNav={onNav} />}
+            {tab === 'Criteria' && <CriteriaTab t={t} onUpdate={setT} onGo={onGo} />}
+            {tab === 'Design' && <DesignTab t={t} onNav={onNav} onGo={onGo} />}
             {tab === 'Files' && <FilesTab t={t} />}
           </div>
         </>
@@ -428,7 +455,7 @@ function StructuredCriteria({ md }) {
   )
 }
 
-function CriteriaTab({ t, onUpdate }) {
+function CriteriaTab({ t, onUpdate, onGo }) {
   const [busy, setBusy] = useState('')
   const [edit, setEdit] = useState(null)
   const [err, setErr] = useState(null)
@@ -459,8 +486,20 @@ function CriteriaTab({ t, onUpdate }) {
         onUpdate({ ...t, artifacts: acc })
       }
       setBusy('board')
-      await api.post(`/api/ticket/${t.key}/board?workspace=${t.workspace.id}`, {})
-      toast(`${t.key} is on the board — enable autopilot on the project to run it unattended`, 'success')
+      const filed = await api.post(`/api/ticket/${t.key}/board?workspace=${t.workspace.id}`, {})
+      const cut = filed.capped?.find(c => c.field === 'desc')
+      if (cut) {
+        // Not a toast: a toast disappears, and this changes what the dev agent will and will not
+        // have read. Pointers are ordered first server-side so the criteria lose their tail rather
+        // than the design link, but the reader still has to be told something was dropped.
+        setErr({
+          message: `${t.key} is on the board, but the handoff was clipped to ${cut.cap.toLocaleString()} characters (${(cut.originalLength - cut.cap).toLocaleString()} dropped).`,
+          detail: 'The dev agent is prompted with this text alone. Design links and the ticket body are sent first, so what was lost is the end of the generated criteria or test cases.',
+        })
+      } else {
+        toast(`${t.key} is on the board — enable autopilot on the project to run it unattended`, 'success')
+      }
+      onGo?.('Task Board')
     } catch (e) { setErr({ message: e.message, detail: e.detail }) } finally { setBusy('') }
   }
   const save = (kind, md) => api.put(`/api/eng/ticket/${t.key}/artifact?project=${t.project.key}`, { kind, md })
@@ -555,7 +594,7 @@ const Banner = ({ tone = 'amber', children }) => (
 )
 
 // ---- Design ------------------------------------------------------------------------------------
-function DesignTab({ t, onNav }) {
+function DesignTab({ t, onNav, onGo }) {
   const [d, setD] = useState(null)
   const [run, setRun] = useState(null)
   const [tail, setTail] = useState([])
@@ -644,7 +683,14 @@ function DesignTab({ t, onNav }) {
   const toBoard = () => {
     if (!confirm(`Create a Task Board ticket for ${t.key} in ${t.workspace?.name}?`)) return
     api.post(`/api/ticket/${t.key}/board?workspace=${t.workspace.id}`, {})
-      .then(() => { load(); toast('handed off to the Task Board', 'success') })
+      .then(r => {
+        load()
+        const cut = r.capped?.find(c => c.field === 'desc')
+        toast(cut
+          ? `handed off, but ${(cut.originalLength - cut.cap).toLocaleString()} characters were clipped from the end of the criteria`
+          : 'handed off to the Task Board', cut ? 'error' : 'success')
+        onGo?.('Task Board')
+      })
       .catch(e => toast(e.message, 'error'))
   }
 

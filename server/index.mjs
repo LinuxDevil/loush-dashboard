@@ -55,7 +55,7 @@ import mountInsights from './insights.mjs'
 import { sseReplay } from '../lib/chat-protocol.mjs'
 import { planUpload, MAX_UPLOAD_BYTES } from '../lib/upload-guard.mjs'
 import mountLoushRuns, { projectDirs, scanRuns } from './loush-runs.mjs'
-import mountBoard, { boardRuns, projCfg, readBoard, tkt, writeBoard } from './board.mjs'
+import mountBoard, { boardRuns, projCfg, readBoard, reconcileOrphanedRuns, tkt, writeBoard } from './board.mjs'
 import mountAutopilot from './autopilot.mjs'
 import mountDrift, { designDrift, reviewData } from './drift.mjs'
 import mountAgentTeams from './agent-teams.mjs'
@@ -1268,11 +1268,11 @@ async function inboxItems() {
   const items = []
   for (const a of readApprovals()) if (a.status === 'proposed') items.push({ key: 'appr:' + a.id, kind: 'approval', severity: 'warning', text: `pending approval: ${a.summary}`, ts: a.ts, section: 'governance' })
   const { alerts } = costAlerts()
-  for (const a of alerts) items.push({ key: 'cost:' + a.text.slice(0, 40), kind: 'budget', severity: a.level, text: a.text, ts: Date.now(), section: 'reliability' })
-  for (const r of evalRuns().slice(-10)) if (r.passRate < 1) items.push({ key: 'eval:' + r.id, kind: 'eval', severity: r.passRate === 0 ? 'error' : 'warning', text: `eval run at ${Math.round(r.passRate * 100)}% pass (${r.scope === 'global' ? 'global' : path.basename(r.scope)})`, ts: r.ts, section: 'reliability' })
+  for (const a of alerts) items.push({ key: 'cost:' + a.text.slice(0, 40), kind: 'budget', severity: a.level, text: a.text, ts: Date.now(), section: 'harness', pane: 'Reliability' })
+  for (const r of evalRuns().slice(-10)) if (r.passRate < 1) items.push({ key: 'eval:' + r.id, kind: 'eval', severity: r.passRate === 0 ? 'error' : 'warning', text: `eval run at ${Math.round(r.passRate * 100)}% pass (${r.scope === 'global' ? 'global' : path.basename(r.scope)})`, ts: r.ts, section: 'harness', pane: 'Reliability' })
   for (const [id, c] of chats) {
     if (c.action) {
-      if (!c.alive) items.push({ key: 'action:' + id, kind: 'action', severity: c.action.exitCode === 0 ? 'info' : 'error', text: `${c.action.cmd} in ${path.basename(c.cwd)} ${c.action.exitCode === 0 ? 'finished' : `failed (exit ${c.action.exitCode})`}${c.analysis?.cost ? ` · $${c.analysis.cost.toFixed(3)}` : ''}`, ts: c.action.endedAt, section: 'workflows' })
+      if (!c.alive) items.push({ key: 'action:' + id, kind: 'action', severity: c.action.exitCode === 0 ? 'info' : 'error', text: `${c.action.cmd} in ${path.basename(c.cwd)} ${c.action.exitCode === 0 ? 'finished' : `failed (exit ${c.action.exitCode})`}${c.analysis?.cost ? ` · $${c.analysis.cost.toFixed(3)}` : ''}`, ts: c.action.endedAt, section: 'ticket', pane: 'Commands' })
       continue
     }
     if (!c.alive) continue
@@ -1281,8 +1281,8 @@ async function inboxItems() {
   }
   try {
     for (const t of readBoard().tickets) {
-      if (t.blocked) items.push({ key: 'board:blk:' + t.id + ':' + t.blocked.at, kind: 'board', severity: 'error', text: `ticket "${t.title}" blocked by ${t.blocked.by}: ${t.blocked.needed || t.blocked.reason}`.slice(0, 140), ts: t.blocked.at, section: 'board' })
-      else if (['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage) && !boardRuns.get(t.id)) items.push({ key: 'board:idle:' + t.id + ':' + t.stage, kind: 'board', severity: 'info', text: `ticket "${t.title}" is waiting for your ${t.stage === 'code-review' ? 'review run' : t.stage === 'ready-for-qa' ? 'QA run' : 'release'}`, ts: (t.history || []).slice(-1)[0]?.at || t.createdAt, section: 'board' })
+      if (t.blocked) items.push({ key: 'board:blk:' + t.id + ':' + t.blocked.at, kind: 'board', severity: 'error', text: `ticket "${t.title}" blocked by ${t.blocked.by}: ${t.blocked.needed || t.blocked.reason}`.slice(0, 140), ts: t.blocked.at, section: 'ticket', pane: 'Task Board' })
+      else if (['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage) && !boardRuns.get(t.id)) items.push({ key: 'board:idle:' + t.id + ':' + t.stage, kind: 'board', severity: 'info', text: `ticket "${t.title}" is waiting for your ${t.stage === 'code-review' ? 'review run' : t.stage === 'ready-for-qa' ? 'QA run' : 'release'}`, ts: (t.history || []).slice(-1)[0]?.at || t.createdAt, section: 'ticket', pane: 'Task Board' })
     }
   } catch {}
   try {
@@ -1292,15 +1292,15 @@ async function inboxItems() {
       for (const f of (hub.findings || []).filter(f => f.severity === 'error').slice(0, 2)) {
         const legacyKey = 'finding:' + f.text.slice(0, 60)
         const key = `finding:${dir}:${f.text.slice(0, 60)}`
-        if (!dismissed[key] && !dismissed[legacyKey]) items.push({ key, legacyKey, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'library' })
+        if (!dismissed[key] && !dismissed[legacyKey]) items.push({ key, legacyKey, kind: 'recommendation', severity: 'error', text: `${path.basename(dir)}: ${f.text}`, ts: Date.now(), section: 'capabilities', pane: 'Library' })
       }
     }
   } catch {}
   try {
     for (const r of scanRuns()) {
-      if (r.status === 'failed') items.push({ key: 'run:fail:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'error', text: `loush ${r.flow || 'run'} for ${r.ticket} failed (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
-      else if (r.awaitingApproval) items.push({ key: 'run:appr:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} awaits approval (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
-      else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'workflows' })
+      if (r.status === 'failed') items.push({ key: 'run:fail:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'error', text: `loush ${r.flow || 'run'} for ${r.ticket} failed (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'ticket', pane: 'Loush Runs' })
+      else if (r.awaitingApproval) items.push({ key: 'run:appr:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} awaits approval (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'ticket', pane: 'Loush Runs' })
+      else if (r.status === 'blocked') items.push({ key: 'run:blk:' + r.proj + ':' + r.ticket, kind: 'run', severity: 'warning', text: `loush ${r.flow || 'run'} for ${r.ticket} is blocked (${r.projName})`, ts: r.updatedAt || Date.now(), section: 'ticket', pane: 'Loush Runs' })
     }
   } catch {}
   try { items.push(...schedulerInbox(CLAUDE)) } catch {}
@@ -2030,6 +2030,10 @@ mountWave4(app, { projectDirs: (...a) => projectDirs(...a), sessionRows: insight
 
 // ---------- 31–37: agentic task board — JIRA-style dev → review → QA → release pipeline ----------
 mountBoard(app)
+// At boot, and only here: agents are tracked in memory, so anything still marked running when this
+// process starts belongs to a process that no longer exists. Reconciling at import instead meant a
+// test that merely loaded board.mjs rewrote the live board.
+reconcileOrphanedRuns()
 mountAutopilot()
 
 // ---------- loush runs: .loush/<ticket>/ across known repos (contract §12–16) ----------

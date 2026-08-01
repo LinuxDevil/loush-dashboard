@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate, toast } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import { useVisiblePoll } from '../lib/hooks.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -135,7 +136,7 @@ export default function BugsSection() {
   const [fProj, setFProj] = useState('')
   const [fStatus, setFStatus] = useState('')
   const load = () => api.get('/api/bugs').then(setBugs).catch(() => {})
-  useEffect(() => { load(); const t = setInterval(() => { if (!document.hidden) load() }, 10_000); return () => clearInterval(t) }, [])
+  useVisiblePoll(load, 10_000)
   if (!bugs) return <Skeleton tiles={0} rows={6} />
 
   const patch = (id, body) => api.patch('/api/bugs/' + id, body).then(load).catch(e => toast(e.message, 'error'))

@@ -89,8 +89,17 @@ export function buildBlocks(events) {
   return blocks
 }
 
+/**
+ * The review trail: "a human looked at this and accepted/rejected it", recorded to disk.
+ *
+ * Rendered only where that sentence can be true. Without a `chatId` there is no conversation for
+ * the verdict to be about — the endpoint accepts `chatId: null` and files the entry anyway, so
+ * reusing this log to view a board agent's transcript quietly offered buttons that wrote
+ * unattributable rows into the trail.
+ */
 function ReviewButtons({ text, chatId, cwd }) {
   const [done, setDone] = useState(null)
+  if (!chatId) return null
   const record = verdict => { setDone(verdict); api.post('/api/chat-review', { chatId, cwd, verdict, text }).catch(() => setDone(null)) }
   if (done) return <div className="dim" style={{ font: "400 10px var(--mono)", padding: '1px 8px 4px' }}>{done === 'accept' ? '✓ accepted' : '✗ rejected'} · logged</div>
   return (
@@ -259,6 +268,13 @@ const Cap = ({ text, children }) => (
  * because a silently truncated transcript reads as a complete one.
  */
 export function MessageLog({ blocks, gap, busy, chatId, cwd }) {
+  // Accept/reject belongs on the answer you are looking at, not on all of them. One pair per
+  // assistant turn meant a long session ended up with twenty pairs of buttons, nineteen of which
+  // were about text that had already been superseded — and the review trail is meant to record a
+  // considered judgement, not to be clicked past. While the agent is still `busy` the last message
+  // is not its answer yet, so nothing is offered until it stops.
+  let lastTextIdx = -1
+  if (!busy) for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].kind === 'text') { lastTextIdx = i; break }
   return (
     <>
       {gap && (
@@ -268,7 +284,7 @@ export function MessageLog({ blocks, gap, busy, chatId, cwd }) {
         </div>
       )}
       {blocks.map((b, i) => (b.kind === 'user' || b.kind === 'text')
-        ? <Cap key={i} text={b.text}><Block b={b} />{b.kind === 'text' && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
+        ? <Cap key={i} text={b.text}><Block b={b} />{i === lastTextIdx && <ReviewButtons text={b.text} chatId={chatId} cwd={cwd} />}</Cap>
         : <Block key={i} b={b} />)}
       {busy && (
         <div className="chat-pending" role="status" aria-live="polite">

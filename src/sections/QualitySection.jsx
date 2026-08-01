@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from '../lib/api.js'
+import { useFreshest } from '../lib/hooks.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
 
@@ -36,10 +37,12 @@ function Analytics() {
   const { project, picker } = useProjectPick()
   const [reg, setReg] = useState(null)
   const [drift, setDrift] = useState(null)
+  const freshReg = useFreshest(setReg)
+  const freshDrift = useFreshest(setDrift)
   const load = () => {
     setReg(null)
-    api.get('/api/analytics/registry?project=' + encodeURIComponent(project)).then(setReg).catch(() => {})
-    api.get('/api/analytics/drift?project=' + encodeURIComponent(project)).then(setDrift).catch(() => {})
+    freshReg(api.get('/api/analytics/registry?project=' + encodeURIComponent(project))).catch(() => {})
+    freshDrift(api.get('/api/analytics/drift?project=' + encodeURIComponent(project))).catch(() => {})
   }
   useEffect(() => { if (project) load() }, [project])
   const bootstrap = () => api.post('/api/analytics/taxonomy', { project })
@@ -98,7 +101,8 @@ function Analytics() {
 function Design() {
   const { project, picker } = useProjectPick()
   const [d, setD] = useState(null)
-  const load = () => { setD(null); api.get('/api/design/drift?project=' + encodeURIComponent(project)).then(setD).catch(() => {}) }
+  const fresh = useFreshest(setD)
+  const load = () => { setD(null); fresh(api.get('/api/design/drift?project=' + encodeURIComponent(project))).catch(() => {}) }
   useEffect(() => { if (project) load() }, [project])
   const bootstrap = () => api.post('/api/design/manifest', { project })
     .then(r => { alert(`manifest written: ${r.path} (${r.components} components) — let a Figma MCP session enrich it with node ids & variants`); load() }).catch(e => alert(e.message))
@@ -164,7 +168,8 @@ function Reviews() {
   const { project, picker } = useProjectPick()
   const [all, setAll] = useState(false)
   const [d, setD] = useState(null)
-  useEffect(() => { setD(null); api.get('/api/reviews' + (all ? '' : '?project=' + encodeURIComponent(project))).then(setD).catch(() => {}) }, [project, all])
+  const fresh = useFreshest(setD)
+  useEffect(() => { setD(null); fresh(api.get('/api/reviews' + (all ? '' : '?project=' + encodeURIComponent(project)))).catch(() => {}) }, [project, all, fresh])
   const SEVC = { fixed: 'var(--green)', skipped: 'var(--amber)', no_change_needed: 'var(--text-secondary)' }
   if (!d) return <Skeleton tiles={0} rows={6} />
   return (

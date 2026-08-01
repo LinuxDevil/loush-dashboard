@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api, fmtDate } from '../lib/api.js'
+import { useVisiblePoll } from '../lib/hooks.js'
 
 const MONO = 'var(--mono)'
 const HEAD = 'var(--head)'
@@ -20,14 +21,10 @@ export default function TeamsSection() {
   const [d, setD] = useState(null)
   const [team, setTeam] = useState('')
   const [err, setErr] = useState('')
-  useEffect(() => {
-    let alive = true
-    const tick = () => api.get('/api/team' + (team ? '?team=' + encodeURIComponent(team) : ''))
-      .then(r => { if (alive) { setD(r); setErr('') } }).catch(e => alive && setErr(e.message))
-    tick()
-    const h = setInterval(tick, POLL_MS)
-    return () => { alive = false; clearInterval(h) }
-  }, [team])
+  useVisiblePoll(() => {
+    api.get('/api/team' + (team ? '?team=' + encodeURIComponent(team) : ''))
+      .then(r => { setD(r); setErr('') }).catch(e => setErr(e.message))
+  }, POLL_MS, [team])
 
   if (err && !d) return <div style={{ ...PANEL, color: 'var(--red)', font: `400 12px ${MONO}` }}>{err}</div>
   if (!d) return <div style={{ ...PANEL, font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>loading…</div>

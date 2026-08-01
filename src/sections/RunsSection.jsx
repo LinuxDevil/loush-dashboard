@@ -1,14 +1,17 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api, toast, fmtSize } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
+import AgentLive from '../ui/AgentLive.jsx'
 import { deriveRunMetrics, fmtDur, relTime } from '../lib/runMetrics.js'
-import { useVisiblePoll } from '../lib/hooks.js'
+import { useFreshest, useVisiblePoll } from '../lib/hooks.js'
+import { useWorkScope } from '../ui/WorkScopeBar.jsx'
+import { basename } from '../lib/workScope.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
 const SANS = 'var(--body)'
 const PANEL = { background: 'var(--bg-surface)', border: '1px solid var(--border-default)', borderRadius: 12, padding: '16px 18px' }
-const STATUS = { unknown: 'var(--text-tertiary)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)', aborted: 'var(--accent-light)', blocked: 'var(--violet)' }
+const STATUS = { unknown: 'var(--text-tertiary)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)', aborted: 'var(--accent-light)', blocked: 'var(--violet)', idle: 'var(--text-tertiary)', stale: 'var(--amber)', passed: 'var(--green)' }
 const sc = s => STATUS[s] || STATUS.unknown
 const VERDICT = { PASSING: 'var(--green)', BLOCKED: 'var(--red)', 'NEEDS-HUMAN': 'var(--violet)' }
 const artifactName = flow => (flow === 'test-cases' || flow === 'jira-implement') ? 'test-cases/test-plan.md' : 'review.md'
@@ -24,24 +27,30 @@ function writeFilters(f) {
   history.replaceState(null, '', window.location.pathname + (q.toString() ? '?' + q : ''))
 }
 
-function Dispatch({ projects, flows, onDone }) {
+function Dispatch({ flows, onDone }) {
+  const scope = useWorkScope()
   const [open, setOpen] = useState(false)
-  const [proj, setProj] = useState('')
   const [flow, setFlow] = useState(flows[0] || '')
   const [ticket, setTicket] = useState('')
   const [busy, setBusy] = useState(false)
+  // Prefilled from the ticket you already opened, and re-prefilled when that changes — but still an
+  // editable field, because dispatching a flow for a ticket you have not opened here is a normal
+  // thing to want and forcing the round trip would be worse than a stale default.
+  useEffect(() => { if (scope.ticket) setTicket(scope.ticket) }, [scope.ticket])
   const go = () => {
-    if (!proj || !ticket.trim()) return alert('pick a project and a ticket')
+    if (!scope.path || !ticket.trim()) return alert('pick a project above and enter a ticket')
     setBusy(true)
-    api.post('/api/runs/dispatch', { proj, flow, ticket: ticket.trim() })
-      .then(() => { toast(`dispatched ${flow} · ${ticket.trim()}`, 'success'); setTicket(''); setOpen(false); onDone() })
+    api.post('/api/runs/dispatch', { proj: scope.path, flow, ticket: ticket.trim() })
+      .then(() => { toast(`dispatched ${flow} · ${ticket.trim()}`, 'success'); setOpen(false); onDone() })
       .catch(e => alert(e.message)).finally(() => setBusy(false))
   }
   if (!open) return <button style={{ alignSelf: 'flex-start' }} onClick={() => setOpen(true)}>＋ dispatch a run</button>
   return (
     <div style={{ ...PANEL, padding: '14px 18px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
       <span style={{ font: `600 12px ${HEAD}`, color: 'var(--text-primary)' }}>Dispatch a run</span>
-      <select value={proj} onChange={e => setProj(e.target.value)}><option value="">pick project…</option>{projects.map(p => <option key={p.path} value={p.path}>{p.name}</option>)}</select>
+      <span style={{ font: `400 11px ${MONO}`, color: scope.path ? 'var(--text-tertiary)' : 'var(--amber)' }}>
+        {scope.path ? `in ${basename(scope.path)}` : 'no project selected above'}
+      </span>
       <select value={flow} onChange={e => setFlow(e.target.value)}>{flows.map(fl => <option key={fl}>{fl}</option>)}</select>
       <input value={ticket} onChange={e => setTicket(e.target.value)} onKeyDown={e => e.key === 'Enter' && go()} placeholder="ticket (e.g. ABC-123)" style={{ width: 180 }} />
       <button className="primary" disabled={busy} onClick={go}>{busy ? 'starting…' : '▸ Start'}</button>
@@ -61,6 +70,11 @@ function Kpis({ runs }) {
     </div>
   )
   const n = s => runs.filter(r => r.status === s).length
+  const liveRuns = runs.filter(r => r.live)
+  const stopAll = () => {
+    if (!window.confirm(`Stop ${liveRuns.length} running agent${liveRuns.length === 1 ? '' : 's'}?\n\n${liveRuns.map(r => `· ${r.ticket} (${r.liveKind})`).join('\n')}\n\nEach keeps its session id and can be resumed from its ticket.`)) return
+    api.post('/api/board/stop-all', {}).then(r => { toast(`stopped ${r.stopped} agent${r.stopped === 1 ? '' : 's'}`, 'success'); load() }).catch(e => alert(e.message))
+  }
   const totalCost = runs.reduce((s, r) => s + (r.cost || 0), 0)
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -70,6 +84,14 @@ function Kpis({ runs }) {
       {k('needs approval', runs.filter(r => r.verdict === 'NEEDS-HUMAN').length, VERDICT['NEEDS-HUMAN'])}
       {k('avg duration', fmtDur(avg))}
       {k('est. cost', totalCost ? '$' + totalCost.toFixed(2) : '—')}
+      {/* Only when there is something to stop — a permanently-visible kill switch on a board with
+          no live agents is a button that has never once meant anything. */}
+      {liveRuns.length > 0 && (
+        <button className="primary" style={{ alignSelf: 'center', background: 'var(--red)', borderColor: 'var(--red)' }} onClick={stopAll}
+          title="kills every running board agent — each keeps its session id and can be resumed">
+          ■ stop all {liveRuns.length} running
+        </button>
+      )}
     </div>
   )
 }
@@ -178,7 +200,10 @@ function Detail({ run, onDone }) {
   return (
     <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}>
       <div style={{ display: 'flex', gap: 18, font: `400 11px ${MONO}`, color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
-        <span>status <b style={{ color: sc(m.status) }}>{m.status}</b></span>
+        {/* The row's status, not the one derived from events: for a board flow the server checked
+            whether an agent is actually alive, and the event log cannot know that. Showing the
+            derived one here read "running" directly under a header that said "idle". */}
+        <span>status <b style={{ color: sc(run.status || m.status) }}>{run.status || m.status}</b></span>
         <span>duration <b style={{ color: 'var(--text-primary)' }}>{fmtDur(m.durationMs)}</b></span>
         <span>steps <b style={{ color: 'var(--text-primary)' }}>{m.steps.length}</b></span>
         <span>tool calls <b style={{ color: 'var(--text-primary)' }}>{m.toolCalls}</b></span>
@@ -235,10 +260,18 @@ export default function RunsSection() {
   const [data, setData] = useState(null)
   const [open, setOpen] = useState(null)
   const [selected, setSelected] = useState(() => new Set())
+  const scope = useWorkScope()
   const [f, setF] = useState(readFilters)
+  // The filters follow the section scope rather than being typed twice. `proj` is the one place in
+  // this app that keys on a BASENAME (the server compares `r.projName`), which is exactly the kind
+  // of translation the scope exists to do once instead of in every caller.
+  useEffect(() => {
+    setF(p => ({ ...p, proj: basename(scope.path) || '', ticket: scope.ticket || '' }))
+  }, [scope.path, scope.ticket])
+  const fresh = useFreshest(setData)
   const load = () => {
     const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v).map(([k, v]) => [k, v])).toString()
-    api.get('/api/runs' + (q ? '?' + q : '')).then(setData).catch(() => {})
+    fresh(api.get('/api/runs' + (q ? '?' + q : ''))).catch(() => {})
   }
   useEffect(() => { writeFilters(f) }, [f])
   useVisiblePoll(load, 5000, [f])
@@ -261,7 +294,7 @@ export default function RunsSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Dispatch projects={data.allProjects || []} flows={data.dispatchFlows || []} onDone={load} />
+      <Dispatch flows={data.dispatchFlows || []} onDone={load} />
       <Kpis runs={runs} />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <input value={f.ticket} onChange={e => setFilter('ticket', e.target.value)} placeholder="search ticket…" style={{ width: 160 }} />
@@ -293,11 +326,29 @@ export default function RunsSection() {
               <span style={{ color: sc(r.status) }}>●</span>
               <span style={{ font: "600 14px var(--body)", color: 'var(--text-primary)' }}>{r.ticket}</span>
               {r.flow && <span style={{ font: `500 10px ${MONO}`, color: 'var(--blue)', background: 'var(--blue-bg)', borderRadius: 5, padding: '2px 7px' }}>{r.flow}</span>}
-              {r.phase && <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{r.phase}{r.phaseStatus ? ` · ${r.phaseStatus}` : ''}</span>}
+              {/* The phase is where it got to; `phaseStatus` is the file's own claim about liveness,
+                  which is the thing we just established cannot be trusted. Reading "dispatch ·
+                  running" beside a status of "stale" is the contradiction that started this. */}
+              {r.phase && <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>{r.phase}{r.phaseStatus && !['stale', 'idle'].includes(r.status) ? ` · ${r.phaseStatus}` : ''}</span>}
               {r.verdict && <span style={{ font: `600 10px ${MONO}`, color: VERDICT[r.verdict], background: VERDICT[r.verdict] + '18', borderRadius: 5, padding: '2px 7px' }}>{r.verdict}</span>}
-              <span style={{ font: `500 11px ${MONO}`, color: sc(r.status), marginLeft: 'auto' }}>{r.status}</span>
+              {r.live && <span style={{ font: `600 10px ${MONO}`, color: 'var(--blue)' }}>◐ {r.liveKind}</span>}
+              {r.live && <button className="mini" style={{ marginTop: 0, color: 'var(--red)' }} title="kills the agent process — the session id is kept so it can be resumed from the board"
+                onClick={e => { e.stopPropagation(); api.post(`/api/board/tickets/${r.ticket}/stop`).then(() => { toast('stopped', 'success'); load() }).catch(x => alert(x.message)) }}>■ stop</button>}
+              <span style={{ font: `500 11px ${MONO}`, color: sc(r.status), marginLeft: r.live ? 0 : 'auto' }}>{r.status}</span>
+              {r.status === 'stale' && (
+                <button className="mini" style={{ marginTop: 0 }} title="nothing has been written to this run in hours — discard its log. Branches, worktrees and commits are untouched."
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (!window.confirm(`Discard the run log for ${r.ticket}?\n\nIt last moved ${relTime(r.updatedAt)}. This removes .loush/${r.ticket}/ only — the branch, the worktree and any commits stay.`)) return
+                    api.del(`/api/runs?proj=${encodeURIComponent(r.proj)}&ticket=${encodeURIComponent(r.ticket)}`)
+                      .then(() => { toast('run log discarded', 'success'); load() }).catch(x => alert(x.message))
+                  }}>discard</button>
+              )}
               <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>{r.projName} · {relTime(r.updatedAt)}</span>
             </div>
+            {/* A board run has a transcript, so it gets the same chat view the ticket drawer has.
+                Other flows write their own event log and have no session to tail. */}
+            {open === id && r.flow === 'board' && <AgentLive ticketId={r.ticket} running={r.live ? { kind: r.liveKind, startedAt: r.updatedAt } : null} onStopped={load} />}
             {open === id && <Detail run={r} onDone={load} />}
           </div>
         )

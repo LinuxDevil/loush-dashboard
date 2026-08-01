@@ -1,6 +1,7 @@
 import { CLAUDE, propose, readJson, track } from './dashboard-core.mjs'
 import { exec, spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { runAgent } from '../lib/agent.mjs'
 import { git as gitSafe } from '../lib/git-safe.mjs'
@@ -25,7 +26,11 @@ const readBoard = () => { const b = readJson(BOARD_FILE, {}); return { ...DEFAUL
 
 const writeBoard = b => track(BOARD_FILE, JSON.stringify(b, null, 2), { summary: 'update task board' })
 
-const projCfg = (board, project) => ({ pipeline: 'default', base: 'main', branchPrefix: 'ticket/', mergeMethod: 'merge', requirePr: false, defaultModel: '', previewCmd: '', previewStopCmd: '', previewIdleMin: 240, qaSeesFindings: false, ...(board.projects[project] || {}) })
+const projCfg = (board, project) => ({ pipeline: 'default', base: 'main', branchPrefix: 'ticket/', mergeMethod: 'merge', requirePr: false, defaultModel: '', previewCmd: '', previewStopCmd: '', previewIdleMin: 240, qaSeesFindings: false,
+  // 0 = no cap, which is the historical behaviour. A ticket that has already spent this much has
+  // usually stopped converging rather than nearly finished — AIR-10733 reached $18.84 across five
+  // agent runs and was no closer to clean than it had been at $10.
+  costCap: 0, ...(board.projects[project] || {}) })
 
 const tkt = (board, id) => board.tickets.find(t => t.id === id)
 
@@ -72,6 +77,56 @@ const extractJson = s => { for (const re of [/\[[\s\S]*\]/, /\{[\s\S]*\}/]) { co
 
 const boardRuns = new Map()
 
+// A run lives in `boardRuns`, which is memory. Any restart — a crash, a deploy, `node --watch`
+// noticing an edit — therefore loses every in-flight agent while the agent itself keeps running and
+// keeps committing. Nothing is then left that can show it, stop it, or record what it did, and the
+// ticket sits at in-progress looking idle forever. Observed on AIR-10733: a one-line edit to this
+// file orphaned a dev agent that went on to land a complete commit nobody was told about.
+//
+// The pid is persisted so a restarted server can at least tell the truth. It cannot adopt the
+// process — the promise that would have read its output died with the old process — so the honest
+// outcome is a blocked ticket naming the pid and the branch, not a silent in-progress.
+const markRunPersisted = (id, kind, pid) => {
+  const b = readBoard(); const t = tkt(b, id); if (!t) return
+  t.runMarker = { kind: kind || 'agent', pid, startedAt: Date.now() }
+  writeBoard(b)
+}
+/** Clear on a ticket the caller is about to write. Preferred — see the note at the call sites. */
+const clearRunMarker = t => { if (t?.runMarker) delete t.runMarker }
+/** Clear when there is no snapshot in hand (the error paths, which write nothing of their own). */
+const clearRunPersisted = id => {
+  const b = readBoard(); const t = tkt(b, id); if (!t?.runMarker) return
+  delete t.runMarker; writeBoard(b)
+}
+/**
+ * Called by the server at boot — NEVER on import.
+ *
+ * It used to run itself from a module-level timer, which meant merely importing this file mutated
+ * the real board: `node --test` on a findings test blocked a live ticket and wrote a bogus "lost"
+ * run against an agent that was working perfectly. A module that rewrites user state as a side
+ * effect of being loaded cannot be tested, scripted, or imported by anything else.
+ */
+export function reconcileOrphanedRuns() {
+  const b = readBoard(); let changed = false
+  for (const t of b.tickets || []) {
+    if (!t.runMarker) continue
+    const { kind, pid } = t.runMarker
+    let alive = false
+    try { process.kill(pid, 0); alive = true } catch {}
+    // A run entry even though nothing can be recovered. Without one the ticket's history simply
+    // skips the run: on AIR-10733 the dev agent's cost, duration and output are absent from the
+    // record entirely, so the ticket reads as though the code committed itself for free.
+    ;(t.runs ||= []).push({ at: t.runMarker.startedAt || Date.now(), kind, model: 'unknown', status: 'lost', cost: null, turns: 0,
+      ms: Date.now() - (t.runMarker.startedAt || Date.now()), sessionId: null, headSha: headShaOf(t), transcriptDir: null,
+      summary: `the server restarted while this ${kind} run was in flight; its output and cost were never received${alive ? ` (pid ${pid} was still alive at reconcile)` : ''}` })
+    delete t.runMarker; changed = true
+    blockT(t, 'system', 'orphaned-run', alive
+      ? `the ${kind} agent (pid ${pid}) is still running, but this server restarted and no longer owns it — its result will not be recorded. Check ${t.branch || 'the branch'} for commits; kill ${pid} to stop it.`
+      : `the ${kind} agent was lost when this server restarted, so its result was never recorded. Check ${t.branch || 'the branch'} — it may already have commits.`)
+  }
+  if (changed) writeBoard(b)
+}
+
 function loushRunEmit(project, ticket, type, data) {
   if (!project || !fs.existsSync(project)) return
   try {
@@ -95,8 +150,126 @@ function loushRunState(project, ticket, phase, phase_status) {
   } catch {}
 }
 
+// ---- findings lifecycle ------------------------------------------------------------------------
+//
+// A review used to REPLACE `t.findings` wholesale and a fix used to empty it, so every round
+// re-derived the list from nothing. Three consequences, all observed on AIR-10733:
+//   · findings the fix agent cannot resolve — "get Avo to register this container event", "compare
+//     against Figma" — came back every single round. Raised three times, never actionable.
+//   · counts oscillated 9 → 8 → 9, and nothing could tell oscillation from progress, because
+//     nothing knew whether round 3's item was round 1's item.
+//   · a human decision to accept a finding had nowhere to live, so it could not be made.
+// Identity is (file, severity, first eight significant words). Not the full sentence: a reviewer
+// rewords the same defect between rounds, and an id that changes with the wording is not an id.
+const FIND_STOP = new Set(['the', 'a', 'an', 'is', 'are', 'to', 'of', 'and', 'in', 'on', 'for', 'that', 'this', 'it', 'its', 'with', 'so', 'but'])
+export function findingId(f) {
+  const words = String(f.summary || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length > 2 && !FIND_STOP.has(w)).slice(0, 8).join('-')
+  return `${(f.file || 'repo').split('/').pop()}:${f.severity || 'low'}:${words}`.slice(0, 120)
+}
+
+// `code` is the only class a fix agent can act on. The other two exist so a finding can be true,
+// unresolved, and still not block forever — which is the state most of AIR-10733's tail was in.
+const FIND_CLASSES = new Set(['code', 'needs-human', 'pre-existing'])
+const normClass = c => (FIND_CLASSES.has(c) ? c : 'code')
+
+/**
+ * Merge a fresh review's findings over what the ticket already knows.
+ *
+ * Carried across: the class, any human acknowledgement, and when the finding was first seen. A
+ * finding absent from the new review is RESOLVED rather than deleted — the history of what a round
+ * fixed is the only evidence that the loop is converging.
+ */
+export function mergeFindings(prev, fresh, sha) {
+  const byId = new Map((prev || []).map(f => [f.id || findingId(f), f]))
+  const now = Date.now()
+  const out = []
+  for (const raw of fresh || []) {
+    const id = findingId(raw)
+    const old = byId.get(id)
+    byId.delete(id)
+    out.push({
+      ...raw,
+      id,
+      class: normClass(raw.class ?? old?.class),
+      status: old?.status === 'acked' ? 'acked' : 'open',
+      ackNote: old?.ackNote || null,
+      firstSeenSha: old?.firstSeenSha || sha || null,
+      lastSeenSha: sha || null,
+      firstSeenAt: old?.firstSeenAt || now,
+      at: now,
+      seenCount: (old?.seenCount || 0) + 1,
+    })
+  }
+  // Everything the new review did NOT raise: it was addressed, or it stopped reproducing.
+  for (const gone of byId.values()) {
+    // Normalised on the way through: findings recorded before this lifecycle existed have no class
+    // at all, and a resolved finding still gets rendered — an undefined class would read to the UI
+    // as whatever its fallback happens to be rather than as what it was.
+    const carried = { ...gone, id: gone.id || findingId(gone), class: normClass(gone.class) }
+    if (gone.status === 'resolved') { out.push(carried); continue }
+    out.push({ ...carried, status: 'resolved', resolvedAt: now, resolvedSha: sha || null })
+  }
+  return out
+}
+
+// ---- convergence -------------------------------------------------------------------------------
+//
+// The old stop condition was "three fix runs, then block". It cannot tell a loop that is closing in
+// from one going round in circles, and on AIR-10733 it would have reported the same verdict for
+// both: findings went 9 → 8 → 9 while severity went critical → high → high, and the count alone
+// says nothing. What actually matters is whether the WORST open problem is getting less bad, and
+// whether the same items keep coming back.
+const SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 }
+const worstOf = findings => findings.reduce((m, f) => Math.max(m, SEV_RANK[f.severity] || 1), 0)
+
+/**
+ * Decide what the loop should do after a review.
+ *
+ * `rounds` is the ticket's review history, oldest first: [{ worst, open }]. Returns one of
+ * `advance` | `fix` | `stalled` | `budget`, always with a reason a human can read — a loop that
+ * stops without saying why is indistinguishable from one that crashed.
+ */
+export function convergenceVerdict({ rounds, blocking, openCode, spend, budget, maxRounds = 5 }) {
+  if (budget && spend >= budget) return { action: 'budget', reason: `$${spend.toFixed(2)} spent against a $${budget.toFixed(2)} cap — stopping before the next run` }
+  if (!blocking.length) return { action: 'advance', reason: openCode.length ? `no blocking findings (${openCode.length} minor left open)` : 'no open findings' }
+  const worst = worstOf(blocking)
+  const prev = rounds.slice(-3)
+  // Not improving means: the worst severity has not fallen AND the open count has not fallen across
+  // the last three reviews. Either one moving is progress worth another round.
+  if (prev.length >= 3) {
+    const severityStuck = prev.every(r => r.worst >= worst)
+    const countStuck = prev.every(r => r.open <= openCode.length)
+    if (severityStuck && countStuck) {
+      const repeats = blocking.filter(f => f.seenCount >= 3).length
+      return { action: 'stalled', reason: `three reviews without the worst severity or the finding count falling${repeats ? ` — ${repeats} finding(s) raised 3+ times` : ''}. Another fix run is unlikely to help; accept, reclassify, or take over.` }
+    }
+  }
+  if (rounds.length >= maxRounds) return { action: 'stalled', reason: `${rounds.length} review rounds without a clean result — take over manually` }
+  return { action: 'fix', reason: `${blocking.length} blocking finding(s), worst is ${blocking.find(f => (SEV_RANK[f.severity] || 1) === worst)?.severity}` }
+}
+
+/** What the loop is allowed to act on, and what it is allowed to be blocked by. */
+export const openCodeFindings = t => (t.findings || []).filter(f => f.status === 'open' && f.class === 'code')
+const BLOCKING_SEVERITIES = new Set(['critical', 'high'])
+export const blockingFindings = t => openCodeFindings(t).filter(f => BLOCKING_SEVERITIES.has(f.severity))
+
+/** Where a run's prompt and raw output are kept. Per ticket, per run — never overwritten. */
+const RUNS_DIR = path.join(os.homedir(), '.claude', 'board-runs')
+const runTranscriptDir = (ticketId, kind) => path.join(RUNS_DIR, ticketId, `${Date.now()}-${kind}`)
+
+/** The commit a run actually saw. A finding or a verdict without one cannot be trusted later. */
+function headShaOf(t) {
+  if (!t?.worktree) return null
+  const r = gitB(t.worktree, ['rev-parse', 'HEAD'])
+  return r.status === 0 ? String(r.stdout || '').trim().slice(0, 40) || null : null
+}
+
 function recordRun(t, kind, model, r, handoff) {
-  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff })
+  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff,
+    // The three fields that make a run auditable after the fact: what commit it saw, and where the
+    // prompt it was given and the output it produced are on disk.
+    headSha: headShaOf(t), transcriptDir: r.transcriptDir || null, blocked: r.blocked || null })
   const outcome = r.error ? 'failed' : r.blocked ? 'blocked' : 'passed'
   loushRunEmit(t.project, t.id, 'step.completed', { label: kind, agent: 'board:' + kind, status: outcome })
   // The OUTCOME, not 'running'. Written at the end of a run, 'running' was never true by the time
@@ -199,16 +372,21 @@ function beginDev(board, t, { model: modelOverride, reply, resume } = {}) {
       reply ? '\n## Answer to your blocking question\n' + reply : '',
       '\nIf you hit a genuinely ambiguous requirement, missing credential, or unresolvable dependency: stop and print a final line "BLOCKED: <exactly what you need>".',
     ].filter(Boolean).join('\n')
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.worktree, prompt, model, resume })
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.worktree, prompt, model, resume })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'dev', model, r, { passed: ['ticket', 'sub-ticket breakdown', 'worktree codebase + CLAUDE.md', ...(reply ? ['unblock reply'] : [])], excluded: ['prior tickets', 'other branches'] })
     if (r.error) blockT(t2, 'dev agent', 'agent-error', r.error)
     else if (r.blocked) blockT(t2, 'dev agent', 'needs-input', r.blocked, r.blocked)
     else { stamp(t2, 'code-review', 'dev done — idle until you run code review'); conflictScan(b2, t2) }
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
   return { ok: true }
 }
 
@@ -286,9 +464,14 @@ export default function mountBoard(app) {
 app.get('/api/board', (req, res) => {
   const board = readBoard()
   const project = req.query.project
+  // `boardRuns` holds a live ChildProcess under `.child` so a run can be killed. Spreading the
+  // whole entry serialised that process — its stdio streams, buffers and internal socket state —
+  // into every response, on a list the board polls every 5s per open tab. Only the two fields the
+  // client actually renders cross the wire; the handle stays server-side where it is useful.
+  const liveOf = id => { const r = boardRuns.get(id); return r ? { kind: r.kind, startedAt: r.startedAt } : null }
   const tickets = board.tickets.filter(t => !project || t.project === project).map(t => ({
     ...t,
-    running: boardRuns.get(t.id) || null,
+    running: liveOf(t.id),
     depBlocked: (t.deps || []).filter(d => { const o = tkt(board, d); return o && !['ready-for-release', 'released'].includes(o.stage) }),
   }))
   res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
@@ -594,26 +777,79 @@ app.get('/api/board/tickets/:id/live', (req, res) => {
  * session id is captured from the live transcript first, which is what makes it resumable: the
  * killed process never gets to report that id itself.
  */
-app.post('/api/board/tickets/:id/stop', (req, res) => {
-  const board = readBoard(); const t = tkt(board, req.params.id)
-  if (!t) return res.status(404).json({ error: 'no such ticket' })
+/** Stop one ticket's agent. Mutates `board` (caller writes); returns what was stopped, or null. */
+function stopRun(board, t) {
   const run = boardRuns.get(t.id)
-  if (!run) return res.status(400).json({ error: 'nothing is running on this ticket' })
-
+  if (!run) return null
   const file = transcriptFor(t, { startedAt: run.startedAt })
   t.resumeSessionId = file ? path.basename(file, '.jsonl') : null
   t.stoppedAt = Date.now()
   ;(t.history ||= []).push({ at: Date.now(), from: t.stage, to: t.stage, note: `${run.kind} agent stopped after ${Math.round((Date.now() - run.startedAt) / 1000)}s` })
-  writeBoard(board)
-
   const child = run.child
-  if (!child) return res.json({ ok: true, note: 'the run was marked stopped, but its process had not started yet' })
-  try { child.kill('SIGTERM') } catch {}
-  // SIGTERM is a request. A child that ignores it keeps running and keeps spending, so the escalation
-  // is scheduled rather than hoped for.
-  setTimeout(() => { try { if (boardRuns.get(t.id)?.child === child) child.kill('SIGKILL') } catch {} }, 5000).unref?.()
-  res.json({ ok: true, kind: run.kind, resumeSessionId: t.resumeSessionId })
+  if (child) {
+    try { child.kill('SIGTERM') } catch {}
+    // SIGTERM is a request. A child that ignores it keeps running and keeps spending, so the
+    // escalation is scheduled rather than hoped for.
+    setTimeout(() => { try { if (boardRuns.get(t.id)?.child === child) child.kill('SIGKILL') } catch {} }, 5000).unref?.()
+  }
+  return { id: t.id, title: t.title, kind: run.kind, resumeSessionId: t.resumeSessionId, hadProcess: !!child }
+}
+
+app.post('/api/board/tickets/:id/stop', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  const stopped = stopRun(board, t)
+  if (!stopped) return res.status(400).json({ error: 'nothing is running on this ticket' })
+  writeBoard(board)
+  res.json({ ok: true, ...stopped, note: stopped.hadProcess ? undefined : 'the run was marked stopped, but its process had not started yet' })
 })
+
+/**
+ * Stop every running agent, optionally scoped to one project.
+ *
+ * The single-ticket stop is the same call made from a screen where you already know which ticket
+ * you mean. This one is for the case where you do not — a fan-out that started five children, a
+ * loop you want out of, a laptop about to go in a bag — and hunting them down one card at a time
+ * is exactly when you would miss one and leave it spending.
+ */
+app.post('/api/board/stop-all', (req, res) => {
+  const board = readBoard()
+  const project = req.body?.project ? path.resolve(String(req.body.project)) : null
+  const targets = board.tickets.filter(t => boardRuns.has(t.id) && (!project || t.project === project))
+  const stopped = targets.map(t => stopRun(board, t)).filter(Boolean)
+  if (stopped.length) writeBoard(board)
+  const orphans = project ? [] : reapOrphanAgents()
+  res.json({ ok: true, stopped: stopped.length, runs: stopped, orphansKilled: orphans })
+})
+
+/**
+ * Agents this server has lost the handle to.
+ *
+ * `boardRuns` lives in memory, so a server restart — a crash, a `node --watch` reload after an
+ * edit — forgets every child it spawned while the children keep running, keep editing worktrees
+ * and keep spending. They are invisible to the board and unkillable from the UI: the exact thing
+ * "stop all" exists to prevent. Found one live in the wild while testing this, 11 minutes after
+ * the run that started it had vanished from the dashboard.
+ *
+ * Matched on the board's own prompt preamble, which no interactive session has, so an interactive
+ * `claude` the user is typing into is never a candidate.
+ */
+function reapOrphanAgents() {
+  const killed = []
+  try {
+    const out = spawnSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf8', timeout: 8000 }).stdout || ''
+    for (const line of out.split('\n')) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line)
+      if (!m) continue
+      const [, pid, cmd] = m
+      if (!/^claude -p /.test(cmd)) continue
+      if (!/isolated git worktree on branch|Senior code review of this branch|You are a QA agent|You are a design QA agent|propose a breakdown into independently-workable/.test(cmd)) continue
+      if ([...boardRuns.values()].some(r => String(r.child?.pid) === pid)) continue   // tracked, already handled above
+      try { process.kill(Number(pid), 'SIGTERM'); killed.push(Number(pid)) } catch {}
+    }
+  } catch {}
+  return killed
+}
 
 app.post('/api/board/tickets/:id/analyze', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
@@ -624,14 +860,19 @@ app.post('/api/board/tickets/:id/analyze', (req, res) => {
   res.json({ ok: true })
   ;(async () => {
     const prompt = `Analyze this ticket and propose a breakdown into independently-workable sub-tickets (e.g. "add API endpoint", "add frontend form", "write migration"). Explore the codebase briefly to ground the breakdown.\n\n## Ticket: ${t.title}\n${t.desc}\n\nReturn ONLY a JSON array: [{"title": "...", "desc": "1-3 sentence scope incl. likely files", "deps": [indices of sub-tickets this one is blocked by]}]. 2-6 sub-tickets; fewer is better.`
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.project, prompt, model, timeoutMs: 300_000 })
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.project, prompt, model, timeoutMs: 300_000 })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'analyze', model, r, { passed: ['ticket title+desc', 'codebase (agent-explored)'], excluded: ['prior tickets', 'chat history'] })
     t2.proposal = r.error ? null : (extractJson(r.result) || []).filter(s => s.title).slice(0, 8)
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
 
 app.post('/api/board/tickets/:id/breakdown', (req, res) => {
@@ -653,6 +894,31 @@ app.post('/api/board/tickets/:id/breakdown', (req, res) => {
   writeBoard(board); res.json({ ok: true, created: ids.length })
 })
 
+/**
+ * Acknowledge, reclassify, or reopen a single finding.
+ *
+ * The missing half of the loop: a finding can be true, unfixable by an agent, and still need to
+ * stop blocking. Three of AIR-10733's round-three findings were exactly that — a GTM container
+ * value only Avo can register, Figma fidelity that needs design QA, a package another team
+ * publishes — and with nowhere to put that judgement they were re-raised every round forever.
+ * Acknowledging is a decision with a name on it, so it is recorded rather than silently dropped.
+ */
+app.post('/api/board/tickets/:id/findings/:findingId', (req, res) => {
+  const board = readBoard(); const t = tkt(board, req.params.id)
+  if (!t) return res.status(404).json({ error: 'no such ticket' })
+  const f = (t.findings || []).find(x => x.id === req.params.findingId)
+  if (!f) return res.status(404).json({ error: 'no such finding on this ticket' })
+  const { status, class: cls, note } = req.body || {}
+  if (status && !['open', 'acked'].includes(status)) return res.status(400).json({ error: 'status must be open or acked' })
+  if (cls && !FIND_CLASSES.has(cls)) return res.status(400).json({ error: `class must be one of ${[...FIND_CLASSES].join(', ')}` })
+  if (status) f.status = status
+  if (cls) f.class = cls
+  if (note !== undefined) f.ackNote = note || null
+  f.decidedAt = Date.now()
+  writeBoard(board)
+  res.json({ ok: true, finding: f, blocking: blockingFindings(t).length })
+})
+
 app.post('/api/board/tickets/:id/start', (req, res) => startTicket(req.params.id, req.body, res))
 
 app.post('/api/board/tickets/:id/review', (req, res) => {
@@ -670,30 +936,68 @@ app.post('/api/board/tickets/:id/review', (req, res) => {
       `Senior code review of this branch. Run \`git diff ${baseOf(board, t)}...HEAD\` and review the changes against the ticket. ${instructions}`,
       `\n## Ticket: ${t.title}\n${t.desc}`,
       devRun ? '\n## Dev agent summary of what it did\n' + devRun.summary : '',
-      '\nReturn ONLY JSON: [{"severity": "critical|high|medium|low", "file": "path", "summary": "one sentence"}]. Empty array [] if clean. critical/high = must fix before QA.',
+      // `class` is what stops the loop re-raising things it cannot act on. Without it the reviewer
+      // kept returning "needs Avo sign-off" and "compare against Figma" every round, the fix agent
+      // could do nothing with either, and the count never reached zero.
+      '\nClassify every finding:',
+      '  · "code" — fixable by editing this branch. Only these are sent to the fix agent.',
+      '  · "needs-human" — real, but needs a decision or access outside this repo (third-party config, design sign-off, another team\'s release).',
+      '  · "pre-existing" — already true on the base branch; this change did not cause it.',
+      '\nReturn ONLY JSON: [{"severity": "critical|high|medium|low", "class": "code|needs-human|pre-existing", "file": "path", "summary": "one sentence"}]. Empty array [] if clean. critical/high = must fix before QA.',
     ].filter(Boolean).join('\n')
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.worktree, prompt, model, timeoutMs: 900_000 })
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.worktree, prompt, model, timeoutMs: 900_000 })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'review', model, r, { passed: ['diff vs ' + baseOf(b2, t2), 'ticket', 'dev agent summary'], excluded: ['dev agent raw transcript'] })
     if (r.error) blockT(t2, 'review agent', 'agent-error', r.error)
     else {
-      t2.findings = (extractJson(r.result) || []).filter(f => f.summary).map(f => ({ ...f, at: Date.now() }))
-      const blocking = t2.findings.filter(f => ['critical', 'high'].includes(f.severity))
-      if (!blocking.length) { stamp(t2, 'ready-for-qa', `review clean (${t2.findings.length} minor) — idle until you run QA`); startPreview(b2, t2) }
-      else stamp(t2, 'code-review', `${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}`)
+      const sha = headShaOf(t2)
+      t2.findings = mergeFindings(t2.findings, (extractJson(r.result) || []).filter(f => f.summary), sha)
+      t2.reviewedSha = sha
+      const blocking = blockingFindings(t2)
+      const openCode = openCodeFindings(t2)
+      const parked = (t2.findings || []).filter(f => f.status === 'open' && f.class !== 'code').length
+      // The round is recorded BEFORE the verdict, because the verdict is about the trend and this
+      // review is part of it.
+      ;(t2.reviewRounds ||= []).push({ at: Date.now(), sha, worst: worstOf(blocking), open: openCode.length, blocking: blocking.length })
+      const spend = (t2.runs || []).reduce((s, x) => s + (x.cost || 0), 0)
+      const verdict = convergenceVerdict({ rounds: t2.reviewRounds.slice(0, -1), blocking, openCode, spend, budget: cfg.costCap || 0 })
+      t2.verdict = { ...verdict, at: Date.now() }
+      if (verdict.action === 'advance') {
+        stamp(t2, 'ready-for-qa', `${verdict.reason}${parked ? `, ${parked} parked for a human` : ''} — idle until you run QA`)
+        startPreview(b2, t2)
+      } else if (verdict.action === 'stalled' || verdict.action === 'budget') {
+        // A named stop. The previous cap said only "3 iterations", which read as a tooling limit
+        // rather than as "this is not converging and needs a decision".
+        blockT(t2, 'review loop', verdict.action === 'budget' ? 'cost-cap' : 'not-converging', verdict.reason)
+        stamp(t2, 'code-review', verdict.reason)
+      } else stamp(t2, 'code-review', `${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}${parked ? ` (+${parked} parked)` : ''}`)
     }
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
 
 app.post('/api/board/tickets/:id/fix', (req, res) => {
   const board = readBoard(); const t = tkt(board, req.params.id)
-  if (!t?.findings?.length) return res.status(400).json({ error: 'no findings to fix' })
+  // Counted the raw list before, which included findings already attempted and awaiting a
+  // re-review — so a second fix could be launched against work whose outcome was still unknown.
+  if (!t || !openCodeFindings(t).length) {
+    const attempted = (t?.findings || []).filter(f => f.status === 'fix-attempted').length
+    return res.status(400).json({ error: attempted ? `${attempted} finding(s) already addressed and awaiting re-review — run the review first` : 'no actionable findings to fix' })
+  }
   if (boardRuns.has(t.id)) return res.status(409).json({ error: 'already running' })
+  // The hard ceiling stays as a backstop, but the real stop is the convergence verdict written by
+  // the review — a count of iterations cannot tell "two rounds and nearly clean" from "two rounds
+  // and going backwards", and blocking on the count alone stops the first as readily as the second.
+  if (t.verdict && ['stalled', 'budget'].includes(t.verdict.action)) return res.status(400).json({ error: t.verdict.reason, verdict: t.verdict.action })
   const fixes = (t.runs || []).filter(r => r.kind === 'fix').length
-  if (fixes >= 3) { blockT(t, 'fix loop', 'max-iterations', '3 fix iterations without a clean review — take over manually'); writeBoard(board); return res.status(400).json({ error: 'max fix iterations hit — ticket blocked' }) }
+  if (fixes >= 6) { blockT(t, 'fix loop', 'max-iterations', '6 fix runs on one ticket — take over manually'); writeBoard(board); return res.status(400).json({ error: 'max fix iterations hit — ticket blocked' }) }
   const { model } = teamStage(board, t, 'dev')
   const cfg = projCfg(board, t.project)
   stamp(t, 'fixing', 'auto-fixing review findings (' + (fixes + 1) + '/3)')
@@ -701,18 +1005,36 @@ app.post('/api/board/tickets/:id/fix', (req, res) => {
   writeBoard(board)
   res.json({ ok: true })
   ;(async () => {
-    const prompt = `Fix these code-review findings on the current branch (diff vs ${baseOf(board, t)}). Commit the fixes. Do NOT re-architect — address the findings only.\n\n## Ticket: ${t.title}\n\n## Findings\n${t.findings.map(f => `- [${f.severity}] ${f.file}: ${f.summary}`).join('\n')}`
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.worktree, prompt, model, resume: (t.runs || []).filter(x => x.kind === 'dev' && x.sessionId).pop()?.sessionId })
+    // Highest open severity only, not the whole list. Handing over all nine findings at once is
+    // how round 2 on AIR-10733 turned a cosmetic "the layout flashes" note into a card that
+    // rendered zero flight legs: the agent rewrote 140 lines of a container it had no need to
+    // touch. One severity band per run, re-reviewed in between, keeps the blast radius readable.
+    const actionable = openCodeFindings(t)
+    const band = ['critical', 'high', 'medium', 'low'].find(s => actionable.some(f => f.severity === s))
+    const batch = actionable.filter(f => f.severity === band)
+    const prompt = `Fix these code-review findings on the current branch (diff vs ${baseOf(board, t)}). Commit the fixes. Do NOT re-architect — address the findings only, and change nothing the findings do not name.\n\n## Ticket: ${t.title}\n\n## Findings (${band} severity — other findings are deliberately withheld this round)\n${batch.map(f => `- [${f.severity}] ${f.file}: ${f.summary}`).join('\n')}`
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.worktree, prompt, model, resume: (t.runs || []).filter(x => x.kind === 'dev' && x.sessionId).pop()?.sessionId })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'fix', model, r, { passed: ['findings', 'original diff context (resumed session when possible)'], excluded: ['full codebase re-read'] })
     if (r.error) blockT(t2, 'fix agent', 'agent-error', r.error)
-    // The findings the fix run addressed are cleared: leaving them on the ticket says "reviewed
-    // and still broken" to anyone — human or autopilot — reading the ticket before the re-review.
-    else { t2.findings = []; stamp(t2, 'code-review', 'fixes committed — re-run code review') }
+    // Marked attempted, NOT deleted. Emptying the list threw away the only record of what each
+    // round had addressed, so the next review's output could not be compared with the last one's —
+    // which is precisely what made 9 → 8 → 9 indistinguishable from progress. The re-review is what
+    // decides whether these are genuinely gone; until it runs they are claims, not outcomes.
+    else {
+      const attempted = new Set(batch.map(f => f.id))
+      t2.findings = (t2.findings || []).map(f => (attempted.has(f.id) ? { ...f, status: 'fix-attempted', fixAttemptedAt: Date.now() } : f))
+      stamp(t2, 'code-review', `${batch.length} ${band} finding${batch.length === 1 ? '' : 's'} addressed — re-review to confirm`)
+    }
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
 
 app.post('/api/board/tickets/:id/preview', (req, res) => { const b = readBoard(); const t = tkt(b, req.params.id); if (!t) return res.status(404).json({ error: 'no such ticket' }); startPreview(b, t); writeBoard(b); res.json({ ok: true }) })
@@ -757,10 +1079,15 @@ app.post('/api/board/tickets/:id/designqa', (req, res) => {
       refs.contentCsv ? `\n## Agreed copy — this file is the source of truth for every string\n${refs.contentCsv}` : '',
       `\nReport ONLY differences you can point at. Return ONLY JSON: {"cases": [{"name": "...", "pass": true|false, "severity": "critical|high|medium|low", "file": "component path if known", "evidence": "what the design says vs what the build does, ≤300 chars"}]}`,
     ].filter(Boolean).join('\n')
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.worktree, prompt, model, timeoutMs: 1800_000 })
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.worktree, prompt, model, timeoutMs: 1800_000 })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'designqa', model, r, { passed: ['ticket', 'figma links', 'local captures', 'content sheet', 'running app'], excluded: ['code-review findings'] })
     if (r.error) { blockT(t2, 'design QA agent', 'agent-error', r.error); return writeBoard(b2) }
     const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
@@ -774,7 +1101,7 @@ app.post('/api/board/tickets/:id/designqa', (req, res) => {
       stamp(t2, 'code-review', `${failed.length} design QA failure${failed.length === 1 ? '' : 's'} — back to the fix loop`)
     } else stamp(t2, 'ready-for-qa', `design QA clean (${cases.length} checks) — functional QA next`)
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
 
 app.post('/api/board/tickets/:id/qa', (req, res) => {
@@ -802,10 +1129,15 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
       cfg.qaSeesFindings && t.findings?.length ? '\n## Code-review findings (user opted QA in)\n' + t.findings.map(f => `- ${f.summary}`).join('\n') : '',
       '\nReturn ONLY JSON: {"cases": [{"name": "...", "kind": "ui|api|manual", "pass": true|false, "severity": "critical|high|medium|low", "evidence": "≤300 chars"}]}',
     ].filter(Boolean).join('\n')
-    const r = await runAgent({ onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c }, cwd: t.worktree, prompt, model, timeoutMs: 1800_000 })
+    const r = await runAgent({ transcriptDir: runTranscriptDir(t.id, boardRuns.get(t.id)?.kind || 'agent'), onSpawn: c => { const live = boardRuns.get(t.id); if (live) live.child = c; markRunPersisted(t.id, live?.kind, c.pid) }, cwd: t.worktree, prompt, model, timeoutMs: 1800_000 })
     const b2 = readBoard(); const t2 = tkt(b2, t.id)
     boardRuns.delete(t.id)
     if (!t2) return
+    // Cleared on THIS snapshot, not through a separate read-modify-write. `b2` was read before any
+    // such write, so `writeBoard(b2)` at the end of this block would put the marker straight back —
+    // which is exactly what happened on the AIR-10733 review: the run ended, the marker survived,
+    // and the next restart would have reported a finished agent as orphaned.
+    clearRunMarker(t2)
     recordRun(t2, 'qa', model, r, { passed: ['ticket+AC', 'changed files list', 'preview URL + QA inputs', ...(cfg.qaSeesFindings ? ['review findings (opt-in)'] : [])], excluded: cfg.qaSeesFindings ? [] : ['code-review findings'] })
     if (r.error) return blockT(t2, 'QA agent', 'agent-error', r.error), writeBoard(b2)
     const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
@@ -824,7 +1156,7 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
       })
     } else stamp(t2, 'ready-for-release', 'QA clean — human release gate')
     writeBoard(b2)
-  })().catch(() => boardRuns.delete(t.id))
+  })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
 
 app.post('/api/board/tickets/:id/release', (req, res) => {

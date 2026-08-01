@@ -149,7 +149,7 @@ function Inbox({ onNav }) {
             <span style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', flexShrink: 0 }}>{fmtDate(it.ts)}</span>
             {it.nudge && <button className="mini" style={{ marginTop: 0, color: copied === it.key ? 'var(--green)' : undefined }} title="copies a ready-to-send line. Nothing is ever sent for you." onClick={() => nudge(it)}>{copied === it.key ? '✓ copied' : 'nudge'}</button>}
             {!it.done && <button className="mini" style={{ marginTop: 0 }} title="hide until tomorrow" onClick={() => snooze(it)}>snooze 24h</button>}
-            <button className="mini" style={{ marginTop: 0 }} onClick={() => (it.link ? window.open(it.link, '_blank') : onNav?.(it.section))}>open</button>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => (it.link ? window.open(it.link, '_blank') : onNav?.(it.section, it.pane))}>open</button>
             <button className="mini" style={{ marginTop: 0 }} onClick={() => mark(it, !it.done)}>{it.done ? 'reopen' : 'clear'}</button>
           </div>
         )

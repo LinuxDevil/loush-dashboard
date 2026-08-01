@@ -248,7 +248,7 @@ body {
 .sect-label + .kpi-grid, .sect-label + .panel, .sect-label + .grid-2, .sect-label + .grid-wide { margin-top: 0; }
 
 /* ---------- shared components ---------- */
-.panel { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; margin-bottom: 14px; animation: fadeUp var(--dur-slow) var(--ease) both; }
+.panel { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; margin-bottom: 14px; animation: fadeUp var(--dur-slow) var(--ease) backwards; }
 .panel h3 { font: 600 15px var(--head); margin-bottom: 12px; color: var(--text-primary); }
 .panel h3 .muted { font: 400 12px var(--mono); }
 .panel-head { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -303,7 +303,7 @@ select option { background: var(--bg-elevated); }
 
 /* ---------- list + detail sections ---------- */
 .section { display: flex; height: 100%; gap: 14px; }
-.list-pane { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 14px; animation: fadeUp var(--dur-slow) var(--ease) both; min-height: 0; max-height: calc(100vh - 116px); }
+.list-pane { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 14px; animation: fadeUp var(--dur-slow) var(--ease) backwards; min-height: 0; max-height: calc(100vh - 116px); }
 .list-pane.wide { width: 400px; }
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .list-head h2 { font: 400 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary); }
@@ -330,7 +330,7 @@ select option { background: var(--bg-elevated); }
 .dot.testing { background: var(--amber); }
 .dot.pulse { animation: pulse 1.6s infinite; }
 
-.detail-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); animation: fadeUp var(--dur-slow) var(--ease) both; max-height: calc(100vh - 116px); }
+.detail-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); animation: fadeUp var(--dur-slow) var(--ease) backwards; max-height: calc(100vh - 116px); }
 .detail-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-default); flex-wrap: wrap; }
 .path { font: 400 11.5px var(--mono); color: var(--text-secondary); word-break: break-all; }
 .actions { display: flex; gap: 8px; flex-shrink: 0; }
@@ -399,9 +399,9 @@ table.inv tbody tr:hover { background: var(--bg-surface-hover); }
 .seg-score span { font: 400 14px var(--mono); color: var(--text-tertiary); }
 
 /* ---------- overview ---------- */
-.overview { animation: fadeUp var(--dur-slow) var(--ease) both; }
+.overview { animation: fadeUp var(--dur-slow) var(--ease) backwards; }
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
-.kpi { position: relative; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; animation: fadeUp var(--dur-slow) var(--ease) both; transition: border-color var(--dur-base) var(--ease); }
+.kpi { position: relative; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; animation: fadeUp var(--dur-slow) var(--ease) backwards; transition: border-color var(--dur-base) var(--ease); }
 .kpi:hover { border-color: var(--border-active); }
 /* escalate to a tinted danger border only on a card that represents risk — never decoratively */
 .kpi.risk { border-color: rgba(255, 84, 112, 0.35); }
@@ -451,12 +451,12 @@ table.inv tbody tr:hover { background: var(--bg-surface-hover); }
 
 /* ---------- projects ---------- */
 .proj-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
-.proj-stat { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; animation: fadeUp var(--dur-slow) var(--ease) both; }
+.proj-stat { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 16px 18px; animation: fadeUp var(--dur-slow) var(--ease) backwards; }
 .proj-stat .label { font: 400 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); }
 .proj-stat .value { margin-top: 8px; font: 600 26px var(--mono); line-height: 1; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .proj-stat .sub { font: 400 12px var(--body); color: var(--text-secondary); margin-top: 6px; }
 .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-bottom: 14px; }
-.proj-card { position: relative; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 18px; animation: fadeUp var(--dur-slow) var(--ease) both; transition: border-color var(--dur-base) var(--ease); }
+.proj-card { position: relative; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--r-card); padding: 18px; animation: fadeUp var(--dur-slow) var(--ease) backwards; transition: border-color var(--dur-base) var(--ease); }
 .proj-card:hover { border-color: var(--border-active); }
 /* the 2px head stripe is the project's CATEGORY colour, the same one its dot and sparkline use */
 .proj-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--pc, var(--accent)); }
@@ -652,8 +652,15 @@ table.inv tbody tr:hover { background: var(--bg-surface-hover); }
 .tabs button.active { color: var(--text-primary); border-bottom-color: var(--accent); background: transparent; font-weight: 600; }
 .tabs button.active:hover { background: transparent; border-bottom-color: var(--accent); }
 
-/* ---------- generic motion primitives ---------- */
-.enter { animation: fadeUp var(--dur-slow) var(--ease) both; animation-delay: var(--enter-delay, 0ms); }
+/* ---------- generic motion primitives ----------
+   fill-mode is `backwards`, never `both`. `backwards` is the half that matters: it holds the
+   from-state through `animation-delay`, which is what makes the stagger work. Retaining the
+   to-state buys nothing — every fadeUp ends at the element's own resting style — and it costs
+   something real: a filled `transform: none` computes to matrix(1,0,0,1,0,0), which is a transform,
+   which makes the element a containing block for `position: fixed`. Every full-screen drawer,
+   overlay and dialog rendered inside a section then anchors to that section instead of the viewport
+   and is drawn as a box floating in the middle of the page. */
+.enter { animation: fadeUp var(--dur-slow) var(--ease) backwards; animation-delay: var(--enter-delay, 0ms); }
 .lift { transition: border-color var(--dur-base) var(--ease), background var(--dur-base) var(--ease); }
 .lift:hover { border-color: var(--border-active); }
 .press:active { transform: translateY(1px); }

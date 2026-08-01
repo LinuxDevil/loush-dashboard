@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api, toast, tildify } from '../lib/api.js'
 import { buildBlocks, Block } from '../ui/chatBlocks.jsx'
+import { useVisiblePoll } from '../lib/hooks.js'
+import { useWorkScope } from '../ui/WorkScopeBar.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -76,20 +78,13 @@ export function RunWindow({ run, onClose }) {
 }
 
 export default function QuickActions() {
-  const [projects, setProjects] = useState([])
-  const [cwd, setCwd] = useState('')
   const [custom, setCustom] = useState('')
   const [runs, setRuns] = useState([])
   const [open, setOpen] = useState(null)
-  useEffect(() => { api.get('/api/projects').then(ps => { const ex = ps.filter(p => p.exists !== false); setProjects(ex); setCwd(c => c || ex[0]?.path || '') }).catch(() => {}) }, [])
-  useEffect(() => {
-    const load = () => api.get('/api/actions').then(setRuns).catch(() => {})
-    load()
-    const t = setInterval(load, 5000)
-    return () => clearInterval(t)
-  }, [])
+  const cwd = useWorkScope().path
+  useVisiblePoll(() => { api.get('/api/actions').then(setRuns).catch(() => {}) }, 5000)
   const launch = async cmdLine => {
-    if (!cwd) return toast('pick a project first', 'error')
+    if (!cwd) return toast('pick a project in the bar above first', 'error')
     const [cmd, ...rest] = cmdLine.trim().split(/\s+/)
     try {
       const { id } = await api.post('/api/actions/run', { cmd, cwd, args: rest.join(' ') })
@@ -102,10 +97,9 @@ export default function QuickActions() {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ ...PANEL, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ font: `400 11px ${MONO}`, color: 'var(--text-tertiary)' }}>run in</span>
-        <select value={cwd} onChange={e => setCwd(e.target.value)} style={{ font: `400 12px ${MONO}`, maxWidth: 340 }}>
-          {projects.map(p => <option key={p.path} value={p.path}>{tildify(p.path)}</option>)}
-        </select>
+        <span style={{ font: `400 11px ${MONO}`, color: cwd ? 'var(--text-tertiary)' : 'var(--amber)' }}>
+          {cwd ? `run in ${tildify(cwd)}` : 'no project selected above'}
+        </span>
         {ACTIONS.map(a => (
           <button key={a.cmd} title={`${a.cmd} — ${a.hint}`} onClick={() => launch(a.cmd)}>{a.label}</button>
         ))}
@@ -117,8 +111,9 @@ export default function QuickActions() {
       </div>
       {open && <RunWindow run={open} onClose={() => setOpen(null)} />}
       <div style={PANEL}>
-        <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Runs</div>
-        {runs.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>no action runs yet — pick a project and hit a button</div>}
+        {}
+        <div style={{ font: `600 13px ${HEAD}`, color: 'var(--text-primary)', marginBottom: 8 }}>Command runs</div>
+        {runs.length === 0 && <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>no command runs yet — hit a button above</div>}
         {runs.map(r => (
           <div key={r.id} onClick={() => setOpen(r)} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '6px 4px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)' }}>
             <span style={{ font: `400 11px ${MONO}`, color: r.alive ? 'var(--blue)' : r.exitCode === 0 ? 'var(--green)' : 'var(--red)' }}>{r.alive ? '●' : r.exitCode === 0 ? '✓' : '✗'}</span>

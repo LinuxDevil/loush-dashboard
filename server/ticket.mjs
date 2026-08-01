@@ -847,13 +847,6 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
     catch (e) { return res.status(502).json({ error: `could not read ${r.key} from JIRA: ${e.message}` }) }
 
     const art = readTicketArtifacts()[r.key] || {}
-    const parts = [
-      `JIRA: ${r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : r.key}`,
-      '', d.description || '(no description)',
-    ]
-    if (art.ac?.md) parts.push('', '## Acceptance criteria', art.ac.md)
-    if (art.tests?.md) parts.push('', '## Test cases', art.tests.md)
-    if (s.doc?.rel) parts.push('', `## Design`, `See \`${s.doc.rel}\` in this repository.`)
 
     // What the agents downstream need to check the work against the design rather than against
     // their own reading of the ticket. Everything here is a pointer, not a copy: the links are
@@ -865,8 +858,22 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       captures: capturesFor(repo.dir),
       contentCsv: contentCsvFor(repo.dir, r.key),
     }
+
+    // ORDER IS LOAD-BEARING. The board caps `desc` at DESC_CAP and the dev agent is prompted with
+    // `desc` alone, so whatever sits at the end is what the agent never sees. The pointers are a
+    // few hundred bytes and irreplaceable — losing the Figma link on a design ticket means the
+    // agent implements from prose — while the generated criteria and tests run to thousands of
+    // bytes and degrade gracefully when clipped. So pointers go first and the long artifacts last.
+    // Observed on AIR-10733: AC + tests alone reached the cap and dropped the design link entirely.
+    const parts = [
+      `JIRA: ${r.cfg.jiraHost ? `https://${r.cfg.jiraHost}/browse/${r.key}` : r.key}`,
+      '', d.description || '(no description)',
+    ]
+    if (s.doc?.rel) parts.push('', `## Design`, `See \`${s.doc.rel}\` in this repository.`)
     if (designRefs.figma.length) parts.push('', '## Figma', designRefs.figma.join('\n'))
     if (designRefs.contentCsv) parts.push('', '## Agreed copy', designRefs.contentCsv)
+    if (art.ac?.md) parts.push('', '## Acceptance criteria', art.ac.md)
+    if (art.tests?.md) parts.push('', '## Test cases', art.tests.md)
 
     try {
       const r2 = await fetch(`http://127.0.0.1:${DASH_PORT}/api/board/tickets`, {
@@ -876,7 +883,11 @@ ${ac ? `\n## Acceptance criteria already agreed for this ticket\n${ac}\n\nEvery 
       if (!r2.ok) throw new Error(`board ${r2.status}: ${(await r2.text()).slice(0, 200)}`)
       const t = await r2.json()
       writeState(r.ws.id, r.key, { ...s, board: { id: t.id, at: new Date().toISOString(), project: repo.dir } })
-      res.json({ ok: true, id: t.id, stage: t.stage })
+      // The board reports a capped desc and this endpoint used to drop that on the floor, so a
+      // handoff that lost its tail looked identical to one that did not. The dev agent is prompted
+      // with `desc` alone — a caller that cannot tell it was clipped cannot know what the agent is
+      // missing, so the count of dropped characters is carried all the way out to the UI.
+      res.json({ ok: true, id: t.id, stage: t.stage, capped: t.capped || null })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

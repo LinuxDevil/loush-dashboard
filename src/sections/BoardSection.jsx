@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api, fmtDate, toast } from '../lib/api.js'
-import { buildBlocks, MessageLog } from '../ui/chatBlocks.jsx'
+import AgentLive from '../ui/AgentLive.jsx'
 import Skeleton from '../ui/Skeleton.jsx'
+import { useFreshest, useVisiblePoll } from '../lib/hooks.js'
+import { useWorkScope } from '../ui/WorkScopeBar.jsx'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -32,6 +34,73 @@ function useProjects() {
   return Object.assign(scopes, { error })
 }
 const H2 = ({ children }) => <div style={{ font: `600 12px ${HEAD}`, marginBottom: 6 }}>{children}</div>
+
+const SEV_C = { critical: 'var(--red)', high: 'var(--red)', medium: 'var(--amber)', low: 'var(--text-secondary)' }
+const CLASS_LABEL = {
+  code: { text: 'fixable here', color: 'var(--accent-light)' },
+  'needs-human': { text: 'needs a human', color: 'var(--violet)' },
+  'pre-existing': { text: 'pre-existing', color: 'var(--text-tertiary)' },
+}
+
+/**
+ * Findings, grouped by what can actually happen to them next.
+ *
+ * A flat list of nine rows says nothing about which of them the loop is still chasing. Open,
+ * awaiting-re-review, parked and resolved are four different states with four different owners, and
+ * the pile that matters — what the next fix run will touch — is usually two of the nine.
+ */
+function Findings({ t, onAct }) {
+  const [busy, setBusy] = useState(null)
+  const all = t.findings || []
+  const decide = (f, body) => {
+    setBusy(f.id)
+    onAct('post', `/api/board/tickets/${t.id}/findings/${encodeURIComponent(f.id)}`, body).finally(() => setBusy(null))
+  }
+  const groups = [
+    { key: 'open', title: 'Open — the fix agent works on the highest severity of these', rows: all.filter(f => f.status === 'open') },
+    { key: 'fix-attempted', title: 'Addressed — unconfirmed until the next review', rows: all.filter(f => f.status === 'fix-attempted') },
+    { key: 'acked', title: 'Accepted — recorded, no longer blocking', rows: all.filter(f => f.status === 'acked') },
+    { key: 'resolved', title: 'Resolved — a later review stopped raising them', rows: all.filter(f => f.status === 'resolved') },
+  ].filter(g => g.rows.length)
+  return (
+    <div>
+      <H2>Review findings ({all.filter(f => f.status !== 'resolved').length} live · {all.length} seen)</H2>
+      {groups.map(g => (
+        <div key={g.key} style={{ marginBottom: 8 }}>
+          <div style={{ font: `400 10px ${MONO}`, color: 'var(--text-tertiary)', marginBottom: 3 }}>{g.title}</div>
+          {g.rows.map(f => {
+            const cls = CLASS_LABEL[f.class] || CLASS_LABEL.code
+            const stale = g.key === 'resolved'
+            return (
+              <div key={f.id} style={{ font: `400 11px ${MONO}`, padding: '3px 0', opacity: stale ? 0.5 : 1, display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ color: SEV_C[f.severity] || 'var(--text-secondary)' }}>[{f.severity}]</span>
+                <span style={{ color: cls.color }}>{cls.text}</span>
+                {/* Seen three times means the loop is not converging on it — the number is the
+                    signal that a human, not another fix round, is what this needs. */}
+                {f.seenCount > 1 && <span title={`raised in ${f.seenCount} reviews`} style={{ color: f.seenCount > 2 ? 'var(--amber)' : 'var(--text-tertiary)' }}>×{f.seenCount}</span>}
+                <span style={{ color: 'var(--accent-light)' }}>{(f.file || '').split('/').pop()}</span>
+                <span style={{ color: 'var(--text-secondary)', flex: 1, minWidth: 200 }}>{f.summary}</span>
+                {f.ackNote && <span style={{ color: 'var(--violet)' }}>“{f.ackNote}”</span>}
+                {g.key !== 'resolved' && (
+                  <span style={{ display: 'flex', gap: 4 }}>
+                    {f.status !== 'acked'
+                      ? <button className="mini" style={{ marginTop: 0 }} disabled={busy === f.id}
+                          title="accept this finding as known — it stops blocking and stops being re-raised, and the decision is recorded"
+                          onClick={() => decide(f, { status: 'acked', note: prompt('Why is this accepted? (recorded on the ticket)') || null })}>accept</button>
+                      : <button className="mini" style={{ marginTop: 0 }} disabled={busy === f.id} onClick={() => decide(f, { status: 'open' })}>reopen</button>}
+                    {f.class === 'code' && <button className="mini" style={{ marginTop: 0 }} disabled={busy === f.id}
+                      title="no agent can fix this from inside the repo — park it for a person"
+                      onClick={() => decide(f, { class: 'needs-human' })}>not fixable here</button>}
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
 const Meta = ({ children, color = 'var(--text-tertiary)' }) => <span style={{ font: `400 11px ${MONO}`, color }}>{children}</span>
 const ModelInput = props => (<><input list="board-models" placeholder="model (blank = default)" {...props} /><datalist id="board-models">{MODELS.map(m => <option key={m} value={m} />)}</datalist></>)
 
@@ -191,73 +260,6 @@ function Drawer({ onClose, children }) {
 const elapsed = ms => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
 
 /**
- * What the agent is doing, right now, tailed from its transcript.
- *
- * It polls while a run is live and stops when it is not — a finished ticket keeps its last session
- * visible because "what did it actually do" is the question you ask after a run, not during it.
- * Auto-scroll follows the tail only while you are already at the bottom, so reading back through
- * what it did ten tool calls ago does not get yanked away on the next poll.
- */
-function LiveLog({ t }) {
-  const [log, setLog] = useState({ events: [], file: null, offset: 0, running: null, note: null })
-  const [now, setNow] = useState(Date.now())
-  const boxRef = React.useRef(null)
-  const stick = React.useRef(true)
-  const cursor = React.useRef({ file: null, offset: 0 })
-
-  useEffect(() => { cursor.current = { file: null, offset: 0 }; setLog({ events: [], file: null, offset: 0, running: null, note: null }) }, [t.id])
-  useEffect(() => {
-    let alive = true
-    const poll = () => {
-      const { file, offset } = cursor.current
-      const q = new URLSearchParams({ offset: String(offset), ...(file ? { file } : {}) })
-      api.get(`/api/board/tickets/${t.id}/live?${q}`).then(d => {
-        if (!alive) return
-        cursor.current = { file: d.file, offset: d.offset }
-        setLog(prev => ({ ...d, events: [...(d.file === prev.file ? prev.events : []), ...d.events].slice(-400) }))
-        setNow(Date.now())
-      }).catch(() => {})
-    }
-    poll()
-    // Only a live run needs a 2s heartbeat; a finished ticket's transcript is not moving.
-    const ms = t.running ? 2000 : 15000
-    const id = setInterval(poll, ms)
-    return () => { alive = false; clearInterval(id) }
-  }, [t.id, t.running?.kind, t.running?.startedAt])
-
-  useEffect(() => { if (stick.current && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight }, [log.events.length])
-
-  const run = t.running || log.running
-  // The same builder the Chat section uses, so a board agent reads exactly like a chat: prompt,
-  // thinking, tool calls with their results expandable, cost. Reimplementing a second, worse
-  // transcript viewer here was the alternative.
-  const blocks = React.useMemo(() => buildBlocks(log.events), [log.events])
-  const tools = blocks.filter(b => b.kind === 'tool').length
-  const stop = () => api.post(`/api/board/tickets/${t.id}/stop`)
-    .then(r => toast(r.resumeSessionId ? 'stopped — resumable' : 'stopped', 'success'))
-    .catch(e => alert(e.message))
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <H2>{run ? `◐ ${run.kind} agent — live` : 'last agent session'}</H2>
-        {run && <Meta color="var(--blue)">{elapsed(now - run.startedAt)} · {tools} tool call{tools === 1 ? '' : 's'}</Meta>}
-        {run && <button className="mini" style={{ marginTop: 0, color: 'var(--red)' }} onClick={stop} title="kills the agent process — the session id is kept so it can be resumed">■ stop</button>}
-        {log.file && <Meta>{log.file.split('/').pop().replace('.jsonl', '')}</Meta>}
-      </div>
-      {log.note && <Meta>{log.note}</Meta>}
-      {!!blocks.length && (
-        <div ref={boxRef}
-          onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24 }}
-          style={{ maxHeight: 420, overflow: 'auto', background: 'var(--bg-inset)', borderRadius: 6, padding: '8px 10px' }}>
-          <MessageLog blocks={blocks} busy={!!run} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-/**
  * Branch and base, per ticket.
  *
  * Only editable before the worktree is cut, which is also the only time the answer can still
@@ -304,7 +306,13 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
   const [reply, setReply] = useState('')
   const [escModel, setEscModel] = useState('')
   const [subs, setSubs] = useState(null)
-  const call = (m, url, body) => api[m](url, body).then(onRefresh).catch(e => alert(e.message))
+  // `alert(e.message)` threw away everything that made the failure actionable. "no sub-ticket could
+  // start" is a summary; the server also says WHICH child and WHY for each one, and that detail was
+  // being dropped on the floor — leaving a dead end where the answer had already been computed.
+  const [failure, setFailure] = useState(null)
+  const call = (m, url, body) => api[m](url, body)
+    .then(r => { setFailure(null); onRefresh(); return r })
+    .catch(e => setFailure({ message: e.message, detail: e.detail || null, skipped: e.body?.skipped || null }))
   const act = (action, body) => call('post', `/api/board/tickets/${t.id}/${action}`, body || {})
   const patch = body => call('patch', '/api/board/tickets/' + t.id, body)
   const kids = all.filter(x => x.parent === t.id)
@@ -343,6 +351,19 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
         <SourceChips t={t} />
       </div>
       <BranchEditor t={t} cfg={cfg} parent={t.parent ? all.find(x => x.id === t.parent) : null} onSave={patch} />
+
+      {failure && (
+        <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 6, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ font: `600 12px ${MONO}`, color: 'var(--red)', flex: 1 }}>{failure.message}</span>
+            <button className="mini" style={{ marginTop: 0 }} onClick={() => setFailure(null)}>dismiss</button>
+          </div>
+          {failure.detail && <Meta color="var(--text-secondary)">{failure.detail}</Meta>}
+          {failure.skipped?.map(s => (
+            <div key={s.id} style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)' }}>· <b>{s.title}</b> — {s.why}</div>
+          ))}
+        </div>
+      )}
       {!bare && desc}
 
       {t.blocked && (
@@ -380,7 +401,7 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
           different screen, a different mental model, and only true after the fact. The transcript
           is tailable from the moment the agent starts, so the answer to "what is it doing" belongs
           on the ticket doing it. */}
-      {(t.running || t.worktree || t.runs?.length > 0) && <LiveLog t={t} />}
+      {(t.running || t.worktree || t.runs?.length > 0) && <AgentLive ticketId={t.id} running={t.running} onStopped={onRefresh} />}
 
       {t.running ? null : !t.blocked && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -403,7 +424,9 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
           {t.stage === 'code-review' && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button className="primary" onClick={() => act('review')}>▶ Run code review</button>
-              {t.findings?.some(f => ['critical', 'high'].includes(f.severity)) && <button onClick={() => act('fix')} title="dev agent auto-fixes the findings, then you re-run review — capped at 3 loops">⚒ Auto-fix findings</button>}
+              {}
+              {t.findings?.some(f => f.status === 'open' && f.class === 'code' && ['critical', 'high'].includes(f.severity)) &&
+                <button onClick={() => act('fix')} title="fixes the highest open severity band only, then you re-run review to confirm — accepted and needs-human findings are not sent">⚒ Auto-fix findings</button>}
             </div>
           )}
           {t.stage === 'ready-for-qa' && (t.designRefs?.figma?.length || t.designRefs?.captures?.length || t.designRefs?.contentCsv) && (
@@ -424,17 +447,23 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
 
       {t.preview?.url && <Meta color="var(--green)">⬢ preview: <a href={t.preview.url} target="_blank" rel="noreferrer" style={{ color: 'var(--green)' }}>{t.preview.url}</a> <button className="mini" style={{ marginTop: 0, marginLeft: 8 }} onClick={() => call('del', `/api/board/tickets/${t.id}/preview`)}>stop</button></Meta>}
 
-      {t.findings?.length > 0 && (
-        <div>
-          <H2>Review findings ({t.findings.length})</H2>
-          {t.findings.map((f, i) => (
-            <div key={i} style={{ font: `400 11px ${MONO}`, padding: '2px 0' }}>
-              <span style={{ color: ['critical', 'high'].includes(f.severity) ? 'var(--red)' : 'var(--amber)' }}>[{f.severity}]</span>{' '}
-              <span style={{ color: 'var(--accent-light)' }}>{f.file}</span> <span style={{ color: 'var(--text-secondary)' }}>{f.summary}</span>
+      {}
+      {t.verdict && (() => {
+        const spend = (t.runs || []).reduce((s, r) => s + (r.cost || 0), 0)
+        const tone = t.verdict.action === 'advance' ? 'var(--green)' : t.verdict.action === 'fix' ? 'var(--amber)' : 'var(--red)'
+        return (
+          <div style={{ borderLeft: `3px solid ${tone}`, paddingLeft: 10, font: `400 11px ${MONO}` }}>
+            <span style={{ color: tone, fontWeight: 600 }}>{t.verdict.action}</span>
+            <span style={{ color: 'var(--text-secondary)' }}> — {t.verdict.reason}</span>
+            <div style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
+              {(t.reviewRounds || []).length} review round{(t.reviewRounds || []).length === 1 ? '' : 's'} · ${spend.toFixed(2)} spent on this ticket
+              {t.reviewedSha ? ` · reviewed @ ${String(t.reviewedSha).slice(0, 7)}` : ''}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        )
+      })()}
+
+      {t.findings?.length > 0 && <Findings t={t} onAct={call} />}
 
       {lastQa && (
         <div>
@@ -484,7 +513,8 @@ function Detail({ t, all, teams, cfg, onRefresh, onClose, bare }) {
 function Analytics({ project }) {
   const [days, setDays] = useState(30)
   const [a, setA] = useState(null)
-  useEffect(() => { api.get(`/api/board/analytics?days=${days}${project ? '&project=' + encodeURIComponent(project) : ''}`).then(setA).catch(() => {}) }, [project, days])
+  const fresh = useFreshest(setA)
+  useEffect(() => { fresh(api.get(`/api/board/analytics?days=${days}${project ? '&project=' + encodeURIComponent(project) : ''}`)).catch(() => {}) }, [project, days, fresh])
   if (!a) return <Skeleton tiles={5} rows={5} />
   const kpi = (label, val, sub) => (
     <div style={{ ...PANEL, padding: '14px 18px', flex: 1, minWidth: 150 }}>
@@ -550,7 +580,7 @@ function Setup({ project, board, onRefresh }) {
   const [team, setTeam] = useState(null)
   const [pipe, setPipe] = useState(null)
   useEffect(() => setCfg(board.config || {}), [board.config])
-  const saveCfg = () => api.post('/api/board/config', { project, ...cfg, previewIdleMin: Number(cfg.previewIdleMin) || 240 }).then(onRefresh).catch(e => alert(e.message))
+  const saveCfg = () => api.post('/api/board/config', { project, ...cfg, previewIdleMin: Number(cfg.previewIdleMin) || 240, costCap: Number(cfg.costCap) || 0 }).then(onRefresh).catch(e => alert(e.message))
   const F = ({ label, k, w, ph }) => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 3, width: w || 160 }}>
       <Meta>{label}</Meta>
@@ -571,6 +601,8 @@ function Setup({ project, board, onRefresh }) {
             <select value={cfg.mergeMethod || 'merge'} onChange={e => setCfg({ ...cfg, mergeMethod: e.target.value })}><option value="merge">merge commit</option><option value="squash">squash</option><option value="rebase">rebase (ff-only)</option></select>
           </label>
           {F({ label: 'default model', k: 'defaultModel', ph: 'sonnet', w: 110 })}
+          {}
+          {F({ label: 'cost cap $/ticket', k: 'costCap', ph: '0 = none', w: 110 })}
           <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.requirePr} onChange={e => setCfg({ ...cfg, requirePr: e.target.checked })} title="the board never pushes and never opens a PR. With this on, Release stops merging locally and copies a push + gh pr create command for you to run." />never merge locally — copy a push + PR command instead</label>
           <label style={{ font: `400 11px ${MONO}`, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.qaSeesFindings} onChange={e => setCfg({ ...cfg, qaSeesFindings: e.target.checked })} title="context handoff opt-in: by default QA tests behavior unbiased by implementation detail" />QA sees review findings</label>
           <label style={{ font: `400 11px ${MONO}`, color: cfg.autopilot ? 'var(--accent-light)' : 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!cfg.autopilot} onChange={e => setCfg({ ...cfg, autopilot: e.target.checked })} title="every 20s, advance each ticket to its next stage. Stops at: a blocked ticket, QA-reported bugs, and the release gate — those stay yours." />autopilot</label>
@@ -646,16 +678,24 @@ const DEFAULTS_TXT = 'backlog, in-progress, code-review, fixing, ready-for-qa, q
 
 export default function BoardSection() {
   const projects = useProjects()
-  const [project, setProject] = useState('')
+  // The section's project, not this pane's. The scope key is the absolute path, which is exactly
+  // what a harness scope id already is — so this needs no translation, only the honesty check
+  // below that the path is a repo the board actually knows about.
+  const project = useWorkScope().path || ''
   const [tab, setTab] = useState('board')
   const [board, setBoard] = useState(null)
   const [open, setOpen] = useState(null)
   const [fAttention, setFAttention] = useState(false)
   const [dragOver, setDragOver] = useState(null)
-  const load = () => project && api.get('/api/board?project=' + encodeURIComponent(project)).then(setBoard).catch(() => {})
+  // Switching project while the previous board is still in flight would otherwise repaint the old
+  // project's lanes under the new project's name.
+  const fresh = useFreshest(setBoard)
+  const load = () => { if (project) fresh(api.get('/api/board?project=' + encodeURIComponent(project))).catch(() => {}) }
   const move = (id, stage) => { const t = board?.tickets.find(x => x.id === id); if (t && t.stage !== stage) api.patch('/api/board/tickets/' + id, { stage }).then(load).catch(e => toast(e.message, 'error')) }
-  useEffect(() => { setBoard(null); setOpen(null); load(); const t = setInterval(() => { if (!document.hidden) load() }, 5000); return () => clearInterval(t) }, [project])
-  useEffect(() => { if (!project && projects.length) setProject(projects[0].id) }, [projects])
+  // Clearing first matters: without it the previous project's lanes stay on screen under the new
+  // project's name until the fetch lands.
+  useEffect(() => { setBoard(null); setOpen(null) }, [project])
+  useVisiblePoll(load, 5000, [project])
 
   const stages = useMemo(() => {
     if (!board) return []
@@ -667,14 +707,25 @@ export default function BoardSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <select value={project} onChange={e => setProject(e.target.value)} title={projects.error || undefined}>
-          {!projects.length && <option value="">{projects.error ? 'could not load projects' : 'no projects'}</option>}
-          {projects.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
-        {projects.error && <Meta color="var(--red)">projects could not be loaded — {projects.error}</Meta>}
+        {}
+        {projects.error
+          ? <Meta color="var(--red)">projects could not be loaded — {projects.error}</Meta>
+          : !project ? <Meta color="var(--amber)">no project selected above</Meta>
+            : !projects.some(p => p.id === project)
+              ? <Meta color="var(--amber)">{project.split('/').pop()} has no Claude Code settings — the board still works, nothing is scoped to it</Meta>
+              : <Meta>{projects.find(p => p.id === project)?.label}</Meta>}
         {['board', 'analytics', 'setup'].map(x => <button key={x} className={tab === x ? 'primary' : ''} onClick={() => setTab(x)}>{x}</button>)}
+        {tab === 'board' && board && board.tickets.some(t => t.running) && (
+          <button className="primary" style={{ background: 'var(--red)', borderColor: 'var(--red)', marginLeft: 'auto' }}
+            title="kills every running agent on this project — each keeps its session id and can be resumed"
+            onClick={() => {
+              const live = board.tickets.filter(t => t.running)
+              if (!window.confirm(`Stop ${live.length} running agent${live.length === 1 ? '' : 's'} on this project?\n\n${live.map(t => `· ${cardTitle(t)} (${t.running.kind})`).join('\n')}\n\nEach keeps its session id and can be resumed.`)) return
+              api.post('/api/board/stop-all', { project }).then(r => { toast(`stopped ${r.stopped} agent${r.stopped === 1 ? '' : 's'}`, 'success'); load() }).catch(e => alert(e.message))
+            }}>■ stop all {board.tickets.filter(t => t.running).length} running</button>
+        )}
         {tab === 'board' && board && (
-          <label style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', display: 'flex', gap: 5, alignItems: 'center', marginLeft: 'auto' }}>
+          <label style={{ font: `400 11px ${MONO}`, color: 'var(--amber)', display: 'flex', gap: 5, alignItems: 'center', marginLeft: board.tickets.some(t => t.running) ? 0 : 'auto' }}>
             <input type="checkbox" checked={fAttention} onChange={e => setFAttention(e.target.checked)} />
             attention only ({board.tickets.filter(t => t.blocked || (!t.running && ['code-review', 'ready-for-qa', 'ready-for-release'].includes(t.stage))).length})
           </label>

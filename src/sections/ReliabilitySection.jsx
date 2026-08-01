@@ -3,6 +3,7 @@ import { api, fmtDate } from '../lib/api.js'
 import Skeleton from '../ui/Skeleton.jsx'
 import { Tabs } from '../ui/tabs.jsx'
 import { modelName } from '../lib/modelName.js'
+import { useFreshest, useVisiblePoll } from '../lib/hooks.js'
 
 const MONO = "var(--mono)"
 const HEAD = "var(--head)"
@@ -78,7 +79,8 @@ function Failures() {
   const [days, setDays] = useState(30)
   const [project, setProject] = useState('')
   const [d, setD] = useState(null)
-  useEffect(() => { api.get(`/api/gov/failures?days=${days}&project=${encodeURIComponent(project)}`).then(setD) }, [days, project])
+  const fresh = useFreshest(setD)
+  useEffect(() => { fresh(api.get(`/api/gov/failures?days=${days}&project=${encodeURIComponent(project)}`)) }, [days, project, fresh])
   if (!d) return <div style={{ font: `400 12px ${MONO}`, color: 'var(--text-tertiary)' }}>scanning transcripts…</div>
   const maxHour = Math.max(1, ...Object.values(d.byHour))
   const maxTurns = Math.max(1, ...d.turnsDist)
@@ -149,8 +151,11 @@ function Traces() {
   const [trace, setTrace] = useState(null)
   const [sid, setSid] = useState(null)
   useEffect(() => { if (scopes.length > 1 && !project) setProject(scopes[1].id) }, [scopes])
-  useEffect(() => { if (project) api.get('/api/hub?project=' + encodeURIComponent(project)).then(d => setSessions(d.sessions)).catch(() => setSessions([])) }, [project])
-  const open = id => { setSid(id); setTrace(null); api.get(`/api/gov/trace?project=${encodeURIComponent(project)}&id=${id}`).then(setTrace) }
+  const freshSessions = useFreshest(setSessions)
+  const freshTrace = useFreshest(setTrace)
+  useEffect(() => { if (project) freshSessions(api.get('/api/hub?project=' + encodeURIComponent(project)).then(d => d.sessions)).catch(() => setSessions([])) }, [project, freshSessions])
+  // Clicking down a session list faster than the traces return is the normal way to read this pane.
+  const open = id => { setSid(id); setTrace(null); freshTrace(api.get(`/api/gov/trace?project=${encodeURIComponent(project)}&id=${id}`)) }
   const KIND = { prompt: ['◈', 'var(--accent-light)'], reason: ['…', 'var(--violet)'], act: ['▸', 'var(--accent)'], observe: ['↩', 'var(--blue)'], checkpoint: ['⛃', 'var(--green)'] }
   return (
     <div className="hx-2a">
@@ -201,7 +206,7 @@ function Evals() {
   const [scope, setScope] = useState('global')
   const [cmp, setCmp] = useState([])
   const load = () => api.get('/api/gov/evals').then(setD)
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t) }, [])
+  useVisiblePoll(load, 5000)
   if (!d) return <Skeleton tiles={4} rows={6} />
   const runs = d.runs
   const pick = id => setCmp(c => c.includes(id) ? c.filter(x => x !== id) : [...c.slice(-1), id])
