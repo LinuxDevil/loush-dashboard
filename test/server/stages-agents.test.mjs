@@ -211,6 +211,21 @@ test('an agent timeout yields a non-ok entry rather than throwing', async () => 
   assert.ok(e.provenance.handoff.excluded.includes('design-read'))
 })
 
+test('an account-limit notice is a failed stage, not an ok stage holding a banner', async () => {
+  // The notice arrives as the RESULT on a zero exit code, so nothing upstream of here says it went
+  // wrong. Written as `ok` it would put one line of banner text in docs/KEY/ac.md and let `tests`
+  // consume it as the agreed criteria.
+  const a = agent({ result: "You've hit your session limit · resets 4:20am (Asia/Amman)" })
+  const ctx = ctxFor({ run: a.run })
+  const e = await ac(ctx)
+
+  assert.equal(e.status, 'failed')
+  assert.match(e.reason, /4:20am/, 'the reset time is what tells a human when to re-run it')
+  assert.deepEqual(e.artifacts, [], 'no artifact — a stage that did not run has nothing to hand downstream')
+  assert.doesNotMatch(fs.readFileSync(path.join(ctx.repoDir, 'docs', KEY, 'ac.md'), 'utf8'), /session limit/,
+    'and the banner never overwrites whatever criteria were already there')
+})
+
 test('a missing hard input is `skipped` naming the upstream, not `failed`', async () => {
   const a = agent()
   const ctx = ctxFor({ run: a.run, stages: { figma: { stage: 'figma', status: 'failed', reason: 'Figma would not answer', fetchedAt: AT, artifacts: [], provenance: null } } })

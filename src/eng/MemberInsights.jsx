@@ -7,26 +7,40 @@ import { metricsFor, buildRadars } from './memberMetrics.mjs'
 export { metricsFor, buildRadars } from './memberMetrics.mjs'
 
 // ---------- Radar (hexagon) — 0.5 ring = the median teammate ----------
+/**
+ * The worst rank on an axis is percentile 0, which plotted literally puts that vertex on the
+ * centre point — the polygon collapses into a spike and reads as a rendering fault rather than as
+ * "last on this axis". The floor keeps the shape legible without reordering anything; the median
+ * ring moves with it so the legend stays true.
+ */
+const FLOOR = 0.12
+const rOf = pct => FLOOR + (pct == null ? 0.5 : Math.max(0, Math.min(1, pct))) * (1 - FLOOR)
+
 function Radar({ axes, size = 210, lowN }) {
-  const c = size / 2, R = c - 34, n = axes.length
-  const pt = (i, r) => { const a = -Math.PI / 2 + (i / n) * 2 * Math.PI; return [c + Math.cos(a) * r * R, c + Math.sin(a) * r * R] }
+  // Axis labels are drawn outside the hexagon and anchored away from it, so the box has to be
+  // wider than the shape — at `size` square, "On-track" rendered as "-track" and "Cycle speed" as
+  // "Cycle s", clipped at the SVG edge.
+  const PAD = 68
+  const w = size + PAD * 2, h = size
+  const cx = w / 2, cy = h / 2, R = size / 2 - 22, n = axes.length
+  const pt = (i, r) => { const a = -Math.PI / 2 + (i / n) * 2 * Math.PI; return [cx + Math.cos(a) * r * R, cy + Math.sin(a) * r * R] }
   const poly = rs => rs.map((r, i) => pt(i, r).join(',')).join(' ')
-  const shape = axes.map(a => a.pct == null ? 0.5 : a.pct)
+  const median = rOf(0.5)
   return (
-    <svg width={size} height={size} style={{ display: 'block' }}>
-      {[0.25, 0.5, 0.75, 1].map(r => (
-        <polygon key={r} points={poly(axes.map(() => r))} fill="none"
-          strokeWidth={r === 0.5 ? 1 : 0.75} strokeDasharray={r === 0.5 ? '3 3' : ''}  style={{ stroke: (r === 0.5 ? 'var(--amber-bg)' : 'var(--bg-surface-active)') }} />
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block', maxWidth: '100%' }}>
+      {[0.25, median, 0.75, 1].map((r, k) => (
+        <polygon key={k} points={poly(axes.map(() => r))} fill="none"
+          strokeWidth={r === median ? 1 : 0.75} strokeDasharray={r === median ? '3 3' : ''} style={{ stroke: (r === median ? 'var(--amber-bg)' : 'var(--bg-surface-active)') }} />
       ))}
-      {axes.map((a, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={c} y1={c} x2={x} y2={y}  style={{ stroke: 'var(--text-secondary)' }} /> })}
-      <polygon points={poly(shape)} strokeWidth={1.5}  style={{ fill: (lowN ? 'var(--bg-surface-active)' : 'var(--violet-bg)'), stroke: (lowN ? DIM : PURPLE) }} />
+      {axes.map((a, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={cx} y1={cy} x2={x} y2={y} style={{ stroke: 'var(--text-secondary)' }} /> })}
+      <polygon points={poly(axes.map(a => rOf(a.pct)))} strokeWidth={1.5} style={{ fill: (lowN ? 'var(--bg-surface-active)' : 'var(--violet-bg)'), stroke: (lowN ? DIM : PURPLE) }} />
       {axes.map((a, i) => {
-        const [x, y] = pt(i, a.pct == null ? 0.5 : a.pct)
-        const [lx, ly] = pt(i, 1.16)
+        const [x, y] = pt(i, rOf(a.pct))
+        const [lx, ly] = pt(i, 1.14)
         return <g key={a.key}>
-          <circle cx={x} cy={y} r={a.pct == null ? 2 : 3}  style={{ fill: (a.pct == null ? DIM : PURPLE) }} />
+          <circle cx={x} cy={y} r={a.pct == null ? 2 : 3} style={{ fill: (a.pct == null ? DIM : PURPLE) }} />
           <text x={lx} y={ly} fontSize={8.5} fontFamily={MONO}
-            textAnchor={lx < c - 8 ? 'end' : lx > c + 8 ? 'start' : 'middle'} dominantBaseline="middle" style={{ fill: (a.raw == null ? DIM : 'var(--text-secondary)') }}>
+            textAnchor={lx < cx - 8 ? 'end' : lx > cx + 8 ? 'start' : 'middle'} dominantBaseline="middle" style={{ fill: (a.raw == null ? DIM : 'var(--text-secondary)') }}>
             {a.label}{a.raw != null ? '' : ' ·'}
           </text>
         </g>

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { runAgent } from '../lib/agent.mjs'
+import { unfinishedReason } from '../lib/agent-outcome.mjs'
 import { git as gitSafe } from '../lib/git-safe.mjs'
 
 const BOARD_FILE = path.join(CLAUDE, 'taskboard.json')
@@ -266,11 +267,17 @@ function headShaOf(t) {
 }
 
 function recordRun(t, kind, model, r, handoff) {
-  (t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff,
+  // `!r.error` is not the same as "it ran": an account-limit notice arrives as a normal result on a
+  // zero exit code, and recording that as `ok` is what promoted AIR-10733 on a review that never
+  // happened. Its own status rather than `lost` — `lost` already means "the server restarted and
+  // never received this run's output", and reusing it here would name the wrong cause.
+  const unfinished = !r.error && unfinishedReason(r.result, null)
+  ;(t.runs ||= []).push({ at: Date.now(), kind, model: model || 'default', status: r.error ? 'error' : r.blocked ? 'blocked' : unfinished ? 'unfinished' : 'ok', cost: r.cost || 0, turns: r.turns || 0, ms: r.ms || 0, sessionId: r.sessionId || null, summary: (r.result || r.error || '').slice(0, 1500), handoff,
     // The three fields that make a run auditable after the fact: what commit it saw, and where the
     // prompt it was given and the output it produced are on disk.
-    headSha: headShaOf(t), transcriptDir: r.transcriptDir || null, blocked: r.blocked || null })
-  const outcome = r.error ? 'failed' : r.blocked ? 'blocked' : 'passed'
+    headSha: headShaOf(t), transcriptDir: r.transcriptDir || null, blocked: r.blocked || null,
+    ...(unfinished ? { unfinished } : {}) })
+  const outcome = r.error || unfinished ? 'failed' : r.blocked ? 'blocked' : 'passed'
   loushRunEmit(t.project, t.id, 'step.completed', { label: kind, agent: 'board:' + kind, status: outcome })
   // The OUTCOME, not 'running'. Written at the end of a run, 'running' was never true by the time
   // it was written — and since a board ticket only ever emits a terminal event when it is released,
@@ -382,7 +389,9 @@ function beginDev(board, t, { model: modelOverride, reply, resume } = {}) {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'dev', model, r, { passed: ['ticket', 'sub-ticket breakdown', 'worktree codebase + CLAUDE.md', ...(reply ? ['unblock reply'] : [])], excluded: ['prior tickets', 'other branches'] })
-    if (r.error) blockT(t2, 'dev agent', 'agent-error', r.error)
+    // A run that never ran is a failed run, not an empty one (lib/agent-outcome.mjs).
+    const unfinished = unfinishedReason(r.result, r.error)
+    if (unfinished) blockT(t2, 'dev agent', r.error ? 'agent-error' : 'agent-unfinished', unfinished)
     else if (r.blocked) blockT(t2, 'dev agent', 'needs-input', r.blocked, r.blocked)
     else { stamp(t2, 'code-review', 'dev done — idle until you run code review'); conflictScan(b2, t2) }
     writeBoard(b2)
@@ -472,6 +481,11 @@ app.get('/api/board', (req, res) => {
   const tickets = board.tickets.filter(t => !project || t.project === project).map(t => ({
     ...t,
     running: liveOf(t.id),
+    // A worktree PATH can be chosen before anything is checked out; a worktree that EXISTS is what
+    // freezes the branch, the base and the path itself. The client cannot stat, and guessing from
+    // stage or run count gets it wrong on exactly the ticket where it matters — so the answer is
+    // computed here, where it is one call.
+    worktreeCut: !!(t.worktree && fs.existsSync(path.join(t.worktree, '.git'))),
     depBlocked: (t.deps || []).filter(d => { const o = tkt(board, d); return o && !['ready-for-release', 'released'].includes(o.stage) }),
   }))
   res.json({ tickets, teams: board.teams, pipelines: board.pipelines, config: project ? projCfg(board, project) : null })
@@ -530,6 +544,25 @@ const FIELD_TYPES = {
   qa: v => (v === null || typeof v === 'object' ? { ok: true, value: v } : { ok: false, why: 'must be an object or null' }),
   branch: v => gitRef(v, 'branch'),
   base: v => gitRef(v, 'base'),
+  worktree: v => absDir(v),
+}
+
+/**
+ * Where the checkout goes, or null for the board's own directory.
+ *
+ * `git worktree add` takes this as a path argument and will happily create it anywhere, so a
+ * relative path would resolve against the server's cwd rather than anything the user pictured.
+ * Absolute is required for that reason, not for tidiness.
+ */
+function absDir(v) {
+  if (v === null || v === '') return { ok: true, value: null }
+  if (typeof v !== 'string') return { ok: false, why: 'must be a string or null' }
+  const s = v.trim().replace(/^~(?=\/|$)/, os.homedir())
+  if (!s) return { ok: true, value: null }
+  if (!path.isAbsolute(s)) return { ok: false, why: `must be an absolute path (got "${v.trim()}")` }
+  if (s.length > 400) return { ok: false, why: 'is too long for a path' }
+  if (s.split(path.sep).includes('..')) return { ok: false, why: 'must not contain ".."' }
+  return { ok: true, value: s }
 }
 
 /**
@@ -568,15 +601,26 @@ app.patch('/api/board/tickets/:id', (req, res) => {
     })
   }
 
-  // Branch and base are answered once, when the worktree is cut. Accepting an edit afterwards
-  // would change the label without moving the checkout — the agent would keep committing to the
-  // old branch while the board, the reviewer's diff and the merge all named the new one.
-  for (const k of ['branch', 'base']) {
+  // Branch, base and worktree are answered once, when the worktree is cut. Accepting an edit
+  // afterwards would change the label without moving the checkout — the agent would keep
+  // committing to the old branch at the old path while the board, the reviewer's diff and the
+  // merge all named the new one.
+  for (const k of ['branch', 'base', 'worktree']) {
     if (req.body[k] === undefined || req.body[k] === t[k]) continue
-    if (t.worktree && fs.existsSync(t.worktree)) {
+    // The `.git` file is the line: a chosen path that nothing has been checked out into yet is
+    // still an answer the user is allowed to change their mind about.
+    if (t.worktree && fs.existsSync(path.join(t.worktree, '.git'))) {
       return res.status(409).json({
         error: `${k} cannot be changed once the worktree exists`,
         detail: `${t.branch} is checked out at ${t.worktree}. Delete the ticket and re-file it, or rename the branch in git yourself.`,
+      })
+    }
+    // Pointing a second ticket at a directory that already holds a checkout would give two tickets
+    // one working copy, and whichever agent ran second would commit over the first one's branch.
+    if (k === 'worktree' && req.body[k] && fs.existsSync(path.join(String(req.body[k]).replace(/^~(?=\/|$)/, os.homedir()), '.git'))) {
+      return res.status(409).json({
+        error: 'that directory already holds a git checkout',
+        detail: `${req.body[k]} is already a working copy. Pick an empty path — the board creates the directory itself.`,
       })
     }
   }
@@ -870,7 +914,8 @@ app.post('/api/board/tickets/:id/analyze', (req, res) => {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'analyze', model, r, { passed: ['ticket title+desc', 'codebase (agent-explored)'], excluded: ['prior tickets', 'chat history'] })
-    t2.proposal = r.error ? null : (extractJson(r.result) || []).filter(s => s.title).slice(0, 8)
+    // Same rule as every other path: a limit notice is not a breakdown of zero sub-tickets.
+    t2.proposal = unfinishedReason(r.result, r.error) ? null : (extractJson(r.result) || []).filter(s => s.title).slice(0, 8)
     writeBoard(b2)
   })().catch(() => { boardRuns.delete(t.id); clearRunPersisted(t.id) })
 })
@@ -955,7 +1000,12 @@ app.post('/api/board/tickets/:id/review', (req, res) => {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'review', model, r, { passed: ['diff vs ' + baseOf(b2, t2), 'ticket', 'dev agent summary'], excluded: ['dev agent raw transcript'] })
-    if (r.error) blockT(t2, 'review agent', 'agent-error', r.error)
+    // The promotion bug. A review that never ran extracts no JSON, so it produced no findings, so
+    // the verdict was `advance` and the ticket was stamped ready-for-qa on nothing at all. It must
+    // block like an error and never reach convergenceVerdict: a verdict computed from an agent that
+    // did not run is not a weak verdict, it is a meaningless one.
+    const unfinished = unfinishedReason(r.result, r.error)
+    if (unfinished) blockT(t2, 'review agent', r.error ? 'agent-error' : 'agent-unfinished', unfinished)
     else {
       const sha = headShaOf(t2)
       t2.findings = mergeFindings(t2.findings, (extractJson(r.result) || []).filter(f => f.summary), sha)
@@ -1023,7 +1073,8 @@ app.post('/api/board/tickets/:id/fix', (req, res) => {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'fix', model, r, { passed: ['findings', 'original diff context (resumed session when possible)'], excluded: ['full codebase re-read'] })
-    if (r.error) blockT(t2, 'fix agent', 'agent-error', r.error)
+    const unfinished = unfinishedReason(r.result, r.error)
+    if (unfinished) blockT(t2, 'fix agent', r.error ? 'agent-error' : 'agent-unfinished', unfinished)
     // Marked attempted, NOT deleted. Emptying the list threw away the only record of what each
     // round had addressed, so the next review's output could not be compared with the last one's —
     // which is precisely what made 9 → 8 → 9 indistinguishable from progress. The re-review is what
@@ -1089,7 +1140,10 @@ app.post('/api/board/tickets/:id/designqa', (req, res) => {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'designqa', model, r, { passed: ['ticket', 'figma links', 'local captures', 'content sheet', 'running app'], excluded: ['code-review findings'] })
-    if (r.error) { blockT(t2, 'design QA agent', 'agent-error', r.error); return writeBoard(b2) }
+    // Without this an unfinished run yields zero cases, and zero failed cases stamps ready-for-qa
+    // with `designQa.pass = true` — a design sign-off nobody performed.
+    const unfinished = unfinishedReason(r.result, r.error)
+    if (unfinished) { blockT(t2, 'design QA agent', r.error ? 'agent-error' : 'agent-unfinished', unfinished); return writeBoard(b2) }
     const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
     const failed = cases.filter(c => c.pass === false)
     // Only a PASS is recorded on the ticket. `designQa` is the "this build was checked against the
@@ -1139,7 +1193,9 @@ app.post('/api/board/tickets/:id/qa', (req, res) => {
     // and the next restart would have reported a finished agent as orphaned.
     clearRunMarker(t2)
     recordRun(t2, 'qa', model, r, { passed: ['ticket+AC', 'changed files list', 'preview URL + QA inputs', ...(cfg.qaSeesFindings ? ['review findings (opt-in)'] : [])], excluded: cfg.qaSeesFindings ? [] : ['code-review findings'] })
-    if (r.error) return blockT(t2, 'QA agent', 'agent-error', r.error), writeBoard(b2)
+    // Same hazard as design QA: zero cases with zero failures used to stamp ready-for-release.
+    const unfinished = unfinishedReason(r.result, r.error)
+    if (unfinished) return blockT(t2, 'QA agent', r.error ? 'agent-error' : 'agent-unfinished', unfinished), writeBoard(b2)
     const cases = (extractJson(r.result)?.cases || []).slice(0, 60)
     const failed = cases.filter(c => c.pass === false)
     ;(t2.qaResults ||= []).push({ at: Date.now(), cases, pass: !failed.length })

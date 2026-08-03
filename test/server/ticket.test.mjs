@@ -58,11 +58,16 @@ test('the design prompt demands cited findings — the property that separates a
   assert.ok(/Never invent a file path/i.test(p), 'forbids invented paths')
 })
 
+// Reads the whole definition rather than its first LINE. The single-line form broke the moment a
+// formatter wrapped `cfgFor` across three lines — the coercion was still there, the guard just could
+// not see it. A source-as-text test has to survive reformatting, or it reports a style change as a
+// safety regression and the next person deletes it.
 test('cfgFor coerces its argument — a repeated ?project= query must not crash the process', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/eng.mjs'), 'utf8')
-  const line = src.split('\n').find(l => /^const cfgFor =/.test(l))
-  assert.ok(line, 'cfgFor is defined')
-  assert.ok(/String\(key \?\? ''\)/.test(line), 'cfgFor must String()-coerce before .toUpperCase()')
+  const at = src.indexOf('const cfgFor =')
+  assert.notEqual(at, -1, 'cfgFor is defined')
+  const body = src.slice(at, src.indexOf('const cfgForTicket', at))
+  assert.match(body, /String\(\s*key\s*\?\?\s*''\s*\)/, 'cfgFor must String()-coerce before .toUpperCase()')
   assert.ok(!/\(key \|\| ''\)\.toUpperCase/.test(src), 'the uncoerced form must not reappear')
 })
 

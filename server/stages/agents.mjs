@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 import { entry } from '../../lib/dossier.mjs'
 import { STAGES as GRAPH, stale } from '../../lib/stage-graph.mjs'
 import { spawnAgent } from '../../lib/agent.mjs'
+import { unfinishedReason } from '../../lib/agent-outcome.mjs'
 import { capabilityPrompt } from '../ticket.mjs'
 
 const AGENT_TIMEOUT = 900_000   // same budget as the existing generate path (`ticket.mjs:553`)
@@ -215,7 +216,11 @@ async function agentStage(name, artifactName, ctx, build) {
     logFile: path.join(cacheDir, `${name}.stream.jsonl`),
   })
   if (out.error) return mk('failed', `the ${name} agent did not finish: ${out.error}`, { provenance: { model, transcript: out.transcript || null } })
-  if (!out.result) return mk('failed', `the ${name} agent finished but returned no markdown`, { provenance: { model: out.model || null, cost: out.cost ?? null, turns: out.turns ?? null, transcript: out.transcript || null } })
+  // A zero exit code is not evidence the agent ran: an account-limit notice comes back as the
+  // result itself (lib/agent-outcome.mjs). Written as an artifact it would be a `docs/KEY/ac.md`
+  // containing one line of banner text, `ok` in the manifest, and `tests` consuming it as criteria.
+  const unfinished = unfinishedReason(out.result, null)
+  if (unfinished) return mk('failed', `the ${name} agent did not run: ${unfinished}`, { provenance: { model: out.model || null, cost: out.cost ?? null, turns: out.turns ?? null, transcript: out.transcript || null } })
 
   // Written verbatim. The manifest next to it is the provenance store, and a header restating it here
   // is a second copy free to drift from the first.

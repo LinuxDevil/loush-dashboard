@@ -5,7 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>Loush Dashboard</title>
-    <!-- The design system is system-font only: no webfont round trip, no FOUT, no layout shift. -->
+    <!-- The design system is system-font only: no webfont round trip, no FOUT, no layout shift.
+         The one exception is the Task board pane, which was designed against IBM Plex and asks for
+         it by name. Loaded with display=swap and never used as a page default, so nothing outside
+         that pane waits on it — a failed fetch degrades to the system stack. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
     <script>
       // Runs before first paint so the shell never flashes the wrong theme.
       (function () {
