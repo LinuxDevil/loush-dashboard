@@ -82,6 +82,7 @@ export default function SetupSection() {
         on load and submitting a blank one leaves the saved value untouched.
       </p>
       <Credentials d={d} reload={load} />
+      <Integrations d={d} reload={load} />
       <Projects d={d} reload={load} />
       <WorkWeek d={d} reload={load} />
       <StoryPoints d={d} reload={load} />
@@ -196,8 +197,111 @@ function Credentials({ d, reload }) {
   )
 }
 
+// ---------- Figma + Google Sheets ----------
+function Integrations({ d, reload }) {
+  const figma = d.credentials.figma || {}
+  const sheets = d.credentials.sheets || {}
+  const canManageFigma = !figma.envLocked && !!d.eng.companyTools?.enabled
+  const [key, setKey] = useState('')
+  const [sa, setSa] = useState('')
+  const [sheet, setSheet] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [fTest, setFTest] = useState(null)
+  const [sTest, setSTest] = useState(null)
+
+  const run = async fn => { setBusy(true); try { await fn() } catch (e) { toast(e.message, 'error') } finally { setBusy(false) } }
+
+  const saveFigma = () => run(async () => {
+    await api.put('/api/figma-capture/token', { token: key })
+    setKey(''); toast('Figma key saved', 'success'); reload()
+  })
+  const clearFigma = () => confirm('Remove the stored Figma API key?') && run(async () => {
+    await api.put('/api/figma-capture/token', { token: '' }); toast('removed', 'success'); reload()
+  })
+  const testFigma = () => run(async () => {
+    setFTest(null)
+    try { setFTest(await api.post('/api/setup/test/figma', {})) } catch (e) { setFTest({ ok: false, error: e.message }) }
+  })
+
+  const saveSheets = () => run(async () => {
+    const r = await api.put('/api/setup/credentials', { sheetsServiceAccount: sa.trim() })
+    if (r.warning) toast(r.warning, 'error')
+    setSa(''); toast('service account saved', 'success'); reload()
+  })
+  const clearSheets = () => confirm('Remove the stored Google service-account key?') && run(async () => {
+    await api.put('/api/setup/credentials', { sheetsServiceAccount: '' }); toast('removed', 'success'); reload()
+  })
+  const testSheets = () => run(async () => {
+    setSTest(null)
+    try { setSTest(await api.post('/api/setup/test/sheets', { sheet: sheet.trim() })) } catch (e) { setSTest({ ok: false, error: e.message }) }
+  })
+
+  return (
+    <Section title="Figma & Google Sheets" sub="used by the ticket dossier pipeline — optional">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 20 }}>
+
+        <div>
+          <Field label="Figma personal access token"
+            hint={<span><Dot ok={figma.set} /> {figma.set ? `stored (${figma.source})` : 'not set'} — create one at Figma → Settings → Security → Personal access tokens. Read-only file access is enough.</span>}>
+            <input type="password" value={key} onChange={e => setKey(e.target.value)} disabled={!canManageFigma}
+              autoComplete="new-password" placeholder={figma.set ? '•••••• (leave blank to keep)' : 'figd_...'}
+              style={{ ...inp, opacity: canManageFigma ? 1 : 0.5 }} />
+          </Field>
+          {figma.envLocked && (
+            <div style={{ font: '400 12px sans-serif', color: GOLD, marginBottom: 10, lineHeight: 1.5 }}>
+              <b>FIGMA_TOKEN is set in the server environment</b> and wins over anything saved here. Unset it there to manage the key from this page.
+            </div>
+          )}
+          {!figma.envLocked && !d.eng.companyTools?.enabled && (
+            <div style={{ font: '400 12px sans-serif', color: GOLD, marginBottom: 10, lineHeight: 1.5 }}>
+              The key is stored by the Figma Capture routes, which only exist while <b>Company tools</b> is
+              on. Enable it below and restart the server to edit the key here.
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button style={primary} disabled={busy || !canManageFigma || !key} onClick={saveFigma}>Save key</button>
+            <button style={btn} disabled={busy || !figma.set} onClick={testFigma}>Test</button>
+            {figma.set && figma.source === 'file' && canManageFigma && <button style={danger} disabled={busy} onClick={clearFigma}>Remove</button>}
+          </div>
+          {fTest && <div style={{ font: `400 12px ${MONO}`, color: fTest.ok ? GREEN : RED, marginTop: 8 }}>
+            {fTest.ok ? `✓ authenticated as ${fTest.account}` : `✗ ${fTest.error || 'failed'}`}
+          </div>}
+        </div>
+
+        <div>
+          <Field label="Google service-account key"
+            hint={<span><Dot ok={sheets.set} /> {sheets.set ? `stored (${sheets.source})` : 'not set'} — paste the JSON key file, or the path to where you saved it. Google Cloud → IAM → Service Accounts → Keys → Add key → JSON.</span>}>
+            <textarea value={sa} onChange={e => setSa(e.target.value)} rows={3} autoComplete="off"
+              placeholder={sheets.set ? '•••••• (leave blank to keep)' : '{"type":"service_account", …}   ·   or ~/keys/dossier.json'}
+              style={{ ...inp, resize: 'vertical', fontFamily: MONO }} />
+          </Field>
+          {sheets.account && (
+            <div style={{ ...card, background: 'var(--bg-inset)', padding: 10, marginBottom: 10 }}>
+              <div style={{ font: '400 12px sans-serif', color: DIM, marginBottom: 4 }}>Share every sheet you want read with this address (Viewer is enough):</div>
+              <div style={{ font: `600 12px ${MONO}`, color: 'var(--text-primary)', wordBreak: 'break-all' }}>{sheets.account}</div>
+            </div>
+          )}
+          <Field label="Sheet to test against" hint="Optional — paste a sheet URL to check it is actually shared with the address above.">
+            <input value={sheet} onChange={e => setSheet(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" style={inp} />
+          </Field>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button style={primary} disabled={busy || !sa.trim()} onClick={saveSheets}>Save key</button>
+            <button style={btn} disabled={busy || !sheets.set} onClick={testSheets}>Test</button>
+            {sheets.set && sheets.source === 'file' && <button style={danger} disabled={busy} onClick={clearSheets}>Remove</button>}
+          </div>
+          {sTest && <div style={{ font: `400 12px ${MONO}`, color: sTest.ok ? GREEN : RED, marginTop: 8, lineHeight: 1.6 }}>
+            {sTest.ok
+              ? <>✓ key accepted by Google{sTest.sheet ? ` — read “${sTest.sheet}”` : ''}<br /><span style={{ color: DIM }}>service account: {sTest.account}</span></>
+              : <>✗ {sTest.error || 'failed'}</>}
+          </div>}
+        </div>
+      </div>
+    </Section>
+  )
+}
+
 // ---------- projects ----------
-const blankProject = { key: '', name: '', githubRepo: '', jql: '', spField: '', devEmails: [], qaEmails: [], productEmails: [], writes: false }
+const blankProject ={ key: '', name: '', githubRepo: '', jql: '', spField: '', devEmails: [], qaEmails: [], productEmails: [], writes: false }
 
 function Projects({ d, reload }) {
   const [edit, setEdit] = useState(null)

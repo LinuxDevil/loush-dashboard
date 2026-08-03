@@ -180,7 +180,10 @@ function ghState() {
 // ---------------------------------------------------------------------------
 
 export default function mountSetup(app, deps = {}) {
-  const { readMeta, writeMeta } = deps
+  // secretsFile/gitignoreFile are injectable so the credential routes can be exercised against a temp
+  // directory — a test that wrote to the real .eng.local.json would destroy the user's own token.
+  const { readMeta, writeMeta, secretsFile = SECRETS_FILE, gitignoreFile = GITIGNORE } = deps
+  const creds = () => credState(secretsFile, gitignoreFile)
 
   app.get('/api/setup', (req, res) => {
     try {
@@ -199,7 +202,7 @@ export default function mountSetup(app, deps = {}) {
           projects: cfg.projects,
           file: { path: PROJECTS_FILE, exists: fs.existsSync(PROJECTS_FILE), gitignored: isIgnored(gi, 'projects.json') },
         },
-        credentials: credState(),
+        credentials: creds(),
         gh: ghState(),
         notify: {
           desktop: !!meta.notify?.desktop,
@@ -299,14 +302,23 @@ export default function mountSetup(app, deps = {}) {
   // --- credentials ----------------------------------------------------------------
   app.put('/api/setup/credentials', (req, res) => {
     try {
-      const { jiraEmail, jiraToken } = req.body || {}
+      const { jiraEmail, jiraToken, sheetsServiceAccount } = req.body || {}
       if (jiraEmail && !EMAIL_RE.test(jiraEmail)) return res.status(400).json({ error: 'That is not a valid email address' })
-      const existing = readJsonSafe(SECRETS_FILE, {})
-      const next = mergeSecrets(existing, { jiraEmail, jiraToken })
-      writeSecretFile(SECRETS_FILE, next)
-      if (!isIgnored(gitignoreText(), '.eng.local.json'))
-        return res.json({ ok: true, warning: '.eng.local.json is NOT in .gitignore — your token is committable. Add it before your next commit.', credentials: credState() })
-      res.json({ ok: true, credentials: credState() })
+      let sheets = sheetsServiceAccount
+      if (sheetsServiceAccount !== undefined && sheetsServiceAccount !== '' && sheetsServiceAccount !== null) {
+        const { sa, error } = resolveServiceAccount(sheetsServiceAccount)
+        if (error) return res.status(400).json({ error })
+        // A path is stored as the path, so rotating the key file in place is picked up without a
+        // re-paste; pasted JSON is stored parsed, so the file holds one shape either way.
+        const asPath = typeof sheetsServiceAccount === 'string' && !sheetsServiceAccount.trim().startsWith('{')
+        sheets = asPath ? sheetsServiceAccount.trim() : sa
+      }
+      const existing = readJsonSafe(secretsFile, {})
+      const next = mergeSecrets(existing, { jiraEmail, jiraToken, sheetsServiceAccount: sheets })
+      writeSecretFile(secretsFile, next)
+      if (!isIgnored(gitignoreText(gitignoreFile), '.eng.local.json'))
+        return res.json({ ok: true, warning: '.eng.local.json is NOT in .gitignore — your token is committable. Add it before your next commit.', credentials: creds() })
+      res.json({ ok: true, credentials: creds() })
     } catch (e) { res.status(500).json({ error: String(e.message || e) }) }
   })
 
@@ -325,6 +337,54 @@ export default function mountSetup(app, deps = {}) {
       if (!r.ok) return res.json({ ok: false, status: r.status, error: r.status === 401 ? 'Rejected — check the email and token' : r.status === 403 ? 'Authenticated, but not permitted' : `JIRA answered ${r.status}` })
       const me = await r.json().catch(() => ({}))
       res.json({ ok: true, account: me.displayName || me.emailAddress || 'authenticated', host })
+    } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }) }
+  })
+
+  app.post('/api/setup/test/figma', async (req, res) => {
+    try {
+      const token = figmaToken()
+      if (!token) return res.status(400).json({ ok: false, error: 'No Figma API key stored yet' })
+      const r = await (deps.fetch || globalThis.fetch)('https://api.figma.com/v1/me', {
+        headers: { 'X-Figma-Token': token }, signal: AbortSignal.timeout(12000),
+      })
+      if (!r.ok) return res.json({ ok: false, status: r.status, error: r.status === 401 ? 'Rejected — check the key' : r.status === 403 ? 'Authenticated, but this key is not permitted to read that' : `Figma answered ${r.status}` })
+      const me = await r.json().catch(() => ({}))
+      res.json({ ok: true, account: me.email || me.handle || 'authenticated' })
+    } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }) }
+  })
+
+  // A sheet id, out of whatever the user pasted — the full edit URL is what the browser gives you.
+  const sheetIdOf = v => (String(v || '').match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/) || [null, String(v || '').trim() || null])[1]
+
+  app.post('/api/setup/test/sheets', async (req, res) => {
+    try {
+      const doFetch = deps.fetch || globalThis.fetch
+      const sa = sheetCreds(secretsFile)
+      if (!sa) return res.status(400).json({ ok: false, error: 'No Google service-account key stored yet' })
+      const t = await doFetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: assertion(sa) }).toString(),
+        signal: AbortSignal.timeout(12000),
+      })
+      const tok = await t.json().catch(() => null)
+      if (!tok?.access_token)
+        return res.json({ ok: false, account: sa.email, error: `Google refused this key (${t.status}${tok?.error_description ? `: ${tok.error_description}` : ''}) — it may be revoked, or the Sheets API not enabled on its project` })
+
+      const id = sheetIdOf(req.body?.sheet)
+      if (!id) return res.json({ ok: true, account: sa.email })
+
+      // The optional half: proving the key works says nothing about whether THIS sheet is shared with
+      // the service account, and "not shared" is a different problem from "bad key" — it is fixed in
+      // Google Sheets, not here, so it must not read as a credential failure.
+      const r = await doFetch(`${SHEETS_API}/${encodeURIComponent(id)}?fields=properties.title`, {
+        headers: { authorization: `Bearer ${tok.access_token}` }, signal: AbortSignal.timeout(12000),
+      })
+      const meta = await r.json().catch(() => null)
+      if (r.status === 403) return res.json({ ok: false, account: sa.email, shared: false, error: `The key is valid, but this sheet is not shared with ${sa.email} — share it (or the Drive folder holding it) with that address. Viewer is enough.` })
+      if (r.status === 404) return res.json({ ok: false, account: sa.email, error: 'No such spreadsheet — Google does not have that id, so the link is wrong or the sheet was deleted' })
+      if (!r.ok || !meta?.properties) return res.json({ ok: false, account: sa.email, error: `Google refused the read with ${r.status}` })
+      res.json({ ok: true, account: sa.email, shared: true, sheet: meta.properties.title })
     } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }) }
   })
 

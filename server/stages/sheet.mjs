@@ -18,8 +18,10 @@ import { SECRETS_FILE } from '../../lib/paths.mjs'
 
 const STAGE = 'sheet'
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly'
-const TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const API = 'https://sheets.googleapis.com/v4/spreadsheets'
+// Exported for the Setup page's "test this credential" button, which mints the same assertion against
+// the same endpoints. One definition, so a working test cannot diverge from a working stage.
+export const TOKEN_URL = 'https://oauth2.googleapis.com/token'
+export const API = 'https://sheets.googleapis.com/v4/spreadsheets'
 
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
 
@@ -38,7 +40,7 @@ export function sheetCreds(file = SECRETS_FILE) {
   } catch { return null }
 }
 
-function assertion({ email, privateKey }) {
+export function assertion({ email, privateKey }) {
   const now = Math.floor(Date.now() / 1000)
   const signed = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: email, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 })}`
   return `${signed}.${crypto.sign('RSA-SHA256', Buffer.from(signed), privateKey).toString('base64url')}`
