@@ -12,7 +12,7 @@ const captureDir = (repo, slug) => path.join(capturesDir(repo), slug)
 const readJson = (p, fallback) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback } }
 
 const TOKEN_FILE = path.join(os.homedir(), '.claude', 'dashboard-figma-token.json')
-const figmaToken = () => process.env.FIGMA_TOKEN || readJson(TOKEN_FILE, {}).token || ''
+export const figmaToken = () => process.env.FIGMA_TOKEN || readJson(TOKEN_FILE, {}).token || ''
 const figmaTokenSource = () => process.env.FIGMA_TOKEN ? 'env' : (readJson(TOKEN_FILE, {}).token ? 'file' : null)
 
 function contextMarkdown(capture, annotations) {

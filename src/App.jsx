@@ -35,6 +35,7 @@ import DeliverySection from './sections/DeliverySection.jsx';
 import WorkingSet from './sections/WorkingSet.jsx';
 import SetupSection from './sections/SetupSection.jsx';
 import TicketSection from './sections/TicketSection.jsx';
+import PipelineSection from './sections/PipelineSection.jsx';
 import ConstitutionSection from './company/ConstitutionSection.jsx';
 import FigmaCaptureSection from './company/FigmaCaptureSection.jsx';
 import DesignMapSection from './company/DesignMapSection.jsx';
@@ -112,6 +113,7 @@ const BASE_SECTIONS = [
         head={<WorkScopeBar />}
         items={[
           { label: 'Ticket', el: <TicketSection /> },
+          { label: 'Pipeline', el: <PipelineSection /> },
           { label: 'Task Board', el: <BoardSection /> },
           { label: 'Loush Runs', el: <RunsSection /> },
           { label: 'Commands', el: <QuickActions /> },

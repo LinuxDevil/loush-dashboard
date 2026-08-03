@@ -166,9 +166,15 @@ test('a project must be selected — the key prefix is not used to guess one', (
   assert.ok(/keyPrefixMismatch: r\.mismatch/.test(src), 'and reported to the client')
 })
 
-test('pre-partition state is still readable, so nothing is orphaned', () => {
+// Inverted from 'pre-partition state is still readable'. The flat fallback was unreachable — no flat
+// file exists, and `readState` only ever looked in `ticketProjectDir(<workspaceId>)` — so it went. This
+// pins that it stays gone: re-adding a silent second read path is how `readState` served one
+// workspace's ticket under another's configuration in the first place.
+test('readState has exactly one read path — the flat fallback stays deleted', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server/ticket.mjs'), 'utf8')
-  assert.ok(/legacyTicketStateFile\(key\)/.test(src), 'readState falls back to the flat layout')
+  assert.ok(!/legacyTicketStateFile/.test(src), 'no legacy flat-layout read')
+  const fn = src.slice(src.indexOf('function readState('), src.indexOf('function writeState('))
+  assert.equal((fn.match(/readFileSync/g) || []).length, 1, 'one and only one read')
 })
 
 test('the selected folder IS the working directory — nothing is inferred', () => {

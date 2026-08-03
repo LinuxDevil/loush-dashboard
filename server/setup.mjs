@@ -4,6 +4,10 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { loadEngConfig, normalizeWork, describeWork, invalidateEngConfig, normalizeToolFlag, normalizeDesignSystem, DEFAULT_WORK, DEFAULT_SP_DAYS } from '../lib/eng-config.mjs'
 import { PROJECTS_FILE, SECRETS_FILE, LEGACY_SECRETS, GITIGNORE_FILE, CATALOG_FILE } from '../lib/paths.mjs'
+// The Figma key lives in ~/.claude/dashboard-figma-token.json and is written by
+// PUT /api/figma-capture/token. Imported only to answer "is one set?" — the value never leaves here.
+import { figmaToken } from './figma-capture.mjs'
+import { sheetCreds, assertion, TOKEN_URL, API as SHEETS_API } from './stages/sheet.mjs'
 
 const GITIGNORE = GITIGNORE_FILE
 
@@ -80,6 +84,33 @@ export function mergeSecrets(existing = {}, patch = {}) {
   return out
 }
 
+/**
+ * Resolve what the user typed into a Google service-account key.
+ *
+ * Accepts the key object, the JSON text pasted out of the file Google hands you at download, or a
+ * path to that file — `sheetCreds()` reads all three back the same way. Returns `{ sa }` or
+ * `{ error }`; the error NEVER quotes the input, because the input is a PEM private key and a parse
+ * error would otherwise print half of it into a response body and a log line.
+ */
+export function resolveServiceAccount(raw) {
+  let sa = raw
+  if (typeof raw === 'string') {
+    const s = raw.trim()
+    if (!s) return { error: 'Paste the JSON key file Google gave you, or the path to it' }
+    if (s.startsWith('{')) {
+      try { sa = JSON.parse(s) } catch { return { error: 'That is not valid JSON — paste the key file exactly as downloaded, without re-typing the private_key newlines' } }
+    } else {
+      try { sa = JSON.parse(fs.readFileSync(s, 'utf8')) } catch { return { error: 'No readable JSON key file at that path' } }
+    }
+  }
+  if (!sa || typeof sa !== 'object') return { error: 'Paste the JSON key file Google gave you, or the path to it' }
+  if (!sa.client_email) return { error: 'That key has no client_email — it is not a service-account key (a service account is created under IAM → Service Accounts → Keys → Add key → JSON)' }
+  if (!sa.private_key) return { error: 'That key has no private_key — paste the whole downloaded file, not just the account details' }
+  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(sa.private_key))
+    return { error: 'private_key is not a PEM block — it must start with -----BEGIN PRIVATE KEY----- and keep its \\n escapes intact' }
+  return { sa }
+}
+
 export function isIgnored(gitignoreText, basename) {
   return String(gitignoreText || '').split('\n')
     .map(l => l.trim())
@@ -105,11 +136,11 @@ function writeConfigFile(file, obj) {
   fs.renameSync(tmp, file)
 }
 
-const gitignoreText = () => { try { return fs.readFileSync(GITIGNORE, 'utf8') } catch { return '' } }
+const gitignoreText = (file = GITIGNORE) => { try { return fs.readFileSync(file, 'utf8') } catch { return '' } }
 
-function credState() {
-  const gi = gitignoreText()
-  const local = readJsonSafe(SECRETS_FILE, {})
+export function credState(secretsFile = SECRETS_FILE, gitignoreFile = GITIGNORE) {
+  const gi = gitignoreText(gitignoreFile)
+  const local = readJsonSafe(secretsFile, {})
   const legacy = readJsonSafe(LEGACY_SECRETS, {})
   const pick = (envVar, ...keys) => {
     if (process.env[envVar]) return 'env'
@@ -117,14 +148,20 @@ function credState() {
     if (keys.some(k => legacy[k])) return 'legacy'
     return null
   }
+  const sheetsSource = pick('', 'sheetsServiceAccount')
+  // The service-account ADDRESS is not a secret and is the one thing the user must act on: a sheet
+  // can only be read once it has been shared with it. The private key is never read out.
+  const sheetsAccount = sheetsSource ? sheetCreds(secretsFile)?.email || null : null
   return {
+    sheets: { set: !!sheetsSource, source: sheetsSource, account: sheetsAccount },
+    figma: { set: !!figmaToken(), source: process.env.FIGMA_TOKEN ? 'env' : (figmaToken() ? 'file' : null), envLocked: !!process.env.FIGMA_TOKEN },
     email: { set: !!pick('JIRA_EMAIL', 'jiraEmail', 'email'), source: pick('JIRA_EMAIL', 'jiraEmail', 'email') },
     token: { set: !!pick('JIRA_API_TOKEN', 'jiraToken', 'token', 'jiraAPIKey'), source: pick('JIRA_API_TOKEN', 'jiraToken', 'token', 'jiraAPIKey') },
     envOverride: !!(process.env.JIRA_EMAIL || process.env.JIRA_API_TOKEN),
     file: {
-      path: SECRETS_FILE, exists: fs.existsSync(SECRETS_FILE),
+      path: secretsFile, exists: fs.existsSync(secretsFile),
       gitignored: isIgnored(gi, '.eng.local.json'),
-      mode: fs.existsSync(SECRETS_FILE) ? '0' + (fs.statSync(SECRETS_FILE).mode & 0o777).toString(8) : null,
+      mode: fs.existsSync(secretsFile) ? '0' + (fs.statSync(secretsFile).mode & 0o777).toString(8) : null,
     },
   }
 }

@@ -17,8 +17,15 @@ const elapsed = ms => (ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor
  * own 5s timer and pauses while the tab is hidden, so `running` handed in from a ticket can be
  * minutes stale — this panel showed "◐ dev agent — live, 1m 40s" for a run that had already
  * finished. Once the endpoint has answered even once, its answer wins.
+ *
+ * `source` makes the endpoints a parameter so the ticket pipeline can tail a stage with the same
+ * component rather than a second copy of it. It defaults to the board's paths, which is what both
+ * existing callers pass nothing for.
  */
-export default function AgentLive({ ticketId, running: runningHint, onStopped }) {
+const boardSource = ticketId => ({ live: `/api/board/tickets/${ticketId}/live`, stop: `/api/board/tickets/${ticketId}/stop` })
+
+export default function AgentLive({ ticketId, running: runningHint, onStopped, source }) {
+  const src = source || boardSource(ticketId)
   const [log, setLog] = useState({ events: [], file: null, running: null, note: null, polled: false })
   const [now, setNow] = useState(Date.now())
   const boxRef = useRef(null)
@@ -28,14 +35,14 @@ export default function AgentLive({ ticketId, running: runningHint, onStopped })
   useEffect(() => {
     cursor.current = { file: null, offset: 0 }
     setLog({ events: [], file: null, running: null, note: null, polled: false })
-  }, [ticketId])
+  }, [src.live])
 
   useEffect(() => {
     let alive = true
     const poll = () => {
       const { file, offset } = cursor.current
       const q = new URLSearchParams({ offset: String(offset), ...(file ? { file } : {}) })
-      api.get(`/api/board/tickets/${ticketId}/live?${q}`).then(d => {
+      api.get(`${src.live}${src.live.includes('?') ? '&' : '?'}${q}`).then(d => {
         if (!alive) return
         cursor.current = { file: d.file, offset: d.offset }
         setLog(prev => ({ ...d, polled: true, events: [...(d.file === prev.file ? prev.events : []), ...d.events].slice(-400) }))
@@ -46,14 +53,14 @@ export default function AgentLive({ ticketId, running: runningHint, onStopped })
     // A live run earns a 2s heartbeat; a finished transcript is not moving.
     const id = setInterval(poll, runningHint ? 2000 : 15000)
     return () => { alive = false; clearInterval(id) }
-  }, [ticketId, runningHint?.kind, runningHint?.startedAt])
+  }, [src.live, runningHint?.kind, runningHint?.startedAt])
 
   useEffect(() => { if (stick.current && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight }, [log.events.length])
 
   const blocks = React.useMemo(() => buildBlocks(log.events), [log.events])
   const run = log.polled ? log.running : runningHint
   const tools = blocks.filter(b => b.kind === 'tool').length
-  const stop = () => api.post(`/api/board/tickets/${ticketId}/stop`)
+  const stop = () => api.post(src.stop)
     .then(r => { toast(r.resumeSessionId ? 'stopped — resumable' : 'stopped', 'success'); onStopped?.() })
     .catch(e => alert(e.message))
 

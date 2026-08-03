@@ -11,7 +11,7 @@ import { listLocalProjects } from '../lib/clone.mjs'
 import { spawnAgent, runAgent } from '../lib/agent.mjs'
 import { parseGraph, parseOps, validateGraph, mergeGraph, layout, applyOps, toMermaid } from '../lib/design-schema.mjs'
 import { buildImportGraph, SOURCE_EXTS, IGNORE_DIRS } from './fe.mjs'
-import { TICKET_DIR, ticketStateFile, ticketProjectDir, legacyTicketStateFile, workspaceId } from '../lib/paths.mjs'
+import { TICKET_DIR, ticketStateFile, ticketProjectDir, workspaceId } from '../lib/paths.mjs'
 import { parseTasks, validateTasks } from '../lib/decomposition.mjs'
 import { git as gitSafe } from '../lib/git-safe.mjs'
 
@@ -48,8 +48,6 @@ const EMPTY = key => ({ v: 1, key, rev: 0, cwd: null, doc: null, graph: null, ch
 
 function readState(project, key) {
   try { return { ...EMPTY(key), ...JSON.parse(fs.readFileSync(ticketStateFile(project, key), 'utf8')) } }
-  catch { }
-  try { return { ...EMPTY(key), ...JSON.parse(fs.readFileSync(legacyTicketStateFile(key), 'utf8')) } }
   catch { return EMPTY(key) }
 }
 function writeState(project, key, s) {
@@ -207,7 +205,7 @@ function listWorkspaces() {
     }
   })
 }
-const workspaceById = id => listWorkspaces().find(w => w.id === id) || null
+export const workspaceById = id => listWorkspaces().find(w => w.id === id) || null
 
 /**
  * Where a run for this workspace executes. There is nothing to infer any more: the user selected a
@@ -215,7 +213,7 @@ const workspaceById = id => listWorkspaces().find(w => w.id === id) || null
  * ever a way to guess this, and guessing failed silently on forks, monorepos and differently-named
  * remotes — which disabled design, files and grounded generation with no recourse on that screen.
  */
-function repoFor(ws) {
+export function repoFor(ws) {
   if (!ws?.dir) return { dir: null, how: null, repo: null, reason: 'no project selected' }
   if (!fs.existsSync(ws.dir)) return { dir: null, how: null, repo: ws.slug || null, reason: `${ws.dir} no longer exists on disk` }
   const caps = detectCapabilities(ws.dir)
@@ -1072,12 +1070,12 @@ say so. You are proposing; the user decides what to apply.`
 }
 
 // ---------------------------------------------------------------------------------------------
-const WALK_CAP = 5000
+export const WALK_CAP = 5000
 // Just the paths. indexRepo() also reads every file's contents to build the import graph, which
 // is a lot of work when all that is wanted is "does this path exist". `truncated` travels with the
 // result: against a truncated list, "matches nothing in the checkout" could be the cap talking
 // rather than a bad path, and the caller has to be able to say so.
-function repoFileList(root) {
+export function repoFileList(root) {
   const files = []
   let truncated = false
   const walk = dir => {

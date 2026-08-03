@@ -400,7 +400,7 @@ const SEV_TONE = { error: 'var(--red)', warn: 'var(--amber)', info: 'var(--text-
 // dependency on a task that is not in the list, or two unordered tasks writing the same file, look
 // like ordinary prose. So the checks run against the real checkout and their results sit above the
 // document rather than inside it.
-function ValidationPanel({ v }) {
+export function ValidationPanel({ v }) {
   if (!v) return null
   const errs = v.problems.filter(p => p.severity === 'error')
   const warns = v.problems.filter(p => p.severity === 'warn')

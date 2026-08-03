@@ -137,7 +137,7 @@ const STATUS_COLOR = {
 const colorFor = name => STATUS_COLOR[norm(name)] || '#7f8ea1'
 
 // ---------- JIRA auth ----------
-function creds() {
+export function creds() {
   let email = process.env.JIRA_EMAIL || '', token = process.env.JIRA_API_TOKEN || ''
   for (const file of [SECRETS_FILE, LEGACY_SECRETS]) {
     try {

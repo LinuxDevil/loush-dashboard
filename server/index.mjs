@@ -6,6 +6,8 @@ import { spawn, exec, execFile, spawnSync } from 'node:child_process'
 import { toggleOffFile } from '../lib/customize-toggle.mjs'
 import mountEng from './eng.mjs'
 import mountTicket from './ticket.mjs'
+import mountTicketPipeline from './ticket-pipeline.mjs'
+import mountGrilling from './stages/grilling.mjs'
 import mountMemory, { retrieveContext } from './memory.mjs'
 import mountFe from './fe.mjs'
 import mountSetup from './setup.mjs'
@@ -88,6 +90,8 @@ if (process.env.DASH_NETWORK_GUARD) {
 }
 mountEng(app)
 mountTicket(app)
+mountTicketPipeline(app)
+mountGrilling(app)   // G1 (the grilling) and G2 (accept the split) — the two human gates
 mountMemory(app)
 mountAccess(app, { track: (...a) => track(...a) })
 const hooksReceiver = mountHooksReceiver(app)
